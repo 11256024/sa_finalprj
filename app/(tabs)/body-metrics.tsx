@@ -1,19 +1,25 @@
 import { useRouter } from 'expo-router';
-import { Alert, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function BodyMetricsScreen() {
   const router = useRouter();
 
+ 
+
+    // 💡【核心修正】：將「身體指數查詢」的路由精準連動到 '/body-metrics'
   const handleMenuPress = (menuName: string) => {
-    if (menuName === '身體指數查詢') {
-      router.push('/body-metrics');
-    } else if (menuName === '會員中心') {
+    if (menuName === '會員中心') {
       router.push('/profile');
     } else if (menuName === '每日紀錄') {
-      router.push('/daily-record');
-    } else {
-      if (Platform.OS === 'web') window.alert(`即將前往：${menuName}`);
-      else Alert.alert("導航", `即將前往：${menuName}`);
+      router.push('/daily-record'); 
+    } else if (menuName === '歷史紀錄') {
+      router.push('/history');
+    } else if (menuName === '身體指數查詢') {
+      router.push('/body-metrics'); // 👈 修正這裡！對應到你的 body-metrics.tsx 檔案
+    } else if (menuName === '查詢商品') {
+      router.push('/products');
+    } else if (menuName === '成就管理') {
+      router.push('/achievements');
     }
   };
 
