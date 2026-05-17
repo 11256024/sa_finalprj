@@ -18,15 +18,16 @@ export default function AchievementsScreen() {
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<'locked' | 'unlocked'>('locked');
 
+  // 💡 導覽列路由
   const handleMenuPress = (menuName: string) => {
-    if (menuName === '首頁') {
-      router.push('/');
+    if (menuName === '會員中心') {
+      router.push('/profile');
     } else if (menuName === '每日紀錄') {
-      router.push('/daily-record'); 
+      router.push('/daily-record');
     } else if (menuName === '歷史紀錄') {
       router.push('/history');
     } else if (menuName === '身體指數查詢') {
-      router.push('/body-metrics'); 
+      router.push('/body-metrics');
     } else if (menuName === '查詢商品') {
       router.push('/products');
     } else if (menuName === '成就管理') {

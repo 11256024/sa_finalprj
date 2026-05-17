@@ -1,12 +1,17 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function LoginScreen() {
   const router = useRouter(); 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showError, setShowError] = useState(false);
+  
+  // 💡 保持全域登入狀態（預設未登入 false）
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  // 💡 自訂防呆登出彈窗的顯示狀態
+  const [logoutModalVisible, setLogoutModalVisible] = useState(false);
 
   // 頂部導覽列點擊事件
   const handleMenuPress = (menuName: string) => {
@@ -15,19 +20,62 @@ export default function LoginScreen() {
 
   // 登入驗證與跳轉邏輯
   const handleLogin = () => {
+    // 1. 密碼強度正規表達式驗證
     const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[.!?@]).{8,}$/;
+    
     if (!passwordRegex.test(password)) {
       setShowError(true);
       return;
     }
     setShowError(false);
     
-    // 驗證成功，直接跳轉到第三頁（會員中心）
-    router.push('/profile');
+    // 2. 💡 帳密與身分分流驗證
+    if (username.trim() === 'admin' && password === 'Admin123!') {
+      setIsLoggedIn(true);
+      if (Platform.OS === 'web') {
+        window.alert("歡迎回來，尊貴的系統管理員！");
+        router.replace('/admin-review'); // 🎯 使用 replace 徹底取代頁面
+      } else {
+        Alert.alert("登入成功", "歡迎回來，尊貴的系統管理員！", [
+          { text: "進入後台", onPress: () => router.replace('/admin-review') }
+        ]);
+      }
+    } else {
+      // 一般一般使用者登入
+      setIsLoggedIn(true);
+      if (Platform.OS === 'web') {
+        window.alert("普通使用者登入成功！");
+        router.replace('/profile'); // 🎯 改為 replace，防止背景登入狀態卡死
+      } else {
+        Alert.alert("登入成功", "普通使用者登入成功！", [
+          { text: "確定", onPress: () => router.replace('/profile') }
+        ]);
+      }
+    }
+  };
+
+  // 🛠️ 觸發登出防呆
+  const handleLogoutTrigger = () => {
+    setLogoutModalVisible(true);
+  };
+
+  // 🛠️ 確認登出動作
+  const handleConfirmLogout = () => {
+    setIsLoggedIn(false);         
+    setUsername('');              
+    setPassword('');
+    setLogoutModalVisible(false); 
+    if (Platform.OS === 'web') {
+      window.alert("您已成功登出系統。");
+    } else {
+      Alert.alert("提示", "您已成功登出系統。");
+    }
   };
 
   return (
     <SafeAreaView style={styles.container}>
+      
+      {/* 頂部導覽列 */}
       <View style={styles.header}>
         <View style={styles.headerLeftGroup}>
           <TouchableOpacity onPress={() => handleMenuPress('首頁')}>
@@ -42,14 +90,17 @@ export default function LoginScreen() {
           </ScrollView>
         </View>
 
-        {/* 右側會員中心按鈕已被完美移除，保持乾淨導覽列 */}
+        {/* 右側動態按鈕：若為登入狀態，顯示防呆登出按鈕 */}
+        {isLoggedIn && (
+          <TouchableOpacity style={styles.logoutHeaderBtn} onPress={handleLogoutTrigger}>
+            <Text style={styles.logoutHeaderBtnText}>登 出</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.content}>
-        {/* 標題字體大小統一為 36 */}
         <Text style={styles.pageTitle}>登 入</Text>
         
-        {/* 卡片樣式：與註冊頁完全同步 */}
         <View style={styles.cardContainer}>
           <View style={styles.inputContainer}>
             {/* 帳號 */}
@@ -76,7 +127,7 @@ export default function LoginScreen() {
               />
             </View>
 
-            {/* 警示區：固定高度避免框的大小跳動 */}
+            {/* 警示區 */}
             <View style={styles.hintArea}>
               {showError ? (
                 <View style={styles.errorBox}>
@@ -101,6 +152,42 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
       </View>
+
+      {/* 登出防呆彈窗 */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={logoutModalVisible}
+        onRequestClose={() => setLogoutModalVisible(false)}
+      >
+        <TouchableOpacity 
+          style={styles.modalOverlay} 
+          activeOpacity={1} 
+          onPressOut={() => setLogoutModalVisible(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.logoutAlertContent}>
+            <Text style={styles.logoutAlertTitle}>確認要登出系統嗎？</Text>
+            <Text style={styles.logoutAlertMessage}>登出後將需要重新輸入帳號與密碼才能進行熱量管理。</Text>
+            
+            <View style={styles.modalButtonGroup}>
+              <TouchableOpacity 
+                style={[styles.modalBtn, styles.modalBtnCancel]} 
+                onPress={() => setLogoutModalVisible(false)}
+              >
+                <Text style={styles.modalBtnCancelText}>取消</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[styles.modalBtn, styles.orangeAlertBtn]} 
+                onPress={handleConfirmLogout}
+              >
+                <Text style={styles.modalBtnConfirmText}>確定登出</Text>
+              </TouchableOpacity>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
     </SafeAreaView>
   );
 }
@@ -118,6 +205,14 @@ const styles = StyleSheet.create({
   menuButton: { paddingHorizontal: 15 },
   headerMenu: { color: 'white', fontSize: 18, fontWeight: '500' },
   
+  logoutHeaderBtn: { 
+    backgroundColor: 'rgba(231, 76, 60, 0.8)', 
+    paddingVertical: 8, 
+    paddingHorizontal: 18, 
+    borderRadius: 20 
+  },
+  logoutHeaderBtnText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' },
+
   content: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5DC' },
   pageTitle: { fontSize: 36, marginBottom: 30, color: '#333', fontWeight: 'bold' },
   
@@ -159,5 +254,16 @@ const styles = StyleSheet.create({
     marginTop: 10 
   },
   confirmButtonText: { color: 'white', fontSize: 22, fontWeight: 'bold' },
-  registerLink: { color: '#5876F1', marginTop: 20, fontSize: 18, textDecorationLine: 'underline' }
+  registerLink: { color: '#5876F1', marginTop: 20, fontSize: 18, textDecorationLine: 'underline' },
+
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
+  logoutAlertContent: { backgroundColor: '#FFF', width: 380, padding: 25, borderRadius: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 10, elevation: 10 },
+  logoutAlertTitle: { fontSize: 20, fontWeight: 'bold', color: '#333', marginBottom: 12, textAlign: 'center' },
+  logoutAlertMessage: { fontSize: 14, color: '#666', lineHeight: 22, marginBottom: 25, textAlign: 'center' },
+  modalButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
+  modalBtn: { flex: 1, height: 45, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginHorizontal: 6 },
+  modalBtnCancel: { backgroundColor: '#F5F5F5' },
+  modalBtnCancelText: { color: '#666', fontSize: 15, fontWeight: '500' },
+  orangeAlertBtn: { backgroundColor: '#F3B07E' }, 
+  modalBtnConfirmText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' }
 });
