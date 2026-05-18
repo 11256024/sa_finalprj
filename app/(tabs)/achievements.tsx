@@ -7,7 +7,7 @@ import { Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity,
 const dummyAchievements = [
   { id: '1', title: '連續 登入 七天', currentProgress: 5, targetTotal: 7, unlocked: false, unit: '天' },
   { id: '2', title: '完成 每日 飲食紀錄', currentProgress: 3, targetTotal: 5, unlocked: false, unit: '天' },
-  { id: '3', title: '喝水量 達到 2000cc', currentProgress: 1500, targetTotal: 2000, unlocked: false, unit: 'cc' }, // 可根據不同成就動態改變單位
+  { id: '3', title: '喝水量 達到 2000cc', currentProgress: 1500, targetTotal: 2000, unlocked: false, unit: 'cc' }, 
   { id: '4', title: '不攝取 超標 糖分', currentProgress: 4, targetTotal: 7, unlocked: false, unit: '天' },
   { id: '5', title: '連續 運動 三天', currentProgress: 2, targetTotal: 3, unlocked: false, unit: '天' },
   { id: '6', title: '解鎖新食譜', currentProgress: 3, targetTotal: 3, unlocked: true, unit: '道' },
@@ -40,14 +40,14 @@ export default function AchievementsScreen() {
     activeTab === 'unlocked' ? item.unlocked : !item.unlocked
   );
 
-  // 動態計算總成就進度（例如：已解鎖個數 / 總個數）
+  // 動態計算總成就進度
   const unlockedCount = dummyAchievements.filter(item => item.unlocked).length;
   const totalCount = dummyAchievements.length;
 
   return (
     <SafeAreaView style={styles.container}>
       
-      {/* 1. 上方綠色導覽列（比照 Login 規格） */}
+      {/* 1. 上方綠色導覽列 */}
       <View style={styles.header}>
         <View style={styles.headerLeftGroup}>
           <TouchableOpacity onPress={() => handleMenuPress('首頁')}>
@@ -67,12 +67,17 @@ export default function AchievementsScreen() {
             ))}
           </ScrollView>
         </View>
+
+        {/* 右側會員中心按鈕 - 完全參照身體指數查詢的樣式代碼 */}
+        <TouchableOpacity style={styles.memberCenterBtn} onPress={() => handleMenuPress('會員中心')}>
+          <Text style={styles.memberCenterText}>會員中心</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* 2. 主內容包裝區（拿掉原本的全頁 ScrollView，改用 Flex 布局讓元件能撐到最下方） */}
+      {/* 2. 主內容包裝區 */}
       <View style={styles.mainContent}>
         
-        {/* 我的成就總進度卡片（動態綁定數量） */}
+        {/* 我的成就總進度卡片 */}
         <View style={styles.summaryCard}>
           <Text style={styles.summaryTitle}>我 的 成 就</Text>
           <Text style={styles.summaryProgress}>已完成 {unlockedCount} / {totalCount}</Text>
@@ -95,7 +100,7 @@ export default function AchievementsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* 3. 💡【核心修正】：讓成就列表自動擴展到螢幕最下方，並啟用獨立卷軸 */}
+        {/* 3. 成就列表 */}
         <View style={styles.listContainer}>
           <ScrollView 
             showsVerticalScrollIndicator={true}
@@ -110,7 +115,6 @@ export default function AchievementsScreen() {
                   <Text style={styles.achievementTitle}>{item.title}</Text>
                 </View>
                 
-                {/* 💡【數據動態化】：根據物件欄位動態渲染進度與單位，未來可無縫串接資料庫 */}
                 <Text style={styles.achievementProgress}>
                   {item.currentProgress} / {item.targetTotal} {item.unit}
                 </Text>
@@ -127,7 +131,7 @@ export default function AchievementsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F9F1E7' },
   
-  /* 導覽列（完全同步 Login） */
+  /* 導覽列 */
   header: { 
     height: 100, 
     backgroundColor: '#A3C1AD', 
@@ -143,7 +147,22 @@ const styles = StyleSheet.create({
   menuButton: { paddingHorizontal: 15 },
   headerMenu: { color: 'white', fontSize: 18, fontWeight: '500' },
 
-  /* 主內容容器：利用 flex: 1 填滿除導覽列以外的所有空間 */
+  /* 🎯 完美同步：完全參照身體指數查詢的會員中心按鈕樣式 */
+  memberCenterBtn: { 
+    backgroundColor: 'rgba(255,255,255,0.25)', 
+    paddingVertical: 8, 
+    paddingHorizontal: 16, 
+    borderRadius: 10, 
+    borderWidth: 1, 
+    borderColor: 'rgba(255,255,255,0.5)' 
+  },
+  memberCenterText: { 
+    color: 'white', 
+    fontSize: 16, 
+    fontWeight: 'bold' 
+  },
+
+  /* 主內容容器 */
   mainContent: {
     flex: 1,
     paddingHorizontal: 40,
@@ -176,11 +195,11 @@ const styles = StyleSheet.create({
   tabText: { fontSize: 16, color: '#999', fontWeight: '500' },
   tabTextActive: { color: '#FF9F6A', fontWeight: 'bold' },
 
-  /* 💡 核心修正：將高度由固定值改為 flex: 1，讓它自動延伸落到螢幕的最底部 */
+  /* 列表容器 */
   listContainer: {
     flex: 1, 
     width: '100%',
-    marginBottom: 20, // 與手機最底部螢幕邊緣保持舒適距離
+    marginBottom: 20, 
     borderRadius: 25,
     overflow: 'hidden',
   },
@@ -193,7 +212,7 @@ const styles = StyleSheet.create({
   achievementCard: {
     backgroundColor: '#FFF',
     borderRadius: 25,
-    paddingVertical: 18, // 稍微加寬讓網頁版排版更大氣
+    paddingVertical: 18, 
     paddingHorizontal: 25,
     flexDirection: 'row',
     justifyContent: 'space-between',

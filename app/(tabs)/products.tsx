@@ -212,6 +212,7 @@ export default function ProductsScreen() {
           </ScrollView>
         </View>
 
+        {/* 右側會員中心按鈕 - 完美對齊身體指數查詢的樣式代碼 */}
         <TouchableOpacity style={styles.memberBtn} onPress={() => handleMenuPress('會員中心')}>
           <Text style={styles.memberBtnText}>{txt.memberCenter}</Text>
         </TouchableOpacity>
@@ -253,7 +254,7 @@ export default function ProductsScreen() {
               {filteredProducts.map((item) => (
                 <View key={item.id} style={styles.productRow}>
                   
-                  {/* 💡 修正：將商品名稱與審核狀態寫在同一個 Text 標籤內，並強制單行，絕不換行 */}
+                  {/* 將商品名稱與審核狀態寫在同一個 Text 標籤內，並強制單行，絕不換行 */}
                   <View style={styles.nameAndStatusWrapper}>
                     <Text style={styles.productName} numberOfLines={1}>
                       {item.name}
@@ -282,8 +283,8 @@ export default function ProductsScreen() {
       </View>
 
       {/* ==========================================================
-         📦 視窗 A：正方形新增商品彈窗
-         ========================================================== */}
+          📦 視窗 A：正方形新增商品彈窗
+          ========================================================== */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -322,7 +323,6 @@ export default function ProductsScreen() {
               <Text style={styles.inputLabel}>{txt.labelCalorie}</Text>
               <TextInput
                 style={styles.underlineInput}
-                keyboardType="numeric"
                 value={newProductCalorie}
                 onChangeText={setNewProductCalorie}
               />
@@ -343,8 +343,8 @@ export default function ProductsScreen() {
       </Modal>
 
       {/* ==========================================================
-         💡 視窗 B：通用自訂提示與警示對話框
-         ========================================================== */}
+          💡 視窗 B：通用自訂提示與警示對話框
+          ========================================================== */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -398,8 +398,22 @@ const styles = StyleSheet.create({
   menuWrapper: { flexDirection: 'row', alignItems: 'center' },
   menuButton: { paddingHorizontal: 15 },
   headerMenu: { color: 'white', fontSize: 18, fontWeight: '500' },
-  memberBtn: { backgroundColor: 'rgba(255,255,255,0.25)', paddingVertical: 6, paddingHorizontal: 14, borderRadius: 20 },
-  memberBtnText: { color: '#FFF', fontSize: 14, fontWeight: '500' },
+  
+  /* 🎯 完美統一：完全參照身體指數查詢的會員中心按鈕樣式 */
+  memberBtn: { 
+    backgroundColor: 'rgba(255,255,255,0.25)', 
+    paddingVertical: 8, 
+    paddingHorizontal: 16, 
+    borderRadius: 10, 
+    borderWidth: 1, 
+    borderColor: 'rgba(255,255,255,0.5)',
+    flexShrink: 0
+  },
+  memberBtnText: { 
+    color: 'white', 
+    fontSize: 16, 
+    fontWeight: 'bold' 
+  },
 
   /* 主介面佈局 */
   mainContent: { flex: 1, paddingHorizontal: 80, paddingTop: 30, paddingBottom: 20 },
@@ -425,7 +439,7 @@ const styles = StyleSheet.create({
   productRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#F0F0F0', paddingVertical: 20, paddingHorizontal: 5 },
   nameAndStatusWrapper: { flex: 2, justifyContent: 'center' },
   productName: { fontSize: 16, color: '#333', fontWeight: '500' },
-  pendingStatusTag: { fontSize: 14, color: '#E67E22', fontWeight: '500' }, // 調整字體大小，使其在同一直線上更和諧
+  pendingStatusTag: { fontSize: 14, color: '#E67E22', fontWeight: '500' }, 
   productCalorie: { flex: 1.5, fontSize: 15, color: '#888', textAlign: 'center' },
   deleteText: { flex: 0.5, fontSize: 15, color: '#4A90E2', fontWeight: 'bold', textAlign: 'right' },
   emptyText: { textAlign: 'center', color: '#999', marginTop: 30, fontSize: 15 },
