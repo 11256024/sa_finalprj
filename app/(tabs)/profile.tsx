@@ -1,106 +1,163 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Alert, Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+
+interface ProfileType {
+  name: string;
+  birthday: string;
+  height: string;
+  weight: string;
+  gender: string;
+  account: string;
+  password: string;
+}
 
 export default function ProfileScreen() {
   const router = useRouter();
 
-  // 1. 控制目前是「瀏覽狀態」還是「編輯狀態」
+  // 1. 狀態控制
   const [isEditing, setIsEditing] = useState(false);
-
-  // 2. 控制各個防呆彈窗的顯示狀態
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [saveModalVisible, setSaveModalVisible] = useState(false);       
   const [cancelModalVisible, setCancelModalVisible] = useState(false);   
 
-  // 3. 個人資訊的狀態管理
-  const [profileData, setProfileData] = useState({
-    name: '王小明',
-    birthday: '1995-08-15',
-    height: '175',
-    weight: '70',
-    gender: '男',
-    account: 'xiaoming123',
-    password: 'Password123!', 
+  // 2. 🎯 將初始值全部設為空字串，絕不寫死
+  const [profileData, setProfileData] = useState<ProfileType>({
+    name: '',
+    birthday: '',
+    height: '',
+    weight: '',
+    gender: '',
+    account: '',
+    password: '', 
   });
 
-  // 暫存編輯中的數據
-  const [tempData, setTempData] = useState({ ...profileData });
-
-  // 4. 大頭貼圖片狀態
+  // 暫存編輯區
+  const [tempData, setTempData] = useState<ProfileType>({ ...profileData });
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
-  // 選單選值範圍設定
+  // 頁面初始化：只讀取使用者先前自己儲存過的值，沒有的話就保持空欄位
+  useEffect(() => {
+    const loadProfileData = () => {
+      try {
+        if (Platform.OS === 'web') {
+          const localData = localStorage.getItem('user_profile');
+          if (localData) {
+            const parsedData = JSON.parse(localData);
+            setProfileData(parsedData);
+            setTempData(parsedData);
+          }
+          // 💡 移除原本寫死的「王小明/test001」預設範本
+        }
+      } catch (error) {
+        console.error("加載使用者動態資料失敗：", error);
+      }
+    };
+    loadProfileData();
+  }, []);
+
+  // 下拉選單資料源
   const heightOptions = Array.from({ length: 151 }, (_, i) => (i + 100).toString()); 
   const weightOptions = Array.from({ length: 171 }, (_, i) => (i + 30).toString());  
   const genderOptions = ['男', '女'];
 
-  // 動態計算精準年齡
+  // 計算精準年齡（若未填生日則回傳空）
   const calculateAge = (birthdayStr: string) => {
     if (!birthdayStr) return '';
     const birthDate = new Date(birthdayStr);
     const today = new Date();
-
     let age = today.getFullYear() - birthDate.getFullYear();
     const monthDifference = today.getMonth() - birthDate.getMonth();
-
     if (monthDifference < 0 || (monthDifference === 0 && today.getDate() < birthDate.getDate())) {
       age--;
     }
     return age >= 0 ? ` (${age} 歲)` : '';
   };
 
-  // 選擇大頭貼功能
+  // 大頭貼更換
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      if (Platform.OS === 'web') {
-        window.alert('我們需要讀取檔案的權限來更換大頭貼！');
-      } else {
-        Alert.alert('權限拒絕', '我們需要讀取檔案的權限來更換大頭貼！');
-      }
+      if (Platform.OS === 'web') window.alert('我們需要讀取檔案的權限來更換大頭貼！');
+      else Alert.alert('權限拒絕', '我們需要讀取檔案的權限來更換大頭貼！');
       return;
     }
-
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: true,
       aspect: [1, 1],
       quality: 1,
     });
-
     if (!result.canceled) {
       setAvatarUri(result.assets[0].uri);
     }
   };
 
-  // 點擊編輯或進入儲存確認流程
+  // 錯誤警告彈窗
+  const showWarningAlert = (message: string) => {
+    if (Platform.OS === 'web') {
+      window.alert(`儲存失敗\n\n⚠️ ${message}`);
+    } else {
+      Alert.alert("儲存失敗", `⚠️ ${message}`);
+    }
+  };
+
+  // 🎯 核心防呆：只要有任一欄位沒填，直接攔截不讓儲存，並點名是哪個欄位
   const handleEditPress = () => {
     if (isEditing) {
-      if (!tempData.name.trim() || !tempData.birthday || !tempData.account.trim()) {
-        if (Platform.OS === 'web') {
-          window.alert("請注意，基本資料欄位均不可留白！");
-        } else {
-          Alert.alert("無法儲存", "基本資料欄位均不可留白！");
-        }
+      
+      if (!tempData.name || tempData.name.trim() === '') {
+        showWarningAlert('姓名欄位不可留白，請輸入姓名！');
+        return; 
+      }
+      if (!tempData.birthday || tempData.birthday.trim() === '') {
+        showWarningAlert('生日欄位不可留白，請選擇生日！');
         return;
       }
+      if (!tempData.height || tempData.height.trim() === '') {
+        showWarningAlert('身高欄位不可留白，請選擇身高！');
+        return;
+      }
+      if (!tempData.weight || tempData.weight.trim() === '') {
+        showWarningAlert('體重欄位不可留白，請選擇體重！');
+        return;
+      }
+      if (!tempData.gender || tempData.gender.trim() === '') {
+        showWarningAlert('生理性別欄位不可留白，請選擇性別！');
+        return;
+      }
+      if (!tempData.account || tempData.account.trim() === '') {
+        showWarningAlert('帳號欄位不可留白，請輸入帳號！');
+        return;
+      }
+      if (!tempData.password || tempData.password.trim() === '') {
+        showWarningAlert('密碼欄位不可留白，請輸入密碼！');
+        return;
+      }
+
+      // 密碼強度規則檢驗（至少8位數、大小寫、數字、特殊符號）
+      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[.!?@]).{8,}$/;
+      if (!passwordRegex.test(tempData.password)) {
+        showWarningAlert('密碼不符合安全規則！需包含至少一個大寫英文字母、一個小寫英文字母、一個數字、一個特殊字元（.!?@），且長度至少 8 字元！');
+        return;
+      }
+
+      // 全部通過，開啟二次確認視窗
       setSaveModalVisible(true);
     } else {
+      // 點擊「編輯」時，將當前的資料複製一份至暫存區進行改動
       setTempData({ ...profileData });
       setIsEditing(true);
     }
   };
 
-  // 確定執行儲存
+  // 點擊確認彈窗的「確定儲存」
   const handleConfirmSave = async () => {
     setSaveModalVisible(false);
-
     try {
       setProfileData({ ...tempData });
       setIsEditing(false);
-      
       if (Platform.OS === 'web') {
         localStorage.setItem('user_profile', JSON.stringify({ ...tempData }));
         window.alert("個人資料已成功更新！");
@@ -108,35 +165,29 @@ export default function ProfileScreen() {
         Alert.alert("成功", "個人資料已成功更新！");
       }
     } catch (error) {
-      // 錯誤處理
+      console.error("儲存動態資料失敗：", error);
     }
   };
 
-  // 點擊取消按鈕
   const handleCancelPress = () => {
     setCancelModalVisible(true);
   };
 
-  // 確定放棄編輯
   const handleConfirmCancel = () => {
     setCancelModalVisible(false);
     setIsEditing(false);
   };
 
-  // 確定手動登出
   const handleConfirmLogout = () => {
     setLogoutModalVisible(false);
     if (Platform.OS === 'web') {
       window.alert("您已成功登出！");
       router.replace('/'); 
     } else {
-      Alert.alert("提示", "您已成功登出！", [
-        { text: "確定", onPress: () => router.replace('/') }
-      ]);
+      Alert.alert("提示", "您已成功登出！", [{ text: "確定", onPress: () => router.replace('/') }]);
     }
   };
 
-  // 導覽列路由
   const handleMenuPress = (menuName: string) => {
     if (menuName === '會員中心') router.push('/profile');
     else if (menuName === '每日紀錄') router.push('/daily-record');
@@ -204,10 +255,14 @@ export default function ProfileScreen() {
               <TextInput
                 style={styles.nameInput}
                 value={tempData.name}
+                placeholder="請輸入姓名"
+                placeholderTextColor="#A9A9A9"
                 onChangeText={(text) => setTempData({ ...tempData, name: text })}
               />
             ) : (
-              <Text style={styles.memberName}>{profileData.name}</Text>
+              <Text style={[styles.memberName, !profileData.name && styles.placeholderText]}>
+                {profileData.name || '請輸入姓名'}
+              </Text>
             )}
           </View>
 
@@ -215,6 +270,8 @@ export default function ProfileScreen() {
 
           {/* 右側欄位：詳細表單 */}
           <View style={styles.rightSection}>
+            
+            {/* 生日欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>生 日</Text>
               {isEditing && Platform.OS === 'web' ? (
@@ -225,13 +282,20 @@ export default function ProfileScreen() {
                   style={webSelectStyle}
                 />
               ) : (
-                <Text style={styles.infoValue}>
-                  {profileData.birthday}
-                  <Text style={styles.ageHighlightText}>{calculateAge(profileData.birthday)}</Text>
+                <Text style={[styles.infoValue, !profileData.birthday && styles.placeholderText]}>
+                  {profileData.birthday ? (
+                    <>
+                      {profileData.birthday}
+                      <Text style={styles.ageHighlightText}>{calculateAge(profileData.birthday)}</Text>
+                    </>
+                  ) : (
+                    '請選擇生日'
+                  )}
                 </Text>
               )}
             </View>
 
+            {/* 身高欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>身 高 (cm)</Text>
               {isEditing && Platform.OS === 'web' ? (
@@ -240,13 +304,17 @@ export default function ProfileScreen() {
                   onChange={(e) => setTempData({ ...tempData, height: e.target.value })}
                   style={webSelectStyle}
                 >
+                  <option value="">請選擇身高</option>
                   {heightOptions.map(h => <option key={h} value={h}>{h} cm</option>)}
                 </select>
               ) : (
-                <Text style={styles.infoValue}>{profileData.height} cm</Text>
+                <Text style={[styles.infoValue, !profileData.height && styles.placeholderText]}>
+                  {profileData.height ? `${profileData.height} cm` : '請選擇身高'}
+                </Text>
               )}
             </View>
 
+            {/* 體重欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>體 重 (kg)</Text>
               {isEditing && Platform.OS === 'web' ? (
@@ -255,13 +323,17 @@ export default function ProfileScreen() {
                   onChange={(e) => setTempData({ ...tempData, weight: e.target.value })}
                   style={webSelectStyle}
                 >
+                  <option value="">請選擇體重</option>
                   {weightOptions.map(w => <option key={w} value={w}>{w} kg</option>)}
                 </select>
               ) : (
-                <Text style={styles.infoValue}>{profileData.weight} kg</Text>
+                <Text style={[styles.infoValue, !profileData.weight && styles.placeholderText]}>
+                  {profileData.weight ? `${profileData.weight} kg` : '請選擇體重'}
+                </Text>
               )}
             </View>
 
+            {/* 性別欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>生理性別</Text>
               {isEditing && Platform.OS === 'web' ? (
@@ -270,38 +342,51 @@ export default function ProfileScreen() {
                   onChange={(e) => setTempData({ ...tempData, gender: e.target.value })}
                   style={webSelectStyle}
                 >
+                  <option value="">請選擇性別</option>
                   {genderOptions.map(g => <option key={g} value={g}>{g}</option>)}
                 </select>
               ) : (
-                <Text style={styles.infoValue}>{profileData.gender}</Text>
+                <Text style={[styles.infoValue, !profileData.gender && styles.placeholderText]}>
+                  {profileData.gender || '請選擇性別'}
+                </Text>
               )}
             </View>
 
+            {/* 帳號欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>帳 號</Text>
               {isEditing ? (
                 <TextInput
                   style={styles.inputField}
                   value={tempData.account}
+                  placeholder="請輸入帳號"
+                  placeholderTextColor="#A9A9A9"
                   autoCapitalize="none"
                   onChangeText={(text) => setTempData({ ...tempData, account: text })}
                 />
               ) : (
-                <Text style={styles.infoValue}>{profileData.account}</Text>
+                <Text style={[styles.infoValue, !profileData.account && styles.placeholderText]}>
+                  {profileData.account || '請輸入帳號'}
+                </Text>
               )}
             </View>
 
+            {/* 密碼欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>密 碼</Text>
               {isEditing ? (
                 <TextInput
                   style={styles.inputField}
                   value={tempData.password}
+                  placeholder="請輸入符合規則的新密碼"
+                  placeholderTextColor="#A9A9A9"
                   secureTextEntry={true}
                   onChangeText={(text) => setTempData({ ...tempData, password: text })}
                 />
               ) : (
-                <Text style={styles.infoValue}>••••••••</Text>
+                <Text style={[styles.infoValue, !profileData.password && styles.placeholderText]}>
+                  {profileData.password ? '••••••••' : '請輸入密碼'}
+                </Text>
               )}
             </View>
 
@@ -329,7 +414,7 @@ export default function ProfileScreen() {
         </View>
       </ScrollView>
 
-      {/* 儲存防呆彈窗 */}
+      {/* 儲存確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={saveModalVisible} onRequestClose={() => setSaveModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
@@ -347,7 +432,7 @@ export default function ProfileScreen() {
         </View>
       </Modal>
 
-      {/* 取消編輯防呆彈窗 */}
+      {/* 取消變更確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={cancelModalVisible} onRequestClose={() => setCancelModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
@@ -365,7 +450,7 @@ export default function ProfileScreen() {
         </View>
       </Modal>
 
-      {/* 登出防呆彈窗 */}
+      {/* 登出確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={logoutModalVisible} onRequestClose={() => setLogoutModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
@@ -415,15 +500,18 @@ const styles = StyleSheet.create({
   avatarImage: { width: 140, height: 140, borderRadius: 70 },
   editIconBadge: { position: 'absolute', bottom: 5, right: 5, backgroundColor: 'white', width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', elevation: 3 },
   editIconText: { fontSize: 16 },
+  
   memberName: { fontSize: 24, fontWeight: 'bold', color: '#333' },
-  nameInput: { fontSize: 20, fontWeight: 'bold', color: '#333', borderBottomWidth: 1, borderColor: '#ccc', textAlign: 'center', width: '80%', paddingVertical: 2 },
+  placeholderText: { color: '#A9A9A9', fontWeight: 'normal' }, // 灰色的提示文字樣式
+  
+  nameInput: { fontSize: 20, fontWeight: 'bold', color: '#333', borderBottomWidth: 1, borderColor: '#ccc', textAlign: 'center', width: '80%', paddingVertical: 2, ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
   
   divider: { width: 1, backgroundColor: '#EBEBEB', marginHorizontal: 40 },
   rightSection: { flex: 1.5, justifyContent: 'center' },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, borderBottomWidth: 1, borderBottomColor: '#F2F2F2', paddingBottom: 6 },
   infoLabel: { fontSize: 18, color: '#333', fontWeight: '600' },
   infoValue: { fontSize: 18, color: '#666' },
-  inputField: { flex: 0.7, fontSize: 16, color: '#333', backgroundColor: '#F9F9F9', borderWidth: 1, borderColor: '#DDD', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, textAlign: 'right' },
+  inputField: { flex: 0.7, fontSize: 16, color: '#333', backgroundColor: '#F9F9F9', borderWidth: 1, borderColor: '#DDD', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, textAlign: 'right', ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
   btnGroupRow: { flexDirection: 'row', alignSelf: 'flex-end', marginTop: 15 },
   editBtn: { paddingVertical: 10, paddingHorizontal: 35, borderRadius: 15 },
   editBtnText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
