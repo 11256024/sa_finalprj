@@ -1,6 +1,6 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Alert, Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 interface ProfileType {
@@ -19,25 +19,25 @@ export default function ProfileScreen() {
   // 1. 狀態控制
   const [isEditing, setIsEditing] = useState(false);
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
-  const [saveModalVisible, setSaveModalVisible] = useState(false);       
+  const [saveModalVisible, setSaveModalVisible] = useState(false);      
   const [cancelModalVisible, setCancelModalVisible] = useState(false);   
 
-  // 2. 🎯 將初始值全部設為空字串，絕不寫死
+  // 2. 🎯 【核心修正】：設定帳號與密碼的「預設顯示值」，其餘保持空字串
   const [profileData, setProfileData] = useState<ProfileType>({
     name: '',
     birthday: '',
     height: '',
     weight: '',
     gender: '',
-    account: '',
-    password: '', 
+    account: 'xiaoming123', // 這裡填入您預設要顯示的帳號
+    password: 'yourpassword', // 這裡填入您預設要顯示的密碼
   });
 
-  // 暫存編輯區
+  // 暫存編輯區（跟隨初始化的預設值）
   const [tempData, setTempData] = useState<ProfileType>({ ...profileData });
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
-  // 頁面初始化：只讀取使用者先前自己儲存過的值，沒有的話就保持空欄位
+  // 頁面初始化：若本機有自訂儲存過的值則覆蓋，沒有的話就沿用上述的預設帳密與空白欄位
   useEffect(() => {
     const loadProfileData = () => {
       try {
@@ -48,7 +48,6 @@ export default function ProfileScreen() {
             setProfileData(parsedData);
             setTempData(parsedData);
           }
-          // 💡 移除原本寫死的「王小明/test001」預設範本
         }
       } catch (error) {
         console.error("加載使用者動態資料失敗：", error);
@@ -62,7 +61,7 @@ export default function ProfileScreen() {
   const weightOptions = Array.from({ length: 171 }, (_, i) => (i + 30).toString());  
   const genderOptions = ['男', '女'];
 
-  // 計算精準年齡（若未填生日則回傳空）
+  // 計算精準年齡
   const calculateAge = (birthdayStr: string) => {
     if (!birthdayStr) return '';
     const birthDate = new Date(birthdayStr);
@@ -103,10 +102,9 @@ export default function ProfileScreen() {
     }
   };
 
-  // 🎯 核心防呆：只要有任一欄位沒填，直接攔截不讓儲存，並點名是哪個欄位
+  // 核心防呆：檢查可編輯欄位是否留白
   const handleEditPress = () => {
     if (isEditing) {
-      
       if (!tempData.name || tempData.name.trim() === '') {
         showWarningAlert('姓名欄位不可留白，請輸入姓名！');
         return; 
@@ -127,26 +125,10 @@ export default function ProfileScreen() {
         showWarningAlert('生理性別欄位不可留白，請選擇性別！');
         return;
       }
-      if (!tempData.account || tempData.account.trim() === '') {
-        showWarningAlert('帳號欄位不可留白，請輸入帳號！');
-        return;
-      }
-      if (!tempData.password || tempData.password.trim() === '') {
-        showWarningAlert('密碼欄位不可留白，請輸入密碼！');
-        return;
-      }
-
-      // 密碼強度規則檢驗（至少8位數、大小寫、數字、特殊符號）
-      const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[.!?@]).{8,}$/;
-      if (!passwordRegex.test(tempData.password)) {
-        showWarningAlert('密碼不符合安全規則！需包含至少一個大寫英文字母、一個小寫英文字母、一個數字、一個特殊字元（.!?@），且長度至少 8 字元！');
-        return;
-      }
 
       // 全部通過，開啟二次確認視窗
       setSaveModalVisible(true);
     } else {
-      // 點擊「編輯」時，將當前的資料複製一份至暫存區進行改動
       setTempData({ ...profileData });
       setIsEditing(true);
     }
@@ -352,42 +334,20 @@ export default function ProfileScreen() {
               )}
             </View>
 
-            {/* 帳號欄位 */}
+            {/* 帳號欄位 🔒【核心修正】：移除原本的短路提示文字，直接顯示資料值 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>帳 號</Text>
-              {isEditing ? (
-                <TextInput
-                  style={styles.inputField}
-                  value={tempData.account}
-                  placeholder="請輸入帳號"
-                  placeholderTextColor="#A9A9A9"
-                  autoCapitalize="none"
-                  onChangeText={(text) => setTempData({ ...tempData, account: text })}
-                />
-              ) : (
-                <Text style={[styles.infoValue, !profileData.account && styles.placeholderText]}>
-                  {profileData.account || '請輸入帳號'}
-                </Text>
-              )}
+              <Text style={[styles.infoValue, styles.readOnlyText]}>
+                {profileData.account}
+              </Text>
             </View>
 
-            {/* 密碼欄位 */}
+            {/* 密碼欄位 🔒【核心修正】：移除「請輸入密碼」，在唯讀狀態下永遠固定顯示為遮蔽符號 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>密 碼</Text>
-              {isEditing ? (
-                <TextInput
-                  style={styles.inputField}
-                  value={tempData.password}
-                  placeholder="請輸入符合規則的新密碼"
-                  placeholderTextColor="#A9A9A9"
-                  secureTextEntry={true}
-                  onChangeText={(text) => setTempData({ ...tempData, password: text })}
-                />
-              ) : (
-                <Text style={[styles.infoValue, !profileData.password && styles.placeholderText]}>
-                  {profileData.password ? '••••••••' : '請輸入密碼'}
-                </Text>
-              )}
+              <Text style={[styles.infoValue, styles.readOnlyText]}>
+                ••••••••
+              </Text>
             </View>
 
             {/* 按鈕操作區塊 */}
@@ -502,7 +462,7 @@ const styles = StyleSheet.create({
   editIconText: { fontSize: 16 },
   
   memberName: { fontSize: 24, fontWeight: 'bold', color: '#333' },
-  placeholderText: { color: '#A9A9A9', fontWeight: 'normal' }, // 灰色的提示文字樣式
+  placeholderText: { color: '#A9A9A9', fontWeight: 'normal' }, 
   
   nameInput: { fontSize: 20, fontWeight: 'bold', color: '#333', borderBottomWidth: 1, borderColor: '#ccc', textAlign: 'center', width: '80%', paddingVertical: 2, ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
   
@@ -511,7 +471,10 @@ const styles = StyleSheet.create({
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, borderBottomWidth: 1, borderBottomColor: '#F2F2F2', paddingBottom: 6 },
   infoLabel: { fontSize: 18, color: '#333', fontWeight: '600' },
   infoValue: { fontSize: 18, color: '#666' },
-  inputField: { flex: 0.7, fontSize: 16, color: '#333', backgroundColor: '#F9F9F9', borderWidth: 1, borderColor: '#DDD', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, textAlign: 'right', ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
+  
+  // 🔒 唯讀欄位樣式調整，提示禁止游標
+  readOnlyText: { color: '#777', ...Platform.select({ web: { cursor: 'not-allowed', userSelect: 'none' } }) },
+  
   btnGroupRow: { flexDirection: 'row', alignSelf: 'flex-end', marginTop: 15 },
   editBtn: { paddingVertical: 10, paddingHorizontal: 35, borderRadius: 15 },
   editBtnText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
