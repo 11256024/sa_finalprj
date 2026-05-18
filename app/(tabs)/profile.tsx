@@ -11,11 +11,10 @@ export default function ProfileScreen() {
 
   // 2. 控制各個防呆彈窗的顯示狀態
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
-  const [passwordModalVisible, setPasswordModalVisible] = useState(false);
   const [saveModalVisible, setSaveModalVisible] = useState(false);       
   const [cancelModalVisible, setCancelModalVisible] = useState(false);   
 
-  // 3. 個人資訊的狀態管理（未來這整段資料會從 useEffect 打 API get 撈回來）
+  // 3. 個人資訊的狀態管理
   const [profileData, setProfileData] = useState({
     name: '王小明',
     birthday: '1995-08-15',
@@ -23,16 +22,11 @@ export default function ProfileScreen() {
     weight: '70',
     gender: '男',
     account: 'xiaoming123',
-    password: 'Password123!', // 實際開發時，基於安全隱私，後端通常不會把密碼明碼丟給前端
+    password: 'Password123!', 
   });
 
   // 暫存編輯中的數據
   const [tempData, setTempData] = useState({ ...profileData });
-
-  // 獨立管理密碼修改輸入框
-  const [oldPassword, setOldPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmNewPassword, setConfirmNewPassword] = useState('');
 
   // 4. 大頭貼圖片狀態
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
@@ -42,7 +36,7 @@ export default function ProfileScreen() {
   const weightOptions = Array.from({ length: 171 }, (_, i) => (i + 30).toString());  
   const genderOptions = ['男', '女'];
 
-  // 根據開啟 App 的當前時間，動態計算精準年齡
+  // 動態計算精準年齡
   const calculateAge = (birthdayStr: string) => {
     if (!birthdayStr) return '';
     const birthDate = new Date(birthdayStr);
@@ -84,7 +78,6 @@ export default function ProfileScreen() {
   // 點擊編輯或進入儲存確認流程
   const handleEditPress = () => {
     if (isEditing) {
-      // 儲存前基礎欄位空值防呆驗證
       if (!tempData.name.trim() || !tempData.birthday || !tempData.account.trim()) {
         if (Platform.OS === 'web') {
           window.alert("請注意，基本資料欄位均不可留白！");
@@ -93,7 +86,6 @@ export default function ProfileScreen() {
         }
         return;
       }
-      // 開啟儲存防呆彈窗
       setSaveModalVisible(true);
     } else {
       setTempData({ ...profileData });
@@ -101,23 +93,11 @@ export default function ProfileScreen() {
     }
   };
 
-  // 🎯 確定執行儲存（未來這裡直接改寫成打 Axios / Fetch POST API）
+  // 確定執行儲存
   const handleConfirmSave = async () => {
     setSaveModalVisible(false);
 
     try {
-      /* // 💡 未來連後端資料庫的寫法範例：
-      const response = await axios.post('https://api.yourdomain.com/user/update', {
-        name: tempData.name,
-        birthday: tempData.birthday,
-        height: tempData.height,
-        weight: tempData.weight,
-        gender: tempData.gender,
-        account: tempData.account
-      });
-      */
-
-      // 目前先更新前端狀態與 LocalStorage 供展示
       setProfileData({ ...tempData });
       setIsEditing(false);
       
@@ -132,70 +112,15 @@ export default function ProfileScreen() {
     }
   };
 
-  // 點擊取消按鈕觸發防呆
+  // 點擊取消按鈕
   const handleCancelPress = () => {
     setCancelModalVisible(true);
   };
 
-  // 確定放棄編輯切換回瀏覽模式
+  // 確定放棄編輯
   const handleConfirmCancel = () => {
     setCancelModalVisible(false);
     setIsEditing(false);
-  };
-
-  // 🎯 驗證變更密碼（拿掉前端寫死的舊密碼比對，保留格式檢查，預留 API 位置）
-  const handleSaveNewPassword = async () => {
-    if (!oldPassword || !newPassword || !confirmNewPassword) {
-      if (Platform.OS === 'web') window.alert("請完整填寫所有密碼欄位！");
-      return;
-    }
-    if (newPassword.length < 8) {
-      if (Platform.OS === 'web') window.alert("新密碼長度不足！密碼規則：長度必須至少為 8 位數！");
-      return;
-    }
-    if (newPassword !== confirmNewPassword) {
-      if (Platform.OS === 'web') window.alert("確認新密碼不一致，請重新檢查！");
-      return;
-    }
-
-    try {
-      /* // 💡 未來連後端資料庫的寫法範例：
-      // 舊密碼直接送到後端，讓後端去跟資料庫 Hash 密碼比對，如果錯誤，後端會回傳錯誤訊息
-      const response = await axios.post('https://api.yourdomain.com/user/change-password', {
-        oldPassword: oldPassword,
-        newPassword: newPassword
-      });
-
-      if (response.data.success === false) {
-        window.alert(response.data.message); // 例如：後端回傳「舊密碼輸入錯誤」
-        return;
-      }
-      */
-
-      // 模擬成功後的前端處理
-      const updatedProfile = { ...profileData, password: newPassword };
-      setProfileData(updatedProfile);
-      
-      if (Platform.OS === 'web') {
-        localStorage.setItem('user_profile', JSON.stringify(updatedProfile));
-      }
-
-      setPasswordModalVisible(false);
-      setOldPassword('');
-      setNewPassword('');
-      setConfirmNewPassword('');
-
-      if (Platform.OS === 'web') {
-        window.alert("密碼已變更成功！安全起見，系統將強制登出，請使用新密碼重新登入。");
-        router.replace('/'); 
-      } else {
-        Alert.alert("變更成功", "密碼已變更成功！安全起見，系統將強制登出，請使用新密碼重新登入。", [
-          { text: "確定", onPress: () => router.replace('/') }
-        ]);
-      }
-    } catch (error) {
-      if (Platform.OS === 'web') window.alert("密碼變更失敗，請稍後再試！");
-    }
   };
 
   // 確定手動登出
@@ -393,10 +318,7 @@ export default function ProfileScreen() {
                 </>
               ) : (
                 <>
-                  <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#E67E22', marginRight: 15 }]} onPress={() => setPasswordModalVisible(true)}>
-                    <Text style={styles.editBtnText}>更改密碼</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#F3B07E' }]} onPress={handleEditPress}>
+                  <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#E67E22' }]} onPress={handleEditPress}>
                     <Text style={styles.editBtnText}>編 輯</Text>
                   </TouchableOpacity>
                 </>
@@ -437,35 +359,6 @@ export default function ProfileScreen() {
               </TouchableOpacity>
               <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#E74C3C' }]} onPress={handleConfirmCancel}>
                 <Text style={styles.modalBtnConfirmText}>確定放棄</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 更改密碼彈窗 */}
-      <Modal animationType="fade" transparent={true} visible={passwordModalVisible} onRequestClose={() => setPasswordModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.passwordAlertContent}>
-            <Text style={styles.passwordAlertTitle}>更 改 密 碼</Text>
-            <View style={styles.modalInputBlock}>
-              <Text style={styles.modalInputLabel}>輸入舊密碼</Text>
-              <TextInput style={styles.modalInputField} secureTextEntry={true} value={oldPassword} onChangeText={setOldPassword} placeholder="請輸入目前使用的密碼" />
-            </View>
-            <View style={styles.modalInputBlock}>
-              <Text style={styles.modalInputLabel}>設定新密碼（至少 8 位數）</Text>
-              <TextInput style={styles.modalInputField} secureTextEntry={true} value={newPassword} onChangeText={setNewPassword} placeholder="請輸入符合規則的新密碼" />
-            </View>
-            <View style={styles.modalInputBlock}>
-              <Text style={styles.modalInputLabel}>確認新密碼</Text>
-              <TextInput style={styles.modalInputField} secureTextEntry={true} value={confirmNewPassword} onChangeText={setConfirmNewPassword} placeholder="請再次輸入新密碼" />
-            </View>
-            <View style={[styles.modalButtonGroup, { marginTop: 15 }]}>
-              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => { setPasswordModalVisible(false); setOldPassword(''); setNewPassword(''); setConfirmNewPassword(''); }}>
-                <Text style={styles.modalBtnCancelText}>取消</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalBtn, styles.orangeAlertBtn]} onPress={handleSaveNewPassword}>
-                <Text style={styles.modalBtnConfirmText}>確認更改</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -541,12 +434,6 @@ const styles = StyleSheet.create({
   alertContent: { backgroundColor: '#FFF', width: 380, padding: 25, borderRadius: 20, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10, elevation: 10 },
   alertTitle: { fontSize: 20, fontWeight: 'bold', color: '#333', marginBottom: 12, textAlign: 'center' },
   alertMessage: { fontSize: 14, color: '#666', lineHeight: 22, marginBottom: 25, textAlign: 'center' },
-  
-  passwordAlertContent: { backgroundColor: '#FFF', width: 400, padding: 30, borderRadius: 24, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 12, elevation: 10 },
-  passwordAlertTitle: { fontSize: 22, fontWeight: 'bold', color: '#333', marginBottom: 25, textAlign: 'center', letterSpacing: 2 },
-  modalInputBlock: { width: '100%', marginBottom: 16 },
-  modalInputLabel: { fontSize: 14, fontWeight: '600', color: '#555', marginBottom: 6 },
-  modalInputField: { width: '100%', fontSize: 16, color: '#333', backgroundColor: '#F9F9F9', borderWidth: 1, borderColor: '#EEE', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
 
   modalButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   modalBtn: { flex: 1, height: 45, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginHorizontal: 6 },
