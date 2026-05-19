@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Alert, Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+
 interface ProfileType {
   name: string;
   birthday: string;
@@ -13,14 +14,17 @@ interface ProfileType {
   password: string;
 }
 
+
 export default function ProfileScreen() {
   const router = useRouter();
+
 
   // 1. 狀態控制
   const [isEditing, setIsEditing] = useState(false);
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const [saveModalVisible, setSaveModalVisible] = useState(false);      
-  const [cancelModalVisible, setCancelModalVisible] = useState(false);   
+  const [cancelModalVisible, setCancelModalVisible] = useState(false);  
+
 
   // 2. 🎯 【核心修正】：設定帳號與密碼的「預設顯示值」，其餘保持空字串
   const [profileData, setProfileData] = useState<ProfileType>({
@@ -33,9 +37,11 @@ export default function ProfileScreen() {
     password: 'yourpassword', // 這裡填入您預設要顯示的密碼
   });
 
+
   // 暫存編輯區（跟隨初始化的預設值）
   const [tempData, setTempData] = useState<ProfileType>({ ...profileData });
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
+
 
   // 頁面初始化：若本機有自訂儲存過的值則覆蓋，沒有的話就沿用上述的預設帳密與空白欄位
   useEffect(() => {
@@ -56,10 +62,12 @@ export default function ProfileScreen() {
     loadProfileData();
   }, []);
 
+
   // 下拉選單資料源
-  const heightOptions = Array.from({ length: 151 }, (_, i) => (i + 100).toString()); 
+  const heightOptions = Array.from({ length: 151 }, (_, i) => (i + 100).toString());
   const weightOptions = Array.from({ length: 171 }, (_, i) => (i + 30).toString());  
   const genderOptions = ['男', '女'];
+
 
   // 計算精準年齡
   const calculateAge = (birthdayStr: string) => {
@@ -73,6 +81,7 @@ export default function ProfileScreen() {
     }
     return age >= 0 ? ` (${age} 歲)` : '';
   };
+
 
   // 大頭貼更換
   const pickImage = async () => {
@@ -93,6 +102,7 @@ export default function ProfileScreen() {
     }
   };
 
+
   // 錯誤警告彈窗
   const showWarningAlert = (message: string) => {
     if (Platform.OS === 'web') {
@@ -102,12 +112,13 @@ export default function ProfileScreen() {
     }
   };
 
+
   // 核心防呆：檢查可編輯欄位是否留白
   const handleEditPress = () => {
     if (isEditing) {
       if (!tempData.name || tempData.name.trim() === '') {
         showWarningAlert('姓名欄位不可留白，請輸入姓名！');
-        return; 
+        return;
       }
       if (!tempData.birthday || tempData.birthday.trim() === '') {
         showWarningAlert('生日欄位不可留白，請選擇生日！');
@@ -126,6 +137,7 @@ export default function ProfileScreen() {
         return;
       }
 
+
       // 全部通過，開啟二次確認視窗
       setSaveModalVisible(true);
     } else {
@@ -133,6 +145,7 @@ export default function ProfileScreen() {
       setIsEditing(true);
     }
   };
+
 
   // 點擊確認彈窗的「確定儲存」
   const handleConfirmSave = async () => {
@@ -151,24 +164,28 @@ export default function ProfileScreen() {
     }
   };
 
+
   const handleCancelPress = () => {
     setCancelModalVisible(true);
   };
+
 
   const handleConfirmCancel = () => {
     setCancelModalVisible(false);
     setIsEditing(false);
   };
 
+
   const handleConfirmLogout = () => {
     setLogoutModalVisible(false);
     if (Platform.OS === 'web') {
       window.alert("您已成功登出！");
-      router.replace('/'); 
+      router.replace('/');
     } else {
       Alert.alert("提示", "您已成功登出！", [{ text: "確定", onPress: () => router.replace('/') }]);
     }
   };
+
 
   const handleMenuPress = (menuName: string) => {
     if (menuName === '會員中心') router.push('/profile');
@@ -178,6 +195,7 @@ export default function ProfileScreen() {
     else if (menuName === '查詢商品') router.push('/products');
     else if (menuName === '成就管理') router.push('/achievements');
   };
+
 
   const webSelectStyle = {
     fontSize: '16px',
@@ -191,6 +209,7 @@ export default function ProfileScreen() {
     outline: 'none',
     width: '65%'
   };
+
 
   return (
     <SafeAreaView style={styles.container}>
@@ -207,6 +226,7 @@ export default function ProfileScreen() {
           </ScrollView>
         </View>
 
+
         <View style={styles.headerRightGroup}>
           <TouchableOpacity style={styles.memberCenterBtnActive} onPress={() => handleMenuPress('會員中心')}>
             <Text style={styles.memberCenterText}>會員中心</Text>
@@ -217,9 +237,10 @@ export default function ProfileScreen() {
         </View>
       </View>
 
+
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
         <View style={styles.profileCard}>
-          
+         
           {/* 左側欄位：頭像與姓名 */}
           <View style={styles.leftSection}>
             <TouchableOpacity style={styles.avatarContainer} onPress={pickImage} activeOpacity={0.8}>
@@ -232,6 +253,7 @@ export default function ProfileScreen() {
                 <Text style={styles.editIconText}>✏️</Text>
               </View>
             </TouchableOpacity>
+
 
             {isEditing ? (
               <TextInput
@@ -248,11 +270,13 @@ export default function ProfileScreen() {
             )}
           </View>
 
+
           <View style={styles.divider} />
+
 
           {/* 右側欄位：詳細表單 */}
           <View style={styles.rightSection}>
-            
+           
             {/* 生日欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>生 日</Text>
@@ -277,6 +301,7 @@ export default function ProfileScreen() {
               )}
             </View>
 
+
             {/* 身高欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>身 高 (cm)</Text>
@@ -295,6 +320,7 @@ export default function ProfileScreen() {
                 </Text>
               )}
             </View>
+
 
             {/* 體重欄位 */}
             <View style={styles.infoRow}>
@@ -315,6 +341,7 @@ export default function ProfileScreen() {
               )}
             </View>
 
+
             {/* 性別欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>生理性別</Text>
@@ -334,6 +361,7 @@ export default function ProfileScreen() {
               )}
             </View>
 
+
             {/* 帳號欄位 🔒【核心修正】：移除原本的短路提示文字，直接顯示資料值 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>帳 號</Text>
@@ -342,6 +370,7 @@ export default function ProfileScreen() {
               </Text>
             </View>
 
+
             {/* 密碼欄位 🔒【核心修正】：移除「請輸入密碼」，在唯讀狀態下永遠固定顯示為遮蔽符號 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>密 碼</Text>
@@ -349,6 +378,7 @@ export default function ProfileScreen() {
                 ••••••••
               </Text>
             </View>
+
 
             {/* 按鈕操作區塊 */}
             <View style={styles.btnGroupRow}>
@@ -371,8 +401,10 @@ export default function ProfileScreen() {
             </View>
           </View>
 
+
         </View>
       </ScrollView>
+
 
       {/* 儲存確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={saveModalVisible} onRequestClose={() => setSaveModalVisible(false)}>
@@ -392,6 +424,7 @@ export default function ProfileScreen() {
         </View>
       </Modal>
 
+
       {/* 取消變更確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={cancelModalVisible} onRequestClose={() => setCancelModalVisible(false)}>
         <View style={styles.modalOverlay}>
@@ -409,6 +442,7 @@ export default function ProfileScreen() {
           </View>
         </View>
       </Modal>
+
 
       {/* 登出確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={logoutModalVisible} onRequestClose={() => setLogoutModalVisible(false)}>
@@ -428,14 +462,16 @@ export default function ProfileScreen() {
         </View>
       </Modal>
 
+
     </SafeAreaView>
   );
 }
 
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#E0E7DA' },
-  header: { 
-    height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', 
+  header: {
+    height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row',
     alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30, zIndex: 10,
     ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } })
   },
@@ -445,12 +481,13 @@ const styles = StyleSheet.create({
   menuButton: { paddingHorizontal: 15 },
   headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8 },
   nonClickableText: { ...Platform.select({ web: { userSelect: 'none' } }) },
-  
+ 
   headerRightGroup: { flexDirection: 'row', alignItems: 'center' },
   memberCenterBtnActive: { backgroundColor: 'white', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1, borderColor: 'white', marginRight: 15 },
   memberCenterText: { color: '#A3C1AD', fontSize: 16, fontWeight: 'bold' },
   logoutHeaderBtn: { backgroundColor: 'rgba(231, 76, 60, 0.8)', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10 },
   logoutHeaderBtnText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+
 
   scrollContent: { minHeight: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5DC', paddingVertical: 40 },
   profileCard: { backgroundColor: 'white', width: '55%', minWidth: 580, flexDirection: 'row', borderRadius: 40, padding: 50, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 10 },
@@ -460,36 +497,40 @@ const styles = StyleSheet.create({
   avatarImage: { width: 140, height: 140, borderRadius: 70 },
   editIconBadge: { position: 'absolute', bottom: 5, right: 5, backgroundColor: 'white', width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', elevation: 3 },
   editIconText: { fontSize: 16 },
-  
+ 
   memberName: { fontSize: 24, fontWeight: 'bold', color: '#333' },
-  placeholderText: { color: '#A9A9A9', fontWeight: 'normal' }, 
-  
+  placeholderText: { color: '#A9A9A9', fontWeight: 'normal' },
+ 
   nameInput: { fontSize: 20, fontWeight: 'bold', color: '#333', borderBottomWidth: 1, borderColor: '#ccc', textAlign: 'center', width: '80%', paddingVertical: 2, ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
-  
+ 
   divider: { width: 1, backgroundColor: '#EBEBEB', marginHorizontal: 40 },
   rightSection: { flex: 1.5, justifyContent: 'center' },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, borderBottomWidth: 1, borderBottomColor: '#F2F2F2', paddingBottom: 6 },
   infoLabel: { fontSize: 18, color: '#333', fontWeight: '600' },
   infoValue: { fontSize: 18, color: '#666' },
-  
+ 
   // 🔒 唯讀欄位樣式調整，提示禁止游標
   readOnlyText: { color: '#777', ...Platform.select({ web: { cursor: 'not-allowed', userSelect: 'none' } }) },
-  
+ 
   btnGroupRow: { flexDirection: 'row', alignSelf: 'flex-end', marginTop: 15 },
   editBtn: { paddingVertical: 10, paddingHorizontal: 35, borderRadius: 15 },
   editBtnText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
 
+
   ageHighlightText: { fontSize: 18, color: '#333', marginLeft: 4 },
+
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
   alertContent: { backgroundColor: '#FFF', width: 380, padding: 25, borderRadius: 20, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10, elevation: 10 },
   alertTitle: { fontSize: 20, fontWeight: 'bold', color: '#333', marginBottom: 12, textAlign: 'center' },
   alertMessage: { fontSize: 14, color: '#666', lineHeight: 22, marginBottom: 25, textAlign: 'center' },
 
+
   modalButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   modalBtn: { flex: 1, height: 45, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginHorizontal: 6 },
   modalBtnCancel: { backgroundColor: '#F5F5F5' },
   modalBtnCancelText: { color: '#666', fontSize: 15, fontWeight: '500' },
-  orangeAlertBtn: { backgroundColor: '#F3B07E' }, 
+  orangeAlertBtn: { backgroundColor: '#F3B07E' },
   modalBtnConfirmText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' }
 });
+

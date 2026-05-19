@@ -3,16 +3,18 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Dimensions, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LineChart } from "react-native-chart-kit";
 
+
 export default function HistoryScreen() {
   const router = useRouter();
   const screenWidth = Dimensions.get("window").width;
   const [selectedPeriod, setSelectedPeriod] = useState('周');
-  
+ 
   // 🔄 狀態管理：加載狀態與圖表數據
   const [isLoading, setIsLoading] = useState(true);
   const [chartLabels, setChartLabels] = useState<string[]>([]);
   const [weightData, setWeightData] = useState<number[]>([]);
   const [bmiData, setBmiData] = useState<number[]>([]);
+
 
   // 🌐 【核心功能】：從後端 API 撈取動態數據
   const fetchHistoryData = async (period: string) => {
@@ -21,15 +23,16 @@ export default function HistoryScreen() {
       // 💡 未來後端工程師只要把這裡換成實際的 API URL 即可
       // 例如: const response = await fetch(`https://your-api.com/api/v1/history?period=${period}`);
       // const json = await response.json();
-      
+     
       // --------------------------------------------------
       // 模擬後端從資料庫回傳的 Mock Data (到時候整段直接刪掉換成上面的 API)
       // 這裡模擬資料庫會隨著你切換「年、月、周、日」給予對應的數據
       await new Promise(resolve => setTimeout(resolve, 500)); // 模擬網路延遲 0.5 秒
-      
+     
       let labels: string[] = [];
       let weights: number[] = [];
       let bmis: number[] = [];
+
 
       if (period === '周') {
         labels = ["4/13", "4/14", "4/15", "4/16", "4/17", "4/18", "4/19"];
@@ -50,10 +53,12 @@ export default function HistoryScreen() {
       }
       // --------------------------------------------------
 
+
       // 將從資料庫/模擬器撈到的資料，打進 React 的 State 驅動畫面更新
       setChartLabels(labels);
       setWeightData(weights);
       setBmiData(bmis);
+
 
     } catch (error) {
       console.error("撈取資料庫歷史紀錄失敗:", error);
@@ -62,10 +67,12 @@ export default function HistoryScreen() {
     }
   };
 
+
   // 🎣 當頁面第一次載入，或者使用者切換「年/月/周/日」時，自動重新觸發資料庫查詢
   useEffect(() => {
     fetchHistoryData(selectedPeriod);
   }, [selectedPeriod]);
+
 
   // 💡 導覽列路由
   const handleMenuPress = (menuName: string) => {
@@ -83,6 +90,7 @@ export default function HistoryScreen() {
       router.push('/achievements');
     }
   };
+
 
   return (
     <SafeAreaView style={styles.container}>
@@ -103,6 +111,7 @@ export default function HistoryScreen() {
         </TouchableOpacity>
       </View>
 
+
       {/* 主內容區 */}
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
         <View style={styles.mainWrapper}>
@@ -112,6 +121,7 @@ export default function HistoryScreen() {
               <Text style={styles.chartMainTitle}>本{selectedPeriod}體重及BMI紀錄</Text>
               <TouchableOpacity style={styles.arrowBtn}><Text style={styles.arrowText}>〉</Text></TouchableOpacity>
             </View>
+
 
             <View style={styles.chartBodyContainer}>
               {/* 左側圖表或加載圈圈 */}
@@ -144,12 +154,14 @@ export default function HistoryScreen() {
                   <Text style={styles.loadingText}>暫無歷史數據</Text>
                 )}
 
+
                 {/* 自訂圖例 */}
                 <View style={styles.customLegend}>
                   <View style={styles.legendItem}><View style={[styles.legendLine, { backgroundColor: '#4682B4' }]} /><View style={[styles.legendDot, { backgroundColor: '#4682B4' }]} /><Text style={styles.legendText}>體重</Text></View>
                   <View style={styles.legendItem}><View style={[styles.legendLine, { backgroundColor: '#F3B07E' }]} /><View style={[styles.legendDot, { backgroundColor: '#F3B07E' }]} /><Text style={styles.legendText}>BMI</Text></View>
                 </View>
               </View>
+
 
               {/* 右側時間選單（年、月、周、日） */}
               <View style={styles.sideDateMenu}>
@@ -166,6 +178,7 @@ export default function HistoryScreen() {
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#E0E7DA' },
@@ -200,3 +213,4 @@ const styles = StyleSheet.create({
   dateUnitText: { fontSize: 22, color: '#B0B0B0', fontWeight: '500' },
   dateUnitTextActive: { color: '#111111', fontWeight: 'bold', fontSize: 24 }
 });
+
