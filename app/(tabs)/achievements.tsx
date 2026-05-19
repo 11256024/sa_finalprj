@@ -1,7 +1,7 @@
 import { Feather } from '@expo/vector-icons';
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // 💡【數據動態化】：模擬未來從資料庫（API）撈出來的數據結構
 const dummyAchievements = [
@@ -16,23 +16,24 @@ const dummyAchievements = [
 
 export default function AchievementsScreen() {
   const router = useRouter();
+  const pathname = usePathname(); // 🔄 動態偵測當前路由路徑
   const [activeTab, setActiveTab] = useState<'locked' | 'unlocked'>('locked');
 
-  // 💡 導覽列路由
-  const handleMenuPress = (menuName: string) => {
-    if (menuName === '會員中心') {
-      router.push('/profile');
-    } else if (menuName === '每日紀錄') {
-      router.push('/daily-record');
-    } else if (menuName === '歷史紀錄') {
-      router.push('/history');
-    } else if (menuName === '身體指數查詢') {
-      router.push('/body-metrics');
-    } else if (menuName === '查詢商品') {
-      router.push('/products');
-    } else if (menuName === '成就管理') {
-      router.push('/achievements');
-    }
+  // 👤 模擬會員頭像狀態 (與其他主要功能頁面完全同步)
+  const [userAvatar, setUserAvatar] = useState<string | null>(null);
+
+  // 🌐 定義橫幅選單的名稱與對應路由 (完美對齊前幾頁)
+  const menuItems = [
+    { name: '每日紀錄', path: '/daily-record' },
+    { name: '歷史紀錄', path: '/history' },
+    { name: '身體指數查詢', path: '/body-metrics' },
+    { name: '查詢商品', path: '/products' },
+    { name: '成就管理', path: '/achievements' },
+  ];
+
+  // 💡 導覽列路由跳轉
+  const handleMenuPress = (path: string) => {
+    router.push(path as any);
   };
 
   // 根據 Tab 過濾資料
@@ -50,27 +51,33 @@ export default function AchievementsScreen() {
       {/* 1. 上方綠色導覽列 */}
       <View style={styles.header}>
         <View style={styles.headerLeftGroup}>
-          <TouchableOpacity onPress={() => handleMenuPress('首頁')}>
-            <Text style={styles.headerTitle}>食半功倍</Text>
-          </TouchableOpacity>
+          <Text style={styles.headerTitle}>食半功倍</Text>
           
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
-            {['每日紀錄', '歷史紀錄', '身體指數查詢', '查詢商品', '成就管理'].map((item) => (
-              <TouchableOpacity key={item} onPress={() => handleMenuPress(item)} style={styles.menuButton}>
-                <Text style={[
-                  styles.headerMenu, 
-                  item === '成就管理' && { fontWeight: 'bold', textDecorationLine: 'underline' }
-                ]}>
-                  {item}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            {menuItems.map((item) => {
+              // 🎯 核心高亮邏輯：動態偵測當前路徑
+              const isActive = pathname === item.path;
+              
+              return (
+                <TouchableOpacity key={item.name} onPress={() => handleMenuPress(item.path)} style={styles.menuButton}>
+                  <Text style={[styles.headerMenu, isActive && styles.activeMenu]}>
+                    {item.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
 
-        {/* 右側會員中心按鈕 - 完全參照身體指數查詢的樣式代碼 */}
-        <TouchableOpacity style={styles.memberCenterBtn} onPress={() => handleMenuPress('會員中心')}>
-          <Text style={styles.memberCenterText}>會員中心</Text>
+        {/* 👤 右上角：圓形大頭貼按鈕（與其餘主要頁面完全同步） */}
+        <TouchableOpacity style={styles.avatarButton} onPress={() => router.push('/profile')}>
+          {userAvatar ? (
+            <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.defaultAvatar}>
+              <Text style={styles.defaultAvatarText}>林</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -110,7 +117,7 @@ export default function AchievementsScreen() {
               <View key={item.id} style={styles.achievementCard}>
                 <View style={styles.achievementLeft}>
                   <View style={styles.iconContainer}>
-                    <Feather name="award" size={26} color="#666" />
+                    <Feather name="award" size={26} color={activeTab === 'unlocked' ? "#FF9F6A" : "#888"} />
                   </View>
                   <Text style={styles.achievementTitle}>{item.title}</Text>
                 </View>
@@ -129,70 +136,60 @@ export default function AchievementsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9F1E7' },
+  // 🎯 修正全域背景色，與專案其餘頁面色彩完全連貫
+  container: { flex: 1, backgroundColor: '#F6EFE5' },
   
   /* 導覽列 */
   header: { 
-    height: 100, 
-    backgroundColor: '#A3C1AD', 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    justifyContent: 'space-between', 
-    paddingHorizontal: 30,
+    height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', 
+    alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30, zIndex: 10,
     ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } })
   },
   headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30 },
+  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30, ...Platform.select({ web: { cursor: 'default', userSelect: 'none' } }) },
   menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500' },
+  menuButton: { paddingHorizontal: 15, paddingVertical: 10 },
+  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8, paddingBottom: 4 },
+  activeMenu: { opacity: 1, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: 'white' },
 
-  /* 🎯 完美同步：完全參照身體指數查詢的會員中心按鈕樣式 */
-  memberCenterBtn: { 
-    backgroundColor: 'rgba(255,255,255,0.25)', 
-    paddingVertical: 8, 
-    paddingHorizontal: 16, 
-    borderRadius: 10, 
-    borderWidth: 1, 
-    borderColor: 'rgba(255,255,255,0.5)' 
-  },
-  memberCenterText: { 
-    color: 'white', 
-    fontSize: 16, 
-    fontWeight: 'bold' 
-  },
+  // 👤 圓形大頭貼按鈕樣式 (全系統設計語彙一致)
+  avatarButton: { width: 50, height: 50, borderRadius: 25, overflow: 'hidden', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  avatarImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  defaultAvatar: { width: '100%', height: '100%', backgroundColor: '#D3D3D3', justifyContent: 'center', alignItems: 'center' },
+  defaultAvatarText: { color: '#555', fontSize: 18, fontWeight: 'bold' },
 
   /* 主內容容器 */
   mainContent: {
     flex: 1,
-    paddingHorizontal: 40,
+    paddingHorizontal: 80, // 與商品查詢、歷史圖表左右側安全範圍完全對齊
+    paddingTop: 10,
   },
   
   /* 總進度卡片 */
   summaryCard: {
     backgroundColor: '#FFF',
     borderRadius: 25,
-    paddingVertical: 20,
-    paddingHorizontal: 25,
+    paddingVertical: 22,
+    paddingHorizontal: 30,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginTop: 25,
-    marginBottom: 15,
+    marginBottom: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
     elevation: 3,
   },
-  summaryTitle: { fontSize: 20, fontWeight: '600', color: '#333', letterSpacing: 2 },
-  summaryProgress: { fontSize: 16, color: '#333', letterSpacing: 1 },
+  summaryTitle: { fontSize: 22, fontWeight: 'bold', color: '#333', letterSpacing: 2 },
+  summaryProgress: { fontSize: 17, color: '#555', fontWeight: '500', letterSpacing: 1 },
 
   /* Tab 切換 */
-  tabContainer: { flexDirection: 'row', marginBottom: 15, paddingLeft: 15 },
-  tabButton: { paddingVertical: 6, marginRight: 25, borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  tabContainer: { flexDirection: 'row', marginBottom: 20, paddingLeft: 10 },
+  tabButton: { paddingVertical: 6, marginRight: 30, borderBottomWidth: 3, borderBottomColor: 'transparent' },
   tabButtonActive: { borderBottomColor: '#FF9F6A' },
-  tabText: { fontSize: 16, color: '#999', fontWeight: '500' },
+  tabText: { fontSize: 18, color: '#999', fontWeight: '500', letterSpacing: 1 },
   tabTextActive: { color: '#FF9F6A', fontWeight: 'bold' },
 
   /* 列表容器 */
@@ -211,21 +208,21 @@ const styles = StyleSheet.create({
   /* 成就卡片項目 */
   achievementCard: {
     backgroundColor: '#FFF',
-    borderRadius: 25,
-    paddingVertical: 18, 
-    paddingHorizontal: 25,
+    borderRadius: 22,
+    paddingVertical: 20, 
+    paddingHorizontal: 30,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 14,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 3,
+    shadowOpacity: 0.03,
+    shadowRadius: 5,
     elevation: 2,
   },
   achievementLeft: { flexDirection: 'row', alignItems: 'center' },
-  iconContainer: { marginRight: 15 },
-  achievementTitle: { fontSize: 16, color: '#333', fontWeight: '500' },
-  achievementProgress: { fontSize: 16, color: '#333' },
+  iconContainer: { marginRight: 20 },
+  achievementTitle: { fontSize: 17, color: '#333', fontWeight: '500', letterSpacing: 0.5 },
+  achievementProgress: { fontSize: 17, color: '#666', fontWeight: '500' },
 });

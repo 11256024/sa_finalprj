@@ -1,11 +1,12 @@
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function BodyMetricsScreen() {
   const router = useRouter();
+  const pathname = usePathname();
 
-  // 1. 狀態控制：儲存當前的輸入數值與計算結果
+  // 核心數據狀態
   const [metricsData, setMetricsData] = useState({
     gender: '',
     age: '',
@@ -13,16 +14,58 @@ export default function BodyMetricsScreen() {
     weight: '',
     bmi: '---',
     bmrValue: 0,
-    isCalculated: false // 控制 BMR 總結與右側 TDEE 是否亮起
+    isCalculated: false
   });
 
-  // 2. 下拉選單資料源 (Web 端專用)
-  const ageOptions = Array.from({ length: 91 }, (_, i) => (i + 10).toString()); // 10 - 100 歲
-  const heightOptions = Array.from({ length: 151 }, (_, i) => (i + 100).toString()); // 100 - 250 cm
-  const weightOptions = Array.from({ length: 171 }, (_, i) => (i + 30).toString());  // 30 - 200 kg
+  // 用來追蹤使用者有沒有「手動改過」選單
+  const [isModified, setIsModified] = useState({
+    gender: false,
+    age: false,
+    height: false,
+    weight: false
+  });
+
+  const [userAvatar, setUserAvatar] = useState<string | null>(null);
+
+  const menuItems = [
+    { name: '每日紀錄', path: '/daily-record' },
+    { name: '歷史紀錄', path: '/history' },
+    { name: '身體指數查詢', path: '/body-metrics' },
+    { name: '查詢商品', path: '/products' },
+    { name: '成就管理', path: '/achievements' },
+  ];
+
+  const ageOptions = Array.from({ length: 91 }, (_, i) => (i + 10).toString());
+  const heightOptions = Array.from({ length: 151 }, (_, i) => (i + 100).toString());
+  const weightOptions = Array.from({ length: 171 }, (_, i) => (i + 30).toString());
   const genderOptions = ['男', '女'];
 
-  // 💡 核心優化：當身高或體重改變時，自動即時計算 BMI
+  // 從 LocalStorage 同步會員資料
+  useEffect(() => {
+    try {
+      let savedProfile = null;
+      if (Platform.OS === 'web') {
+        const localData = localStorage.getItem('user_profile');
+        if (localData) savedProfile = JSON.parse(localData);
+      }
+
+      if (savedProfile && savedProfile.gender && savedProfile.height && savedProfile.weight && savedProfile.birthday) {
+        const birthDate = new Date(savedProfile.birthday);
+        const today = new Date();
+        let age = today.getFullYear() - birthDate.getFullYear();
+        const monthDifference = today.getMonth() - birthDate.getMonth();
+        if (monthDifference < 0 || (monthDifference === 0 && today.getDate() < birthDate.getDate())) {
+          age--;
+        }
+        
+        runCalculation(savedProfile.gender, age.toString(), savedProfile.height, savedProfile.weight);
+      }
+    } catch (error) {
+      console.error("自動同步會員資料時發生錯誤：", error);
+    }
+  }, []);
+
+  // 即時計算 BMI
   useEffect(() => {
     const weight = parseFloat(metricsData.weight);
     const height = parseFloat(metricsData.height);
@@ -36,42 +79,6 @@ export default function BodyMetricsScreen() {
     }
   }, [metricsData.height, metricsData.weight]);
 
-  // 🎯 功能一：同步 Profile 的 LocalStorage 資料（已移除 Alert 提示框）
-  const handleSyncProfile = () => {
-    try {
-      let savedProfile = null;
-      if (Platform.OS === 'web') {
-        const localData = localStorage.getItem('user_profile');
-        if (localData) savedProfile = JSON.parse(localData);
-      }
-
-      // 防呆：檢查是否有填寫過資料
-      if (!savedProfile || !savedProfile.height || !savedProfile.weight || !savedProfile.birthday) {
-        if (Platform.OS === 'web') {
-          window.alert('同步失敗：偵測到您的會員中心基本資料尚未完整填寫！');
-        } else {
-          alert('偵測到您的會員中心基本資料尚未填寫完成！');
-        }
-        return;
-      }
-
-      // 解析生日算年齡
-      const birthDate = new Date(savedProfile.birthday);
-      const today = new Date();
-      let age = today.getFullYear() - birthDate.getFullYear();
-      const monthDifference = today.getMonth() - birthDate.getMonth();
-      if (monthDifference < 0 || (monthDifference === 0 && today.getDate() < birthDate.getDate())) {
-        age--;
-      }
-
-      // 直接帶入並觸發完整計算
-      runCalculation(savedProfile.gender, age.toString(), savedProfile.height, savedProfile.weight);
-    } catch (error) {
-      console.error("同步會員資料時發生錯誤：", error);
-    }
-  };
-
-  // 🎯 功能二：手動點擊「開始計算指數」（產出 BMR 與 TDEE）
   const handleManualCalculate = () => {
     if (!metricsData.gender || !metricsData.age || !metricsData.height || !metricsData.weight) {
       if (Platform.OS === 'web') {
@@ -84,7 +91,6 @@ export default function BodyMetricsScreen() {
     runCalculation(metricsData.gender, metricsData.age, metricsData.height, metricsData.weight);
   };
 
-  // 提取出的核心 BMR 計算邏輯
   const runCalculation = (gender: string, ageStr: string, heightStr: string, weightStr: string) => {
     const weight = parseFloat(weightStr);
     const height = parseFloat(heightStr);
@@ -93,13 +99,13 @@ export default function BodyMetricsScreen() {
     const heightInMeters = height / 100;
     const bmi = (weight / (heightInMeters * heightInMeters)).toFixed(1);
 
-    // Mifflin-St Jeor 公式計算 BMR
     let bmr = 10 * weight + 6.25 * height - 5 * age;
     if (gender === '男') bmr += 5;
     else bmr -= 161;
     const finalBmr = Math.round(bmr);
 
-    setMetricsData({
+    setMetricsData(prev => ({
+      ...prev,
       gender,
       age: age.toString(),
       height: height.toString(),
@@ -107,16 +113,7 @@ export default function BodyMetricsScreen() {
       bmi,
       bmrValue: finalBmr,
       isCalculated: true
-    });
-  };
-
-  const handleMenuPress = (menuName: string) => {
-    if (menuName === '會員中心') router.push('/profile');
-    else if (menuName === '每日紀錄') router.push('/daily-record'); 
-    else if (menuName === '歷史紀錄') router.push('/history');
-    else if (menuName === '身體指數查詢') router.push('/body-metrics');
-    else if (menuName === '查詢商品') router.push('/products');
-    else if (menuName === '成就管理') router.push('/achievements');
+    }));
   };
 
   const tdeeItems = [
@@ -127,17 +124,25 @@ export default function BodyMetricsScreen() {
     { id: '5', title: '身體活動程度激烈', sub: '(長時間運動或體力勞動工作)', multiplier: 1.9, label: 'BMR x 1.9' },
   ];
 
-  // Web 專用 Select 樣式
-  const webSelectStyle = {
-    fontSize: '18px',
-    color: '#333',
-    backgroundColor: 'transparent',
-    border: 'none',
-    textAlign: 'right' as const,
-    fontFamily: 'inherit',
-    outline: 'none',
-    width: '140px',
-    fontWeight: '500',
+  // 控制外面「平時看得到的文字」顏色
+  const getWebSelectStyle = (hasValue: boolean, fieldKey: 'gender' | 'age' | 'height' | 'weight') => {
+    let textColor = '#E0E0E0'; 
+    if (hasValue) {
+      textColor = isModified[fieldKey] ? '#333333' : '#999999'; // 會員拉來的顯示淺灰，自己改的變深黑
+    }
+
+    return {
+      fontSize: '18px',
+      color: textColor,
+      backgroundColor: 'transparent',
+      border: 'none',
+      textAlign: 'right' as const,
+      fontFamily: 'inherit',
+      outline: 'none',
+      width: '140px',
+      fontWeight: '500',
+      cursor: 'pointer',
+    };
   };
 
   return (
@@ -147,22 +152,32 @@ export default function BodyMetricsScreen() {
         <View style={styles.headerLeftGroup}>
           <Text style={styles.headerTitle}>食半功倍</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
-            {['每日紀錄', '歷史紀錄', '身體指數查詢', '查詢商品', '成就管理'].map((item) => (
-              <TouchableOpacity key={item} onPress={() => handleMenuPress(item)} style={styles.menuButton}>
-                <Text style={[styles.headerMenu, item === '身體指數查詢' && styles.activeMenu]}>{item}</Text>
-              </TouchableOpacity>
-            ))}
+            {menuItems.map((item) => {
+              const isActive = pathname === item.path || (item.name === '身體指數查詢' && pathname.includes('body-metrics'));
+              return (
+                <TouchableOpacity key={item.name} onPress={() => router.push(item.path as any)} style={styles.menuButton}>
+                  <Text style={[styles.headerMenu, isActive && styles.activeMenu]}>{item.name}</Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
-        <TouchableOpacity style={styles.memberCenterBtn} onPress={() => handleMenuPress('會員中心')}>
-          <Text style={styles.memberCenterText}>會員中心</Text>
+
+        <TouchableOpacity style={styles.avatarButton} onPress={() => router.push('/profile')}>
+          {userAvatar ? (
+            <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.defaultAvatar}>
+              <Text style={styles.defaultAvatarText}>林</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
       {/* 主內容區 */}
       <View style={styles.content}>
         <ScrollView contentContainerStyle={styles.scrollContainer} scrollEnabled={Platform.OS !== 'web'} showsVerticalScrollIndicator={false}>
-          <View style={styles.metricsCard}>
+          <View style={styles.metricsLayout}>
             
             {/* 左側：BMR 卡片 */}
             <View style={styles.bmrSection}>
@@ -176,99 +191,139 @@ export default function BodyMetricsScreen() {
                     {Platform.OS === 'web' ? (
                       <select
                         value={metricsData.gender}
-                        onChange={(e) => setMetricsData({ ...metricsData, gender: e.target.value })}
-                        style={webSelectStyle}
+                        onChange={(e) => {
+                          setMetricsData({ ...metricsData, gender: e.target.value });
+                          setIsModified(prev => ({ ...prev, gender: true }));
+                        }}
+                        style={getWebSelectStyle(!!metricsData.gender, 'gender')}
                       >
-                        <option value="">請選擇</option>
-                        {genderOptions.map(g => <option key={g} value={g}>{g}</option>)}
+                        {/* 💡 修正：下拉選單打開後，所有的選項（包含請選擇）字體全部牢牢鎖定為深黑色 #333333 */}
+                        <option value="" style={{ color: '#333333' }}>請選擇</option>
+                        {genderOptions.map(g => <option key={g} value={g} style={{ color: '#333333' }}>{g}</option>)}
                       </select>
                     ) : (
                       <TextInput
-                        style={styles.bmrInput}
+                        style={[
+                          styles.bmrInput, 
+                          metricsData.gender !== '' && (isModified.gender ? styles.darkValueText : styles.lightValueText)
+                        ]}
                         value={metricsData.gender}
                         placeholder="請輸入男/女"
-                        placeholderTextColor="#BBB"
-                        onChangeText={(text) => setMetricsData({ ...metricsData, gender: text })}
+                        placeholderTextColor="#E0E0E0"
+                        onChangeText={(text) => {
+                          setMetricsData({ ...metricsData, gender: text });
+                          setIsModified(prev => ({ ...prev, gender: true }));
+                        }}
                       />
                     )}
                   </View>
 
-                  {/* 年齡 (新增 Web 下拉選單) */}
+                  {/* 年齡 */}
                   <View style={styles.bmrRow}>
-                    <Text style={styles.bmrLabel}>年     齡</Text>
+                    <Text style={styles.bmrLabel}>年    齡</Text>
                     {Platform.OS === 'web' ? (
                       <select
                         value={metricsData.age}
-                        onChange={(e) => setMetricsData({ ...metricsData, age: e.target.value })}
-                        style={webSelectStyle}
+                        onChange={(e) => {
+                          setMetricsData({ ...metricsData, age: e.target.value });
+                          setIsModified(prev => ({ ...prev, age: true }));
+                        }}
+                        style={getWebSelectStyle(!!metricsData.age, 'age')}
                       >
-                        <option value="">請選擇(歲)</option>
-                        {ageOptions.map(a => <option key={a} value={a}>{a} 歲</option>)}
+                        {/* 💡 修正：選單內的字全部維持深黑色 #333333 */}
+                        <option value="" style={{ color: '#333333' }}>請選擇(歲)</option>
+                        {ageOptions.map(a => <option key={a} value={a} style={{ color: '#333333' }}>{a} 歲</option>)}
                       </select>
                     ) : (
                       <TextInput
-                        style={styles.bmrInput}
+                        style={[
+                          styles.bmrInput, 
+                          metricsData.age !== '' && (isModified.age ? styles.darkValueText : styles.lightValueText)
+                        ]}
                         value={metricsData.age}
                         placeholder="請輸入年齡"
-                        placeholderTextColor="#BBB"
+                        placeholderTextColor="#E0E0E0"
                         keyboardType="numeric"
-                        onChangeText={(text) => setMetricsData({ ...metricsData, age: text.replace(/[^0-9]/g, '') })}
+                        onChangeText={(text) => {
+                          setMetricsData({ ...metricsData, age: text.replace(/[^0-9]/g, '') });
+                          setIsModified(prev => ({ ...prev, age: true }));
+                        }}
                       />
                     )}
                   </View>
 
                   {/* 身高 */}
                   <View style={styles.bmrRow}>
-                    <Text style={styles.bmrLabel}>身     高</Text>
+                    <Text style={styles.bmrLabel}>身    高</Text>
                     {Platform.OS === 'web' ? (
                       <select
                         value={metricsData.height}
-                        onChange={(e) => setMetricsData({ ...metricsData, height: e.target.value })}
-                        style={webSelectStyle}
+                        onChange={(e) => {
+                          setMetricsData({ ...metricsData, height: e.target.value });
+                          setIsModified(prev => ({ ...prev, height: true }));
+                        }}
+                        style={getWebSelectStyle(!!metricsData.height, 'height')}
                       >
-                        <option value="">請選擇(cm)</option>
-                        {heightOptions.map(h => <option key={h} value={h}>{h} cm</option>)}
+                        {/* 💡 修正：選單內的字全部維持深黑色 #333333 */}
+                        <option value="" style={{ color: '#333333' }}>請選擇(cm)</option>
+                        {heightOptions.map(h => <option key={h} value={h} style={{ color: '#333333' }}>{h} cm</option>)}
                       </select>
                     ) : (
                       <TextInput
-                        style={styles.bmrInput}
+                        style={[
+                          styles.bmrInput, 
+                          metricsData.height !== '' && (isModified.height ? styles.darkValueText : styles.lightValueText)
+                        ]}
                         value={metricsData.height}
                         placeholder="請輸入(cm)"
-                        placeholderTextColor="#BBB"
+                        placeholderTextColor="#E0E0E0"
                         keyboardType="numeric"
-                        onChangeText={(text) => setMetricsData({ ...metricsData, height: text })}
+                        onChangeText={(text) => {
+                          setMetricsData({ ...metricsData, height: text });
+                          setIsModified(prev => ({ ...prev, height: true }));
+                        }}
                       />
                     )}
                   </View>
 
                   {/* 體重 */}
                   <View style={styles.bmrRow}>
-                    <Text style={styles.bmrLabel}>體     重</Text>
+                    <Text style={styles.bmrLabel}>體    重</Text>
                     {Platform.OS === 'web' ? (
                       <select
                         value={metricsData.weight}
-                        onChange={(e) => setMetricsData({ ...metricsData, weight: e.target.value })}
-                        style={webSelectStyle}
+                        onChange={(e) => {
+                          setMetricsData({ ...metricsData, weight: e.target.value });
+                          setIsModified(prev => ({ ...prev, weight: true }));
+                        }}
+                        style={getWebSelectStyle(!!metricsData.weight, 'weight')}
                       >
-                        <option value="">請選擇(kg)</option>
-                        {weightOptions.map(w => <option key={w} value={w}>{w} kg</option>)}
+                        {/* 💡 修正：選單內的字全部維持深黑色 #333333 */}
+                        <option value="" style={{ color: '#333333' }}>請選擇(kg)</option>
+                        {weightOptions.map(w => <option key={w} value={w} style={{ color: '#333333' }}>{w} kg</option>)}
                       </select>
                     ) : (
                       <TextInput
-                        style={styles.bmrInput}
+                        style={[
+                          styles.bmrInput, 
+                          metricsData.weight !== '' && (isModified.weight ? styles.darkValueText : styles.lightValueText)
+                        ]}
                         value={metricsData.weight}
                         placeholder="請輸入(kg)"
-                        placeholderTextColor="#BBB"
+                        placeholderTextColor="#E0E0E0"
                         keyboardType="numeric"
-                        onChangeText={(text) => setMetricsData({ ...metricsData, weight: text })}
+                        onChangeText={(text) => {
+                          setMetricsData({ ...metricsData, weight: text });
+                          setIsModified(prev => ({ ...prev, weight: true }));
+                        }}
                       />
                     )}
                   </View>
 
-                  {/* BMI (連動後自動高亮顯示數值) */}
+                  {/* BMI */}
                   <View style={styles.bmrRow}>
                     <Text style={styles.bmrLabel}>B  M  I</Text>
-                    <Text style={[styles.bmrValueText, metricsData.bmi !== '---' && styles.activeValueText]}>
+                    <Text style={[styles.bmrValueText, metricsData.bmi !== '---' && styles.darkValueText]}>
                       {metricsData.bmi}
                     </Text>
                   </View>
@@ -282,20 +337,15 @@ export default function BodyMetricsScreen() {
                   </Text>
                 </View>
 
-                {/* 按鈕組合 */}
                 <View style={styles.buttonContainer}>
                   <TouchableOpacity style={styles.calculateButton} onPress={handleManualCalculate}>
                     <Text style={styles.calculateButtonText}>開始計算指數</Text>
-                  </TouchableOpacity>
-
-                  <TouchableOpacity style={styles.syncButton} onPress={handleSyncProfile}>
-                    <Text style={styles.syncButtonText}>同步會員中心資料</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             </View>
 
-            {/* 右側：TDEE 區塊 */}
+            {/* 右側 TDEE */}
             <View style={styles.tdeeSection}>
               <View style={styles.tdeeTitleBox}>
                 <View style={styles.tdeeMainHeader}>
@@ -317,7 +367,7 @@ export default function BodyMetricsScreen() {
                         <Text style={styles.activityTitle}>{item.title}</Text>
                         <Text style={styles.activitySub}>{item.sub}</Text>
                         <Text style={styles.formulaText}>
-                          {item.label} = <Text style={styles.orangeHighlight}>{finalTdeeValue}</Text>
+                          {item.label} = <Text style={[styles.grayHighlight, metricsData.isCalculated && styles.orangeHighlight]}>{finalTdeeValue}</Text>
                         </Text>
                       </View>
                     );
@@ -335,74 +385,63 @@ export default function BodyMetricsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#E0E7DA' },
-  header: { height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30, ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } }) },
+  header: { 
+    height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', 
+    alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30, 
+    zIndex: 10,
+    ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } }) 
+  },
   headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
   headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30 },
   menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.7 },
-  activeMenu: { opacity: 1, fontWeight: 'bold' },
-  memberCenterBtn: { backgroundColor: 'rgba(255,255,255,0.25)', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' },
-  memberCenterText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+  menuButton: { paddingHorizontal: 15, paddingVertical: 10 },
+  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8, paddingBottom: 4 },
+  activeMenu: { opacity: 1, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: 'white' },
+  
+  avatarButton: { width: 50, height: 50, borderRadius: 25, overflow: 'hidden' },
+  avatarImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  defaultAvatar: { width: '100%', height: '100%', backgroundColor: '#D3D3D3', justifyContent: 'center', alignItems: 'center' },
+  defaultAvatarText: { color: '#555', fontSize: 18, fontWeight: 'bold' },
   
   content: { flex: 1, backgroundColor: '#F6EFE5' },
   scrollContainer: { paddingVertical: 40, alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { height: 'calc(100vh - 100px)' } }) },
-  metricsCard: { width: '85%', maxWidth: 1000, flexDirection: 'row', justifyContent: 'center', alignItems: 'flex-start', height: '100%' },
+  metricsLayout: { width: '90%', maxWidth: 1200, flexDirection: 'row', justifyContent: 'center', alignItems: 'flex-start', height: '100%' },
   
-  bmrSection: { flex: 1, maxWidth: 460, marginRight: 20 },
-  bmrCard: { backgroundColor: 'white', borderRadius: 35, paddingHorizontal: 45, paddingVertical: 35, elevation: 5, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.02, shadowRadius: 8 },
-  bmrMainTitle: { fontSize: 32, fontWeight: 'bold', color: '#000', textAlign: 'center', marginBottom: 30, letterSpacing: 0.5 },
+  bmrSection: { flex: 1, maxWidth: 460, marginRight: 25 },
+  bmrCard: { backgroundColor: 'white', borderRadius: 35, paddingHorizontal: 40, paddingVertical: 35, elevation: 4 },
+  bmrMainTitle: { fontSize: 32, fontWeight: 'bold', color: '#333', textAlign: 'center', marginBottom: 30 },
   bmrList: { marginBottom: 15 },
-  bmrRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
-  bmrLabel: { fontSize: 20, fontWeight: '600', color: '#333', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }, 
+  bmrRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
+  bmrLabel: { fontSize: 20, fontWeight: '600', color: '#444', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }, 
   
-  bmrInput: { fontSize: 18, color: '#333', textAlign: 'right', width: '140px', fontWeight: '500', padding: 0, ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
-  bmrValueText: { fontSize: 18, color: '#BBB', fontWeight: '500', textAlign: 'right', width: '140px' },
-  activeValueText: { color: '#333', fontWeight: '600' },
+  bmrInput: { fontSize: 18, textAlign: 'right', width: '140px', fontWeight: '500', padding: 0 },
+  bmrValueText: { fontSize: 18, color: '#DCDCDC', fontWeight: '500', textAlign: 'right', width: '140px' }, 
+  
+  lightValueText: { color: '#999999', fontWeight: '600' }, 
+  darkValueText: { color: '#333333', fontWeight: '600' },  
   
   resultRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: 25, marginBottom: 25, justifyContent: 'center' },
   resultLabel: { fontSize: 24, color: '#F3B07E', fontWeight: 'bold' },
-  resultValue: { fontSize: 32, color: '#BBB', fontWeight: 'bold', marginLeft: 10 },
+  resultValue: { fontSize: 32, color: '#DCDCDC', fontWeight: 'bold', marginLeft: 10 }, 
   activeBmrText: { color: '#E28743' },
 
   buttonContainer: { gap: 12 },
-  calculateButton: {
-    backgroundColor: '#E28743',
-    borderRadius: 20,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#E28743',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  calculateButtonText: { color: 'white', fontSize: 18, fontWeight: 'bold', letterSpacing: 1 },
+  calculateButton: { backgroundColor: '#E28743', borderRadius: 20, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
+  calculateButtonText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
 
-  syncButton: {
-    backgroundColor: '#FFF',
-    borderWidth: 1.5,
-    borderColor: '#E28743',
-    borderRadius: 20,
-    paddingVertical: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  syncButtonText: { color: '#E28743', fontSize: 16, fontWeight: 'bold', letterSpacing: 1 },
-
-  tdeeSection: { flex: 1, marginLeft: 20, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-start' },
-  tdeeTitleBox: { backgroundColor: 'white', borderRadius: 30, paddingHorizontal: 35, paddingVertical: 30, marginBottom: 16, elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.02, shadowRadius: 5 },
-  tdeeMainHeader: { flexDirection: 'row', alignItems: 'baseline', marginBottom: 12 },
-  tdeeTitle: { fontSize: 42, fontWeight: 'bold', color: '#000', marginRight: 10, letterSpacing: 1 },
-  tdeeSubTitle: { fontSize: 22, fontWeight: 'bold', color: '#000' },
+  tdeeSection: { flex: 1, marginLeft: 25, height: '100%' },
+  tdeeTitleBox: { backgroundColor: 'white', borderRadius: 30, paddingHorizontal: 35, paddingVertical: 25, marginBottom: 16 },
+  tdeeMainHeader: { flexDirection: 'row', alignItems: 'baseline', marginBottom: 10 },
+  tdeeTitle: { fontSize: 42, fontWeight: 'bold', color: '#333', marginRight: 10 },
+  tdeeSubTitle: { fontSize: 22, fontWeight: 'bold', color: '#333' },
   tdeeDesc: { fontSize: 18, color: '#F3B07E', fontWeight: '500' },
   
-  tdeeScrollArea: { flex: 1, ...Platform.select({ web: { maxHeight: 'calc(100vh - 360px)' } }) },
+  tdeeScrollArea: { flex: 1, ...Platform.select({ web: { maxHeight: 'calc(100vh - 340px)' } }) },
   tdeeItemsContainer: { paddingBottom: 20 },
-  tdeeItemBox: { backgroundColor: 'white', borderRadius: 30, paddingHorizontal: 35, paddingVertical: 25, marginBottom: 16, elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.02, shadowRadius: 5 },
-  activityTitle: { fontSize: 22, fontWeight: 'bold', color: '#000', textAlign: 'center', marginBottom: 6 },
+  tdeeItemBox: { backgroundColor: 'white', borderRadius: 30, paddingHorizontal: 35, paddingVertical: 22, marginBottom: 16 },
+  activityTitle: { fontSize: 22, fontWeight: 'bold', color: '#333', textAlign: 'center', marginBottom: 6 },
   activitySub: { fontSize: 18, color: '#BBB', marginBottom: 14, textAlign: 'center' },
-  formulaText: { fontSize: 24, color: '#000', textAlign: 'center' },
+  formulaText: { fontSize: 24, color: '#333', textAlign: 'center' },
+  grayHighlight: { color: '#DCDCDC', fontWeight: '500' }, 
   orangeHighlight: { color: '#F3B07E', fontWeight: 'bold' }
 });

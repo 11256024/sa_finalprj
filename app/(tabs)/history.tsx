@@ -1,8 +1,8 @@
-import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { usePathname, useRouter } from 'expo-router';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, Image, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-// 📋 1. 定義從資料庫撈取出來的單項食物與單日紀錄結構
+// 📋 定義從資料庫撈取出來的單項食物與單日紀錄結構
 interface FoodItem {
   id: string;     // 資料庫流水號或 UUID
   name: string;   // 食物品項名稱
@@ -25,6 +25,7 @@ interface DailyRecord {
 
 export default function HistoryScreen() {
   const router = useRouter();
+  const pathname = usePathname(); // 🔄 動態偵測網址路徑，確保導覽列高亮底線 100% 精準
   
   // 🔄 狀態管理：控制目前選中的日期、30天資料庫數據以及載入狀態
   const [selectedDate, setSelectedDate] = useState<string>('');
@@ -32,13 +33,24 @@ export default function HistoryScreen() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // 👤 模擬會員頭像路徑 (與每日紀錄保持同步，未來可換成真實的後端圖片網址)
+  const [userAvatar, setUserAvatar] = useState<string | null>(null);
+
+  // 定義橫幅選單的名稱與路由對照表
+  const menuItems = [
+    { name: '每日紀錄', path: '/daily-record' },
+    { name: '歷史紀錄', path: '/history' },
+    { name: '身體指數查詢', path: '/body-metrics' },
+    { name: '查詢商品', path: '/products' },
+    { name: '成就管理', path: '/achievements' },
+  ];
+
   // 🌐 【核心對接功能】：從後端 API 撈取近 30 天資料庫真實飲食紀錄檔
   const fetchDatabaseRecords = async () => {
     setIsLoading(true);
     setErrorMessage(null);
     try {
       // 💡 串接提示：請後端工程師提供此 API，並確認回傳結構符合 DailyRecord 陣列即可
-      // 例如：const response = await fetch('http://localhost:3000/api/history/thirty-days');
       const response = await fetch('YOUR_BACKEND_API_URL/api/history/thirty-days');
       
       if (!response.ok) {
@@ -46,7 +58,6 @@ export default function HistoryScreen() {
       }
       
       const data: DailyRecord[] = await response.json();
-      
       setThirtyDaysRecords(data);
       
       // 預設自動選取最新的一天（通常是陣列的第一筆）
@@ -57,11 +68,44 @@ export default function HistoryScreen() {
       console.error("撈取資料庫歷史紀錄失敗:", error);
       setErrorMessage(error.message || '無法連線至資料庫，請檢查網路連線。');
       
-      // 防賴皮備份：如果 API 尚未開好，可以先解開下方註解進行前端排版測試
+      // 💡 如果目前還沒有後端 API，可以暫時解開下方註解，用測試模擬數據來看畫面
       // setupMockData();
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // 🧪 前端介面排版測試專用模擬數據 (API 未開好前可作測試，若不需要可直接刪除)
+  const setupMockData = () => {
+    const mockData: DailyRecord[] = [
+      {
+        dateString: "2026-05-19",
+        displayDate: "05/19",
+        dayOfWeek: "週二",
+        weight: "68.5",
+        bmi: "22.4",
+        meals: {
+          breakfast: [{ id: 'b1', name: '鮪魚蛋餅', unit: '1份', calories: 350 }],
+          lunch: [{ id: 'l1', name: '雞胸肉健康便當', unit: '1個', calories: 580 }],
+          dinner: [{ id: 'd1', name: '炙燒鮭魚沙拉', unit: '1盤', calories: 420 }]
+        }
+      },
+      {
+        dateString: "2026-05-18",
+        displayDate: "05/18",
+        dayOfWeek: "週一",
+        weight: "68.8",
+        bmi: "22.5",
+        meals: {
+          breakfast: [{ id: 'b2', name: '御飯糰', unit: '60克', calories: 180 }],
+          lunch: [],
+          dinner: [{ id: 'd2', name: '牛肉麵', unit: '1碗', calories: 750 }]
+        }
+      }
+    ];
+    setThirtyDaysRecords(mockData);
+    setSelectedDate(mockData[0].dateString);
+    setErrorMessage(null);
   };
 
   // 🎣 當頁面第一次載入時，主動向後端資料庫發出請求
@@ -69,26 +113,16 @@ export default function HistoryScreen() {
     fetchDatabaseRecords();
   }, []);
 
-  // 💡 3. 抓取目前被使用者點選的日期紀錄物件
+  // 💡 抓取目前被使用者點選的日期紀錄物件
   const currentRecord = thirtyDaysRecords.find(r => r.dateString === selectedDate);
 
-  // 🧮 4. 動態加總計算當天「三餐總熱量」的邏輯（不寫死，完全看資料庫有多少加多少）
+  // 🧮 動態加總計算當天「三餐總熱量」的邏輯
   const calculateTotalCalories = () => {
     if (!currentRecord) return 0;
-    const bCal = currentRecord.meals.breakfast.reduce((sum, item) => sum + (Number(item.calories) || 0), 0);
-    const lCal = currentRecord.meals.lunch.reduce((sum, item) => sum + (Number(item.calories) || 0), 0);
-    const dCal = currentRecord.meals.dinner.reduce((sum, item) => sum + (Number(item.calories) || 0), 0);
+    const bCal = currentRecord.meals?.breakfast?.reduce((sum, item) => sum + (Number(item.calories) || 0), 0) || 0;
+    const lCal = currentRecord.meals?.lunch?.reduce((sum, item) => sum + (Number(item.calories) || 0), 0) || 0;
+    const dCal = currentRecord.meals?.dinner?.reduce((sum, item) => sum + (Number(item.calories) || 0), 0) || 0;
     return bCal + lCal + dCal;
-  };
-
-  // 🧭 5. 頂部導覽列路由連動
-  const handleMenuPress = (menuName: string) => {
-    if (menuName === '會員中心') router.push('/profile');
-    else if (menuName === '每日紀錄') router.push('/daily-record');
-    else if (menuName === '歷史紀錄') router.push('/history');
-    else if (menuName === '身體指數查詢') router.push('/body-metrics');
-    else if (menuName === '查詢商品') router.push('/products');
-    else if (menuName === '成就管理') router.push('/achievements');
   };
 
   return (
@@ -98,15 +132,29 @@ export default function HistoryScreen() {
         <View style={styles.headerLeftGroup}>
           <Text style={styles.headerTitle}>食半功倍</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
-            {['每日紀錄', '歷史紀錄', '身體指數查詢', '查詢商品', '成就管理'].map((item) => (
-              <TouchableOpacity key={item} onPress={() => handleMenuPress(item)} style={styles.menuButton}>
-                <Text style={[styles.headerMenu, item === '歷史紀錄' && styles.activeMenu]}>{item}</Text>
-              </TouchableOpacity>
-            ))}
+            {menuItems.map((item) => {
+              // 精準比對路由路徑，決定是否高亮下劃線
+              const isActive = pathname === item.path || (item.name === '歷史紀錄' && pathname.includes('history'));
+              return (
+                <TouchableOpacity key={item.name} onPress={() => router.push(item.path as any)} style={styles.menuButton}>
+                  <Text style={[styles.headerMenu, isActive && styles.activeMenu]}>
+                    {item.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
-        <TouchableOpacity style={styles.memberCenterBtn} onPress={() => handleMenuPress('會員中心')}>
-          <Text style={styles.memberCenterText}>會員中心</Text>
+
+        {/* 👤 右上角：圓形大頭貼按鈕（與每日紀錄同步） */}
+        <TouchableOpacity style={styles.avatarButton} onPress={() => router.push('/profile')}>
+          {userAvatar ? (
+            <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.defaultAvatar}>
+              <Text style={styles.defaultAvatarText}>林</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -123,9 +171,14 @@ export default function HistoryScreen() {
           <View style={styles.centerState}>
             <Text style={styles.errorText}>⚠️ 連線失敗</Text>
             <Text style={styles.errorSubText}>{errorMessage}</Text>
-            <TouchableOpacity style={styles.retryButton} onPress={fetchDatabaseRecords}>
-              <Text style={styles.retryButtonText}>重新嘗試連線</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: 15 }}>
+              <TouchableOpacity style={styles.retryButton} onPress={fetchDatabaseRecords}>
+                <Text style={styles.retryButtonText}>重新嘗試連線</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.retryButton, { backgroundColor: '#A3C1AD' }]} onPress={setupMockData}>
+                <Text style={styles.retryButtonText}>使用模擬數據測試</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         ) : (
           <View style={styles.mainLayout}>
@@ -181,7 +234,7 @@ export default function HistoryScreen() {
                     <View style={styles.mealHeaderRow}>
                       <Text style={styles.mealTitle}>🌅 早餐紀錄</Text>
                       <Text style={styles.mealCalorieSum}>
-                        小計：{currentRecord.meals?.breakfast?.reduce((sum, item) => sum + (item.calories || 0), 0) || 0} kcal
+                        小計：{currentRecord.meals?.breakfast?.reduce((sum, item) => sum + (Number(item.calories) || 0), 0) || 0} kcal
                       </Text>
                     </View>
                     <View style={styles.tableHeader}>
@@ -198,7 +251,7 @@ export default function HistoryScreen() {
                         </View>
                       ))
                     ) : (
-                      <Text style={styles.emptyMealText}>此時段無飲食資料資料庫檔</Text>
+                      <Text style={styles.emptyMealText}>此時段無飲食存檔紀錄</Text>
                     )}
                   </View>
 
@@ -207,7 +260,7 @@ export default function HistoryScreen() {
                     <View style={styles.mealHeaderRow}>
                       <Text style={styles.mealTitle}>☀️ 午餐紀錄</Text>
                       <Text style={styles.mealCalorieSum}>
-                        小計：{currentRecord.meals?.lunch?.reduce((sum, item) => sum + (item.calories || 0), 0) || 0} kcal
+                        小計：{currentRecord.meals?.lunch?.reduce((sum, item) => sum + (Number(item.calories) || 0), 0) || 0} kcal
                       </Text>
                     </View>
                     <View style={styles.tableHeader}>
@@ -224,7 +277,7 @@ export default function HistoryScreen() {
                         </View>
                       ))
                     ) : (
-                      <Text style={styles.emptyMealText}>此時段無飲食資料資料庫檔</Text>
+                      <Text style={styles.emptyMealText}>此時段無飲食存檔紀錄</Text>
                     )}
                   </View>
 
@@ -233,7 +286,7 @@ export default function HistoryScreen() {
                     <View style={styles.mealHeaderRow}>
                       <Text style={styles.mealTitle}>🌙 晚餐紀錄</Text>
                       <Text style={styles.mealCalorieSum}>
-                        小計：{currentRecord.meals?.dinner?.reduce((sum, item) => sum + (item.calories || 0), 0) || 0} kcal
+                        小計：{currentRecord.meals?.dinner?.reduce((sum, item) => sum + (Number(item.calories) || 0), 0) || 0} kcal
                       </Text>
                     </View>
                     <View style={styles.tableHeader}>
@@ -250,7 +303,7 @@ export default function HistoryScreen() {
                         </View>
                       ))
                     ) : (
-                      <Text style={styles.emptyMealText}>此時段無飲食資料資料庫檔</Text>
+                      <Text style={styles.emptyMealText}>此時段無飲食存檔紀錄</Text>
                     )}
                   </View>
 
@@ -271,15 +324,26 @@ export default function HistoryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#E0E7DA' },
-  header: { height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30, zIndex: 10, ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } }) },
+  header: {
+    height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row',
+    alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30,
+    zIndex: 10,
+    ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } })
+  },
   headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30 },
+  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30, ...Platform.select({ web: { cursor: 'default', userSelect: 'none' } }) },
   menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8 },
+  menuButton: { paddingHorizontal: 15, paddingVertical: 10 },
+  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8, paddingBottom: 4 },
+  
+  // 🎯 白線底線高亮樣式
   activeMenu: { opacity: 1, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: 'white' },
-  memberCenterBtn: { backgroundColor: 'rgba(255,255,255,0.25)', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' },
-  memberCenterText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+  
+  // 👤 大頭貼圓形樣式 (與 DailyRecord 完全同步)
+  avatarButton: { width: 50, height: 50, borderRadius: 25, overflow: 'hidden', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  avatarImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  defaultAvatar: { width: '100%', height: '100%', backgroundColor: '#D3D3D3', justifyContent: 'center', alignItems: 'center' },
+  defaultAvatarText: { color: '#555', fontSize: 18, fontWeight: 'bold' },
   
   content: { flex: 1, backgroundColor: '#F6EFE5' },
   mainLayout: { flex: 1, flexDirection: 'row', maxWidth: 1200, width: '90%', alignSelf: 'center', marginVertical: 30 },

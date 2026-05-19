@@ -1,6 +1,6 @@
 import { useRouter, usePathname } from 'expo-router';
 import React, { useRef, useState } from 'react';
-import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 // 定義單一食物項目的資料結構
 interface FoodItem {
@@ -11,10 +11,13 @@ interface FoodItem {
 
 export default function DailyRecordScreen() {
   const router = useRouter();
-  const pathname = usePathname(); // 👈 自動偵測網址路徑，確保高亮底線100%精準
+  const pathname = usePathname(); // 🔄 動態偵測網址路徑，確保高亮底線 100% 精準
 
   const [weight, setWeight] = useState('');
   const [bmi, setBmi] = useState('—');
+
+  // 👤 模擬從 profile 撈出來的會員頭像路徑 (未來換成真實的後端圖片網址即可)
+  const [userAvatar, setUserAvatar] = useState<string | null>(null);
 
   // 宣告 useRef 用來控制右邊單位欄位的焦點
   const unitInputRef = useRef<TextInput>(null);
@@ -192,8 +195,11 @@ export default function DailyRecordScreen() {
           <Text style={styles.headerTitle}>食半功倍</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
             {menuItems.map((item) => {
-              // 🎯 動態判斷：如果 pathname 包含此路徑，或是當前就是每日紀錄頁面
-              const isActive = pathname === item.path || (item.name === '每日紀錄' && (pathname === '/' || pathname.includes('daily-record')));
+              // 🎯 全功能高亮底線判斷：
+              // 精準比對路由，或者是「每日紀錄」且目前正在根路由、daily-record 或 weightpic 圖表頁
+              const isActive = 
+                pathname === item.path || 
+                (item.name === '每日紀錄' && (pathname === '/' || pathname.includes('daily-record') || pathname.includes('weightpic')));
               
               return (
                 <TouchableOpacity key={item.name} onPress={() => router.push(item.path as any)} style={styles.menuButton}>
@@ -205,8 +211,17 @@ export default function DailyRecordScreen() {
             })}
           </ScrollView>
         </View>
-        <TouchableOpacity style={styles.memberCenterBtn} onPress={() => router.push('/profile')}>
-          <Text style={styles.memberCenterText}>會員中心</Text>
+
+        {/* 👤 右上角：升級為圓形大頭貼按鈕 */}
+        <TouchableOpacity style={styles.avatarButton} onPress={() => router.push('/profile')}>
+          {userAvatar ? (
+            <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
+          ) : (
+            // 預設大頭貼：無圖片時顯示高質感圓形純文字頭像
+            <View style={styles.defaultAvatar}>
+              <Text style={styles.defaultAvatarText}>林</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -215,7 +230,6 @@ export default function DailyRecordScreen() {
         <View style={styles.recordCard}>
           <View style={styles.titleRow}>
             <Text style={styles.mainTitle}>每日紀錄</Text>
-            {/* 👈 點擊白框卡片右上角「點我看體重紀錄」，跳轉至趨勢圖表頁 weightpic */}
             <TouchableOpacity onPress={() => router.push('/weightpic')}>
               <Text style={styles.linkText}>點我看體重紀錄</Text>
             </TouchableOpacity>
@@ -239,7 +253,7 @@ export default function DailyRecordScreen() {
             </View>
           </View>
 
-          {/* 三大餐點區塊（早餐、午餐、晚餐） */}
+          {/* 三大餐點區塊（早餐、午餐、晚餐） - 🔍 這裡已經修正乾淨！ */}
           {(['早餐', '午餐', '晚餐'] as const).map((category) => (
             <View key={category} style={styles.mealBlockCard}>
               <View style={styles.blockHeaderRow}>
@@ -403,16 +417,19 @@ const styles = StyleSheet.create({
     ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } })
   },
   headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30 },
+  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30, ...Platform.select({ web: { cursor: 'default', userSelect: 'none' } }) },
   menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8 },
+  menuButton: { paddingHorizontal: 15, paddingVertical: 10 },
+  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8, paddingBottom: 4 },
   
   // 🎯 白線底線高亮樣式
   activeMenu: { opacity: 1, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: 'white' },
   
-  memberCenterBtn: { backgroundColor: 'rgba(255,255,255,0.25)', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' },
-  memberCenterText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
+  // 👤 大頭貼圓形樣式
+  avatarButton: { width: 50, height: 50, borderRadius: 25, overflow: 'hidden', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  avatarImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  defaultAvatar: { width: '100%', height: '100%', backgroundColor: '#D3D3D3', justifyContent: 'center', alignItems: 'center' },
+  defaultAvatarText: { color: '#555', fontSize: 18, fontWeight: 'bold' },
   
   scrollContent: { minHeight: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5DC', paddingVertical: 40 },
   recordCard: { backgroundColor: 'white', width: '65%', minWidth: 650, borderRadius: 40, padding: 50, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 10 },

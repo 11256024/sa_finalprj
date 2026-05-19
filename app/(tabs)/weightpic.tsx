@@ -1,6 +1,6 @@
 import { useRouter, usePathname } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Dimensions, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Dimensions, Image, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LineChart } from "react-native-chart-kit";
 
 export default function WeightPicScreen() {
@@ -14,6 +14,9 @@ export default function WeightPicScreen() {
   const [chartLabels, setChartLabels] = useState<string[]>([]);
   const [weightData, setWeightData] = useState<number[]>([]);
   const [bmiData, setBmiData] = useState<number[]>([]);
+
+  // 👤 模擬會員頭像狀態 (與其他主要功能頁面完全同步)
+  const [userAvatar, setUserAvatar] = useState<string | null>(null);
 
   // 🌐 定義橫幅選單的名稱與對應路由
   const menuItems = [
@@ -82,7 +85,7 @@ export default function WeightPicScreen() {
           <Text style={styles.headerTitle}>食半功倍</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
             {menuItems.map((item) => {
-              // 🎯 核心高亮邏輯修正：
+              // 🎯 核心高亮邏輯：
               // 如果巡迴到「每日紀錄」這個選項，且目前網址包含 daily-record 或 weightpic，就賦予 activeMenu 樣式
               const isActive = 
                 pathname === item.path || 
@@ -96,8 +99,16 @@ export default function WeightPicScreen() {
             })}
           </ScrollView>
         </View>
-        <TouchableOpacity style={styles.memberCenterBtn} onPress={() => router.push('/profile')}>
-          <Text style={styles.memberCenterText}>會員中心</Text>
+
+        {/* 👤 右上角：圓形大頭貼按鈕（與其餘主要功能頁面完全同步） */}
+        <TouchableOpacity style={styles.avatarButton} onPress={() => router.push('/profile')}>
+          {userAvatar ? (
+            <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.defaultAvatar}>
+              <Text style={styles.defaultAvatarText}>林</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -170,12 +181,18 @@ const styles = StyleSheet.create({
   headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
   headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30, ...Platform.select({ web: { cursor: 'default', userSelect: 'none' } }) },
   menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8 },
+  menuButton: { paddingHorizontal: 15, paddingVertical: 10 },
+  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8, paddingBottom: 4 },
   activeMenu: { opacity: 1, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: 'white' },
-  memberCenterBtn: { backgroundColor: 'rgba(255,255,255,0.25)', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' },
-  memberCenterText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
-  scrollContent: { minHeight: '100%', backgroundColor: '#F5F5DC' },
+  
+  // 👤 圓形大頭貼按鈕樣式 (與其餘主要頁面完全同步)
+  avatarButton: { width: 50, height: 50, borderRadius: 25, overflow: 'hidden', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  avatarImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  defaultAvatar: { width: '100%', height: '100%', backgroundColor: '#D3D3D3', justifyContent: 'center', alignItems: 'center' },
+  defaultAvatarText: { color: '#555', fontSize: 18, fontWeight: 'bold' },
+
+  // 🎯 修正背景色，保持專案米色基調一致
+  scrollContent: { minHeight: '100%', backgroundColor: '#F6EFE5' },
   mainWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 50 },
   chartCard: { backgroundColor: 'white', width: '65%', minWidth: 720, borderRadius: 40, paddingVertical: 40, paddingHorizontal: 30, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 12 },
   chartHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginBottom: 25 },

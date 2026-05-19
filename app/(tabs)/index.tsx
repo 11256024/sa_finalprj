@@ -1,51 +1,61 @@
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
-import React, { useState } from 'react';
-import { Alert, Modal, Platform, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react'; // 💡 引入 useEffect 和 useRef
+import { Modal, Platform, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function LoginScreen() {
   const router = useRouter(); 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showError, setShowError] = useState(false);
+  const [errorMsg, setErrorMsg] = useState(''); 
   
+  // 💡 建立兩個 Ref 用來控制焦點切換
+  const usernameRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+
+  // 控制密碼可視性
+  const [isPasswordSecure, setIsPasswordSecure] = useState(true);
+
   // 保持全域登入狀態（預設未登入 false）
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   // 自訂防呆登出彈窗的顯示狀態
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
 
+  // 💡 頁面一載入，自動將滑鼠/焦點聚集在帳號欄位
+  useEffect(() => {
+    // 稍微延遲一下確保元件完全渲染（特別是在 Web 端或某些裝置上）
+    const timer = setTimeout(() => {
+      usernameRef.current?.focus();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, []);
+
   // 登入驗證與跳轉邏輯
   const handleLogin = () => {
-    // 1. 密碼強度正規表達式驗證
-    const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[.!?@]).{8,}$/;
-    
-    if (!passwordRegex.test(password)) {
+    if (!username.trim() || !password) {
+      setErrorMsg('⚠️ 請輸入帳號與密碼！');
       setShowError(true);
       return;
     }
+
+    const hasUpperCase = /[A-Z]/.test(password);
+    const isLengthValid = password.length >= 6;
+    
+    if (!hasUpperCase || !isLengthValid) {
+      setErrorMsg('⚠️ 請輸入一個大寫字母，且長度需大於或等於 6 位數！');
+      setShowError(true);
+      return; 
+    }
+    
     setShowError(false);
     
-    // 2. 帳密與身分分流驗證
     if (username.trim() === 'admin' && password === 'Admin123!') {
       setIsLoggedIn(true);
-      if (Platform.OS === 'web') {
-        window.alert("歡迎回來，尊貴的系統管理員！");
-        router.replace('/admin-review'); // 使用 replace 徹底取代頁面
-      } else {
-        Alert.alert("登入成功", "歡迎回來，尊貴的系統管理員！", [
-          { text: "進入後台", onPress: () => router.replace('/admin-review') }
-        ]);
-      }
+      router.replace('/admin-review'); 
     } else {
-      // 一般使用者登入
       setIsLoggedIn(true);
-      if (Platform.OS === 'web') {
-        window.alert("普通使用者登入成功！");
-        router.replace('/profile'); // 改為 replace，防止背景登入狀態卡死
-      } else {
-        Alert.alert("登入成功", "普通使用者登入成功！", [
-          { text: "確定", onPress: () => router.replace('/profile') }
-        ]);
-      }
+      router.replace('/profile'); 
     }
   };
 
@@ -60,23 +70,17 @@ export default function LoginScreen() {
     setUsername('');              
     setPassword('');
     setLogoutModalVisible(false); 
-    if (Platform.OS === 'web') {
-      window.alert("您已成功登出系統。");
-    } else {
-      Alert.alert("提示", "您已成功登出系統。");
-    }
   };
 
   return (
     <SafeAreaView style={styles.container}>
       
-      {/* 頂部導覽列 - 純淨保留「食半功倍」 */}
+      {/* 頂部導覽列 */}
       <View style={styles.header}>
         <View style={styles.headerLeftGroup}>
           <Text style={styles.headerTitle}>食半功倍</Text>
         </View>
 
-        {/* 右側動態按鈕：若為登入狀態，顯示防呆登出按鈕 */}
         {isLoggedIn && (
           <TouchableOpacity style={styles.logoutHeaderBtn} onPress={handleLogoutTrigger}>
             <Text style={styles.logoutHeaderBtnText}>登 出</Text>
@@ -89,43 +93,65 @@ export default function LoginScreen() {
         
         <View style={styles.cardContainer}>
           <View style={styles.inputContainer}>
-            {/* 帳號 */}
+            
+            {/* 帳號欄位 */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>帳 號</Text>
               <TextInput 
+                ref={usernameRef} // 💡 綁定帳號的 Ref
                 style={styles.input} 
-                placeholder="請輸入帳號"
+                placeholder="請輸入帳號(限用英文字母)"
                 placeholderTextColor="#A9A9A9"
                 value={username}
-                onChangeText={(text) => { setUsername(text); setShowError(false); }}
+                onChangeText={(text) => { 
+                  setUsername(text.replace(/[^a-zA-Z]/g, '')); 
+                  setShowError(false); 
+                }}
                 autoCapitalize="none"
+                returnKeyType="next" // 💡 讓手機鍵盤右下角顯示「下一步」
+                blurOnSubmit={false} // 💡 預防按 Enter 時手機鍵盤收起來
+                onSubmitEditing={() => passwordRef.current?.focus()} // 💡 按 Enter 直接跳到密碼欄位
               />
             </View>
 
-            {/* 密碼 */}
-            <View style={[styles.inputGroup, { marginBottom: 10 }]}>
+            {/* 密碼欄位 */}
+            <View style={[styles.inputGroup, { marginBottom: 10, borderBottomWidth: 0 }]}>
               <Text style={styles.label}>密 碼</Text>
-              <TextInput 
-                style={styles.input} 
-                placeholder="請輸入密碼"
-                placeholderTextColor="#A9A9A9"
-                secureTextEntry={true}
-                value={password}
-                onChangeText={(text) => { setPassword(text); setShowError(false); }}
-              />
+              <View style={styles.passwordRow}>
+                <TextInput 
+                  ref={passwordRef} // 💡 綁定密碼的 Ref
+                  style={[styles.input, { flex: 1 }]} 
+                  placeholder="請輸入密碼(限用英文字母)"
+                  placeholderTextColor="#A9A9A9"
+                  secureTextEntry={isPasswordSecure}
+                  value={password}
+                  onChangeText={(text) => { setPassword(text); setShowError(false); }}
+                  returnKeyType="done" // 💡 密碼輸完後右下角顯示「完成」
+                  onSubmitEditing={handleLogin} // 💡 在密碼欄位按 Enter 可以直接觸發登入，超方便！
+                />
+                {/* 查看/隱藏 密碼的切換按鈕 */}
+                <TouchableOpacity 
+                  style={styles.eyeButton} 
+                  onPress={() => setIsPasswordSecure(!isPasswordSecure)}
+                >
+                  <Ionicons 
+                    name={isPasswordSecure ? 'eye-off-outline' : 'eye-outline'} 
+                    size={22} 
+                    color="#888" 
+                  />
+                </TouchableOpacity>
+              </View>
             </View>
 
-            {/* 警示區 */}
+            {/* 警示與提示區 */}
             <View style={styles.hintArea}>
               {showError ? (
                 <View style={styles.errorBox}>
-                  <Text style={styles.errorText}>
-                    ⚠️ 需包含至少一個大寫英文字母；一個小寫英文字母；一個數字；一個特殊字元，如：.!?@；且長度至少 8 字元 !
-                  </Text>
+                  <Text style={styles.errorText}>{errorMsg}</Text>
                 </View>
               ) : (
                 <Text style={styles.hintText}>
-                  * 需包含至少一個大寫英文字母；一個小寫英文字母；一個數字；一個特殊字元，如：.!?@；且長度至少 8 字元 !
+                  * 必須至少輸入一個大寫字母，且長度需大於或等於 6 位數！
                 </Text>
               )}
             </View>
@@ -220,15 +246,28 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   label: { fontSize: 20, color: '#333', fontWeight: '600', marginBottom: 5 },
-  // 🎯 修正處：將 Web 專屬的點選外框樣式（outlineStyle）正確寫在 style 裡面
   input: { 
     fontSize: 16, 
     color: '#333', 
     paddingVertical: 10,
     ...Platform.select({ web: { outlineStyle: 'none' as any } })
   },
+
+  passwordRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#ccc',
+    width: '100%',
+  },
+  eyeButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   
-  hintArea: { minHeight: 60, marginBottom: 15 },
+  hintArea: { minHeight: 60, marginTop: 15, marginBottom: 15 },
   errorBox: {
     backgroundColor: '#FFF5F5', borderWidth: 1, borderColor: '#FF4D4F',
     borderRadius: 8, padding: 10,

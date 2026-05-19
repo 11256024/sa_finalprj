@@ -1,6 +1,6 @@
-import { useRouter } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 // 1. 全頁面配置物件
 const pageLanguageConfig = {
@@ -8,14 +8,20 @@ const pageLanguageConfig = {
   memberCenter: '會員中心',
   pageTitle: '新 增 / 刪 除 商 品',
   addButtonText: '+ 新 增',
-  searchPlaceholder: '🔍  輸 入 商 品 名 稱',
+  searchPlaceholder: '🔍   輸 入 商 品 名 稱',
   searchCancel: '取 消',
   recentSearchLabel: '近 期 查 詢',
   calorieLabelPrefix: '熱量（',
   calorieLabelSuffix: ' 大卡）',
-  deleteButtonText: '- 刪 除',
+  deleteButtonText: '- 刪除',
   emptyResultText: '找不到相關商品',
-  menuItems: ['每日紀錄', '歷史紀錄', '身體指數查詢', '查詢商品', '成就管理'],
+  menuItems: [
+    { name: '每日紀錄', path: '/daily-record' },
+    { name: '歷史紀錄', path: '/history' },
+    { name: '身體指數查詢', path: '/body-metrics' },
+    { name: '查詢商品', path: '/products' },
+    { name: '成就管理', path: '/achievements' },
+  ],
   
   // 警示框文字
   deleteAlertTitle: '是否刪除商品？',
@@ -29,7 +35,7 @@ const pageLanguageConfig = {
   alertSubmitSuccessMessage: '管理員審核通過後將會正式入庫供大眾搜尋。在此之前，您可以直接使用它來計算您的每日熱量！',
   
   // 狀態標籤文字
-  statusPending: ' （個人審核中，可用於計算）', // 💡 前方留一個空格
+  statusPending: ' （個人審核中，可用於計算）', 
 
   // 警示對話框按鈕
   btnCancel: '取消',
@@ -55,12 +61,16 @@ const initialProducts = [
 
 export default function ProductsScreen() {
   const router = useRouter();
+  const pathname = usePathname(); // 🔄 動態偵測當前路由路徑
   const txt = pageLanguageConfig;
 
   // 狀態管理
   const [searchQuery, setSearchQuery] = useState('');
   const [products, setProducts] = useState(initialProducts); 
   
+  // 👤 模擬會員頭像狀態 (與其餘主要頁面完全同步)
+  const [userAvatar, setUserAvatar] = useState<string | null>(null);
+
   // 新增自訂商品彈窗控制
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newProductName, setNewProductName] = useState('');
@@ -92,21 +102,9 @@ export default function ProductsScreen() {
     setCustomAlert({ visible: true, title, message, onConfirm, cancelText, confirmText });
   };
   
-  // 💡 導覽列路由
-  const handleMenuPress = (menuName: string) => {
-    if (menuName === '會員中心') {
-      router.push('/profile');
-    } else if (menuName === '每日紀錄') {
-      router.push('/daily-record');
-    } else if (menuName === '歷史紀錄') {
-      router.push('/history');
-    } else if (menuName === '身體指數查詢') {
-      router.push('/body-metrics');
-    } else if (menuName === '查詢商品') {
-      router.push('/products');
-    } else if (menuName === '成就管理') {
-      router.push('/achievements');
-    }
+  // 💡 導覽列路由跳轉
+  const handleMenuPress = (path: string) => {
+    router.push(path as any);
   };
 
   // 開啟新增彈窗
@@ -194,27 +192,33 @@ export default function ProductsScreen() {
       {/* 1. 上方導覽列 */}
       <View style={styles.header}>
         <View style={styles.headerLeftGroup}>
-          <TouchableOpacity onPress={() => handleMenuPress('首頁')}>
-            <Text style={styles.headerTitle}>{txt.appName}</Text>
-          </TouchableOpacity>
+          <Text style={styles.headerTitle}>{txt.appName}</Text>
           
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
-            {txt.menuItems.map((item) => (
-              <TouchableOpacity key={item} onPress={() => handleMenuPress(item)} style={styles.menuButton}>
-                <Text style={[
-                  styles.headerMenu, 
-                  item === '查詢商品' && { fontWeight: 'bold', textDecorationLine: 'underline' }
-                ]}>
-                  {item}
-                </Text>
-              </TouchableOpacity>
-            ))}
+            {txt.menuItems.map((item) => {
+              // 🎯 核心高亮邏輯：動態對齊當前路徑
+              const isActive = pathname === item.path;
+              
+              return (
+                <TouchableOpacity key={item.name} onPress={() => handleMenuPress(item.path)} style={styles.menuButton}>
+                  <Text style={[styles.headerMenu, isActive && styles.activeMenu]}>
+                    {item.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
 
-        {/* 右側會員中心按鈕 - 完美對齊身體指數查詢的樣式代碼 */}
-        <TouchableOpacity style={styles.memberBtn} onPress={() => handleMenuPress('會員中心')}>
-          <Text style={styles.memberBtnText}>{txt.memberCenter}</Text>
+        {/* 👤 右上角：圓形大頭貼按鈕（與歷史圖表等其餘主頁面完全同步） */}
+        <TouchableOpacity style={styles.avatarButton} onPress={() => router.push('/profile')}>
+          {userAvatar ? (
+            <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
+          ) : (
+            <View style={styles.defaultAvatar}>
+              <Text style={styles.defaultAvatarText}>林</Text>
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 
@@ -254,7 +258,7 @@ export default function ProductsScreen() {
               {filteredProducts.map((item) => (
                 <View key={item.id} style={styles.productRow}>
                   
-                  {/* 將商品名稱與審核狀態寫在同一個 Text 標籤內，並強制單行，絕不換行 */}
+                  {/* 將商品名稱與審核狀態寫在同一個 Text 標籤內，並強制單行 */}
                   <View style={styles.nameAndStatusWrapper}>
                     <Text style={styles.productName} numberOfLines={1}>
                       {item.name}
@@ -282,9 +286,7 @@ export default function ProductsScreen() {
         </View>
       </View>
 
-      {/* ==========================================================
-          📦 視窗 A：正方形新增商品彈窗
-          ========================================================== */}
+      {/* 📦 視窗 A：正方形新增商品彈窗 */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -342,9 +344,7 @@ export default function ProductsScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* ==========================================================
-          💡 視窗 B：通用自訂提示與警示對話框
-          ========================================================== */}
+      {/* 💡 視窗 B：通用自訂提示與警示對話框 */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -385,35 +385,27 @@ export default function ProductsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F9F1E7' },
+  // 🎯 修正全域背景色，與專案其餘頁面色彩和諧一致
+  container: { flex: 1, backgroundColor: '#F6EFE5' },
   
   /* 導覽列 */
   header: { 
     height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', 
-    alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30,
+    alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30, zIndex: 10,
     ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } })
   },
   headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30 },
+  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30, ...Platform.select({ web: { cursor: 'default', userSelect: 'none' } }) },
   menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500' },
+  menuButton: { paddingHorizontal: 15, paddingVertical: 10 },
+  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8, paddingBottom: 4 },
+  activeMenu: { opacity: 1, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: 'white' },
   
-  /* 🎯 完美統一：完全參照身體指數查詢的會員中心按鈕樣式 */
-  memberBtn: { 
-    backgroundColor: 'rgba(255,255,255,0.25)', 
-    paddingVertical: 8, 
-    paddingHorizontal: 16, 
-    borderRadius: 10, 
-    borderWidth: 1, 
-    borderColor: 'rgba(255,255,255,0.5)',
-    flexShrink: 0
-  },
-  memberBtnText: { 
-    color: 'white', 
-    fontSize: 16, 
-    fontWeight: 'bold' 
-  },
+  // 👤 圓形大頭貼按鈕樣式 (完美整合專案全域設計)
+  avatarButton: { width: 50, height: 50, borderRadius: 25, overflow: 'hidden', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
+  avatarImage: { width: '100%', height: '100%', resizeMode: 'cover' },
+  defaultAvatar: { width: '100%', height: '100%', backgroundColor: '#D3D3D3', justifyContent: 'center', alignItems: 'center' },
+  defaultAvatarText: { color: '#555', fontSize: 18, fontWeight: 'bold' },
 
   /* 主介面佈局 */
   mainContent: { flex: 1, paddingHorizontal: 80, paddingTop: 30, paddingBottom: 20 },
