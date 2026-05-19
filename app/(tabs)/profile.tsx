@@ -2,7 +2,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Alert, Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-// 🎯 核心補上：引入跨平台本機資料庫套件
+// 引入跨平台本機資料庫套件
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface ProfileType {
@@ -13,6 +13,7 @@ interface ProfileType {
   gender: string;
   account: string;
   password: string;
+  age?: string; // 補上年齡儲存欄位，以便與身體指數頁面做完美的對照
 }
 
 export default function ProfileScreen() {
@@ -24,44 +25,44 @@ export default function ProfileScreen() {
   const [saveModalVisible, setSaveModalVisible] = useState(false);      
   const [cancelModalVisible, setCancelModalVisible] = useState(false);  
 
-  // 2. 初始狀態設定
+  // 2. 初始狀態設定（乾淨的空字串，完全不寫死）
   const [profileData, setProfileData] = useState<ProfileType>({
     name: '',
     birthday: '',
     height: '',
     weight: '',
     gender: '',
-    account: 'xiaoming123', // 預設顯示的帳號
-    password: 'yourpassword', // 預設顯示的密碼
+    account: 'xiaoming123',   // 帳號固定顯示
+    password: 'yourpassword', // 密碼固定顯示
+    age: ''
   });
 
-  // 暫存編輯區（跟隨初始化的預設值）
+  // 暫存編輯區（同步初始為空）
   const [tempData, setTempData] = useState<ProfileType>({ ...profileData });
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
-  // 📅 核心防呆：獲取今天日期的 YYYY-MM-DD 格式，用來限制生日最大值
+  // 📅 獲取今天日期的 YYYY-MM-DD 格式，用來限制網頁端生日最大值
   const getTodayDateString = () => {
     const today = new Date();
     const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, '0'); // 月份從 0 開始，所以要 +1
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
     const dd = String(today.getDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
   };
 
-  // 🎯 核心修正：頁面初始化改用跨平台的 AsyncStorage 讀取
+  // 頁面初始化載入
   useEffect(() => {
     loadProfileData();
   }, []);
 
   const loadProfileData = async () => {
     try {
-      // 雙重讀取保險：先讀取新格式的 userProfile 物件，若沒有再讀舊有的 user_profile
+      // 雙重讀取保險：優先讀取新格式，沒有再看舊格式
       let localData = await AsyncStorage.getItem('userProfile');
       if (!localData) {
         localData = await AsyncStorage.getItem('user_profile');
       }
       
-      // 同步讀取大頭貼快取
       const savedAvatar = await AsyncStorage.getItem('user_avatar');
 
       if (localData) {
@@ -82,8 +83,8 @@ export default function ProfileScreen() {
   const weightOptions = Array.from({ length: 171 }, (_, i) => (i + 30).toString());  
   const genderOptions = ['男', '女'];
 
-  // 計算精準年齡
-  const calculateAge = (birthdayStr: string) => {
+  // 計算純數字年齡（用於寫入資料庫，不帶有「歲」字樣方便其他頁面加減計算）
+  const getPureAgeValue = (birthdayStr: string): string => {
     if (!birthdayStr) return '';
     const birthDate = new Date(birthdayStr);
     const today = new Date();
@@ -92,7 +93,13 @@ export default function ProfileScreen() {
     if (monthDifference < 0 || (monthDifference === 0 && today.getDate() < birthDate.getDate())) {
       age--;
     }
-    return age >= 0 ? ` (${age} 歲)` : '';
+    return age >= 0 ? age.toString() : '';
+  };
+
+  // 顯示在畫面的年齡標籤
+  const renderAgeLabel = (birthdayStr: string) => {
+    const ageNum = getPureAgeValue(birthdayStr);
+    return ageNum ? ` (${ageNum} 歲)` : '';
   };
 
   // 大頭貼更換
@@ -112,7 +119,6 @@ export default function ProfileScreen() {
     if (!result.canceled) {
       const selectedUri = result.assets[0].uri;
       setAvatarUri(selectedUri);
-      // 即時保存頭像路徑到 AsyncStorage
       try {
         await AsyncStorage.setItem('user_avatar', selectedUri);
       } catch (e) {
@@ -130,7 +136,7 @@ export default function ProfileScreen() {
     }
   };
 
-  // 核心防呆：檢查可編輯欄位是否留白
+  // 表單驗證防呆
   const handleEditPress = () => {
     if (isEditing) {
       if (!tempData.name || tempData.name.trim() === '') {
@@ -154,7 +160,6 @@ export default function ProfileScreen() {
         return;
       }
 
-      // 全部通過，開啟二次確認視窗
       setSaveModalVisible(true);
     } else {
       setTempData({ ...profileData });
@@ -162,26 +167,35 @@ export default function ProfileScreen() {
     }
   };
 
-  // 🎯 核心聯動修正：點擊確認儲存時，將身高體重以直通車格式與打包物件高強度寫入 AsyncStorage
+  // 確認儲存：將年齡、身高、體重完好打包同步至身體指數頁面
   const handleConfirmSave = async () => {
     setSaveModalVisible(false);
     try {
-      // 1. 更新 React 元件內部狀態
-      setProfileData({ ...tempData });
+      // 動態算出純數字年齡並同步塞入物件
+      const calculatedAgeStr = getPureAgeValue(tempData.birthday);
+      const updatedData = {
+        ...tempData,
+        age: calculatedAgeStr
+      };
+
+      // 1. 更新內部狀態
+      setProfileData(updatedData);
       setIsEditing(false);
 
-      // 2. 寫入萬用打包物件（相容新舊格式）
-      const stringifiedData = JSON.stringify({ ...tempData });
+      // 2. 雙重寫入全功能萬用打包物件
+      const stringifiedData = JSON.stringify(updatedData);
       await AsyncStorage.setItem('userProfile', stringifiedData);
       await AsyncStorage.setItem('user_profile', stringifiedData);
 
-      // 3. 💥 關鍵直通車：把身高與體重單獨再存一份！
-      // 讓每日紀錄與身體指數頁面呼叫 AsyncStorage.getItem('height') 時百分之百秒抽到數據！
-      if (tempData.height) {
-        await AsyncStorage.setItem('height', tempData.height.toString());
+      // 3. 關鍵直通車：將關鍵欄位單獨提領存放
+      if (updatedData.height) {
+        await AsyncStorage.setItem('height', updatedData.height.toString());
       }
-      if (tempData.weight) {
-        await AsyncStorage.setItem('weight', tempData.weight.toString());
+      if (updatedData.weight) {
+        await AsyncStorage.setItem('weight', updatedData.weight.toString());
+      }
+      if (updatedData.age) {
+        await AsyncStorage.setItem('age', updatedData.age.toString());
       }
 
       if (Platform.OS === 'web') {
@@ -303,7 +317,7 @@ export default function ProfileScreen() {
                 <input
                   type="date"
                   value={tempData.birthday}
-                  max={getTodayDateString()} // 🎯 核心修正：最晚只能點選到今天，未來日期變灰無法點擊
+                  max={getTodayDateString()} 
                   onChange={(e) => setTempData({ ...tempData, birthday: e.target.value })}
                   style={webSelectStyle}
                 />
@@ -312,7 +326,7 @@ export default function ProfileScreen() {
                   {profileData.birthday ? (
                     <>
                       {profileData.birthday}
-                      <Text style={styles.ageHighlightText}>{calculateAge(profileData.birthday)}</Text>
+                      <Text style={styles.ageHighlightText}>{renderAgeLabel(profileData.birthday)}</Text>
                     </>
                   ) : (
                     '請選擇生日'
