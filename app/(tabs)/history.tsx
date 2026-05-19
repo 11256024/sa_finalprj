@@ -8,7 +8,7 @@ import { ActivityIndicator, SafeAreaView, ScrollView, StyleSheet, Text, Touchabl
 interface FoodItem {
   id: string;       
   name: string;     // 例如: "御飯糰/60克"
-  calories: string; // 注意：每日紀錄存的是字串
+  calories: string; // 每日紀錄存的是字串
 }
 
 interface DailyRecord {
@@ -34,28 +34,63 @@ export default function HistoryScreen() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
+  // 🔄 處理進入頁面刷新與午夜 12 點自動刷新
   useEffect(() => {
+    let midnightTimer: NodeJS.Timeout | null = null;
+
+    // 計算距離今天晚上 12 點 (00:00) 還有多少毫秒，並設定定時器
+    const setupMidnightRefresh = () => {
+      const now = new Date();
+      const midnight = new Date(now);
+      
+      // 設定目標時間為明天的 00:00:00
+      midnight.setDate(now.getDate() + 1);
+      midnight.setHours(0, 0, 0, 0);
+
+      const timeToMidnight = midnight.getTime() - now.getTime();
+      console.log(`[自動刷新] 距離午夜 12 點還有 ${(timeToMidnight / 1000 / 60).toFixed(1)} 分鐘`);
+
+      // 設定倒數計時器
+      midnightTimer = setTimeout(() => {
+        console.log('[自動刷新] 已到晚上 12 點！正在自動重整 30 天滾動列表...');
+        fetchDatabaseRecords();     // 刷新資料
+        setupMidnightRefresh();     // 重新排程隔天的午夜刷新
+      }, timeToMidnight);
+    };
+
     if (isFocused) {
-      fetchDatabaseRecords();
+      fetchDatabaseRecords();       // 畫面向前台顯示時先刷一次
+      setupMidnightRefresh();       // 啟動午夜倒數
     }
+
+    // 離開頁面或 Component 卸載時，務必清除 Timer 避免耗電或重複執行
+    return () => {
+      if (midnightTimer) {
+        clearTimeout(midnightTimer);
+        console.log('[自動刷新] 已離開頁面，清除午夜定時器');
+      }
+    };
   }, [isFocused]);
 
-  // 🌐 精準撈取與 `daily-record` 對接
+  // 🌐 滾動式 30 天精準撈取與舊資料自動淘汰
   const fetchDatabaseRecords = async () => {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const records: DailyRecord[] = [];
+      const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
+      const globalHeight = await AsyncStorage.getItem(`${savedUserId}_user_height`) || await AsyncStorage.getItem('user_height_key') || await AsyncStorage.getItem('height') || '';
+
       const dayLabels = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
+      const baseDate = new Date(); // 晚上 12 點一過，這裡的 baseDate 就會自動變成新的一天
       
-      const baseDate = new Date(); 
-      const storageKeys: string[] = [];
+      const foodKeys: string[] = [];
+      const independentWeightKeys: string[] = []; 
       const dateMetaList: { dateStr: string; displayStr: string; dayOfWeekStr: string }[] = [];
 
-      // 產生過去 30 天的 Key
+      // 🔄 滾動機制：i = 0 是今天（最上面一筆），i = 29 是 30 天前
       for (let i = 0; i < 30; i++) {
         const d = new Date(baseDate);
-        d.setDate(baseDate.getDate() - i);
+        d.setDate(baseDate.getDate() - i); 
 
         const year = d.getFullYear();
         const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -65,26 +100,51 @@ export default function HistoryScreen() {
         const displayStr = `${month}/${date}`;            
         const dayOfWeekStr = dayLabels[d.getDay()];       
 
-        storageKeys.push(`food_record_${dateStr}`);       
+        foodKeys.push(`${savedUserId}_food_record_${dateStr}`);       
+        independentWeightKeys.push(`${savedUserId}_weight_${dateStr}`); 
+
         dateMetaList.push({ dateStr, displayStr, dayOfWeekStr });
       }
 
       // 批量讀取本機資料
-      const keyValuePairs = await AsyncStorage.multiGet(storageKeys);
+      const foodValuePairs = await AsyncStorage.multiGet(foodKeys);
+      const weightValuePairs = await AsyncStorage.multiGet(independentWeightKeys);
       
-      dateMetaList.forEach((meta, index) => {
-        const rawValue = keyValuePairs[index][1];
-        let dayData = rawValue ? JSON.parse(rawValue) : null;
+      const records: DailyRecord[] = [];
 
-        // 🎯 完美綁定你的 `mealBlocks` 中文結構
+      dateMetaList.forEach((meta, index) => {
+        const rawFoodValue = foodValuePairs[index][1];
+        const rawWeightValue = weightValuePairs[index][1]; 
+        
+        let dayData = rawFoodValue ? JSON.parse(rawFoodValue) : null;
         const currentMeals = dayData?.mealBlocks || { 早餐: [], 午餐: [], 晚餐: [] };
+
+        let dayWeight = '';
+        let dayBmi = '';
+
+        if (dayData?.weight && dayData.weight.trim() !== '') {
+          dayWeight = dayData.weight;
+          dayBmi = dayData.bmi || '';
+        } else if (rawWeightValue && rawWeightValue.trim() !== '') {
+          dayWeight = rawWeightValue;
+        }
+
+        if (dayWeight && (!dayBmi || dayBmi === '')) {
+          if (globalHeight) {
+            const hMeter = parseFloat(globalHeight) / 100;
+            const wKg = parseFloat(dayWeight);
+            if (hMeter > 0 && wKg > 0) {
+              dayBmi = (wKg / (hMeter * hMeter)).toFixed(1);
+            }
+          }
+        }
 
         records.push({
           dateString: meta.dateStr,
           displayDate: meta.displayStr,
           dayOfWeek: meta.dayOfWeekStr,
-          weight: dayData?.weight || '',
-          bmi: dayData?.bmi || '',
+          weight: dayWeight, 
+          bmi: dayBmi,       
           mealBlocks: {
             早餐: Array.isArray(currentMeals.早餐) ? currentMeals.早餐 : [],
             午餐: Array.isArray(currentMeals.午餐) ? currentMeals.午餐 : [],
@@ -95,10 +155,26 @@ export default function HistoryScreen() {
 
       setThirtyDaysRecords(records);
       
-      // 預設選取今天
-      if (!selectedDate && records.length > 0) {
-        setSelectedDate(records[0].dateString);
+      // 晚上 12 點自動跨天時，把預設選取項重新指回最新的一天 (records[0])
+      setSelectedDate(records[0].dateString);
+
+      // 🧹 自動清理 30 天前的過期資料
+      const expiredKeys: string[] = [];
+      for (let j = 30; j <= 50; j++) { 
+        const expiredDate = new Date(baseDate);
+        expiredDate.setDate(baseDate.getDate() - j);
+        
+        const exYear = expiredDate.getFullYear();
+        const exMonth = String(expiredDate.getMonth() + 1).padStart(2, '0');
+        const exDate = String(expiredDate.getDate()).padStart(2, '0');
+        const expiredDateStr = `${exYear}-${exMonth}-${exDate}`;
+
+        expiredKeys.push(`${savedUserId}_food_record_${expiredDateStr}`);
+        expiredKeys.push(`${savedUserId}_weight_${expiredDateStr}`);
       }
+      
+      AsyncStorage.multiRemove(expiredKeys).catch(err => console.log('滾動清理舊快取失敗:', err));
+
     } catch (error: any) {
       console.error("撈取歷史紀錄失敗:", error);
       setErrorMessage(error.message || '無法讀取本機檔案。');
@@ -109,7 +185,7 @@ export default function HistoryScreen() {
 
   const currentRecord = thirtyDaysRecords.find(r => r.dateString === selectedDate);
 
-  // 🧮 配合你的資料結構（字串轉數字）計算總熱量
+  // 🧮 計算總熱量
   const calculateTotalCalories = () => {
     if (!currentRecord) return 0;
     let total = 0;
@@ -127,7 +203,7 @@ export default function HistoryScreen() {
     return foods.reduce((sum, item) => sum + (parseInt(item.calories, 10) || 0), 0);
   };
 
-  // 🛠️ 品項欄位視覺美化拆解 (把 "御飯糰/60克" 漂亮地拆開顯示)
+  // 🛠️ 品項欄位視覺美化拆解
   const renderFoodRows = (foods: FoodItem[]) => {
     return foods.map((food) => {
       let displayName = food.name;
@@ -151,9 +227,6 @@ export default function HistoryScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* 🟢 這裡移除了重複寫死的舊 header 區塊，將控制權還給全域母版 */}
-
-      {/* 主內容 */}
       <View style={styles.content}>
         {isLoading ? (
           <View style={styles.centerState}>
@@ -177,7 +250,9 @@ export default function HistoryScreen() {
               <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.dateListContainer}>
                 {thirtyDaysRecords.map((item) => {
                   const isSelected = item.dateString === selectedDate;
-                  const hasData = (item.mealBlocks.早餐.length + item.mealBlocks.午餐.length + item.mealBlocks.晚餐.length) > 0 || item.weight;
+                  const hasFood = (item.mealBlocks.早餐.length + item.mealBlocks.午餐.length + item.mealBlocks.晚餐.length) > 0;
+                  const hasWeight = item.weight && item.weight.trim() !== '';
+                  
                   return (
                     <TouchableOpacity 
                       key={item.dateString} 
@@ -188,8 +263,8 @@ export default function HistoryScreen() {
                         <Text style={[styles.dateText, isSelected && styles.textActive]}>{item.displayDate}</Text>
                         <Text style={[styles.dayText, isSelected && styles.textActiveSub]}>{item.dayOfWeek}</Text>
                       </View>
-                      <Text style={[styles.dateSubStatus, isSelected && styles.textActiveSub, hasData && !isSelected && {color: '#5A7D56'}]}>
-                        {hasData ? '● 已記錄' : '無紀錄'}
+                      <Text style={[styles.dateSubStatus, isSelected && styles.textActiveSub, (hasFood || hasWeight) && !isSelected && {color: '#5A7D56'}]}>
+                        {hasFood && hasWeight ? '● 已記飲食/體重' : (hasFood ? '● 已記錄飲食' : (hasWeight ? '● 僅記錄體重' : '無紀錄'))}
                       </Text>
                     </TouchableOpacity>
                   );

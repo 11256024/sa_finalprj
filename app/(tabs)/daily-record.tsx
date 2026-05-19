@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 // 定義單一食物項目的資料結構
 interface FoodItem {
@@ -14,10 +14,13 @@ export default function DailyRecordScreen() {
   const router = useRouter();
   const pathname = usePathname(); 
 
+  // ==================== 🔑 使用者帳號隔離狀態 ====================
+  const [userId, setUserId] = useState<string>('guest'); // 預設為 guest
+
   // ==================== 📅 台灣時間自動切換核心狀態 ====================
   const getTaiwanDateString = () => {
     const now = new Date();
-    const twTime = new Date(now.getTime() + (8 * 60 * 60 * 1000) + (now.getTimezoneOffset() * 60 * 1000));
+    const twTime = new Date(now.getTime() + (8 * 60 * 60 * 1000) + (now.getTimezoneOffset() * 1000));
     const year = twTime.getFullYear();
     const month = String(twTime.getMonth() + 1).padStart(2, '0');
     const day = String(twTime.getDate()).padStart(2, '0');
@@ -58,15 +61,30 @@ export default function DailyRecordScreen() {
   });
 
   // 使用 useRef 保持最新狀態，供跨夜計時器背景存檔使用
-  const stateRef = useRef({ weight, bmi, bmiStatus, mealBlocks, currentDate });
+  const stateRef = useRef({ weight, bmi, bmiStatus, mealBlocks, currentDate, userId });
   useEffect(() => {
-    stateRef.current = { weight, bmi, bmiStatus, mealBlocks, currentDate };
-  }, [weight, bmi, bmiStatus, mealBlocks, currentDate]);
+    stateRef.current = { weight, bmi, bmiStatus, mealBlocks, currentDate, userId };
+  }, [weight, bmi, bmiStatus, mealBlocks, currentDate, userId]);
 
   // ==================== 🔄 核心生命週期 ====================
   useEffect(() => {
-    loadDataByDate(currentDate);
+    const initUserAndLoad = async () => {
+      try {
+        const savedUserId = await AsyncStorage.getItem('current_user_id'); 
+        const finalId = savedUserId || 'guest';
+        
+        setUserId(finalId);
+        await loadDataByDate(currentDate, finalId);
+      } catch (e) {
+        console.error('取得使用者 ID 失敗', e);
+        await loadDataByDate(currentDate, 'guest');
+      }
+    };
 
+    initUserAndLoad();
+  }, [pathname]);
+
+  useEffect(() => {
     const interval = setInterval(async () => {
       const latestDateStr = getTaiwanDateString();
       
@@ -78,22 +96,26 @@ export default function DailyRecordScreen() {
             bmiStatus: stateRef.current.bmiStatus,
             mealBlocks: stateRef.current.mealBlocks
           };
-          await AsyncStorage.setItem(`food_record_${stateRef.current.currentDate}`, JSON.stringify(oldDataToSave));
+          await AsyncStorage.setItem(
+            `${stateRef.current.userId}_food_record_${stateRef.current.currentDate}`, 
+            JSON.stringify(oldDataToSave)
+          );
         } catch (err) {
           console.error("跨夜自動存檔失敗", err);
         }
 
         setCurrentDate(latestDateStr);
-        await loadDataByDate(latestDateStr);
+        await loadDataByDate(latestDateStr, stateRef.current.userId);
       }
     }, 10000);
 
     return () => clearInterval(interval);
-  }, [currentDate, pathname]);
+  }, []);
 
-  const loadDataByDate = async (dateStr: string) => {
+  const loadDataByDate = async (dateStr: string, currentUid: string = userId) => {
     try {
-      const savedDataStr = await AsyncStorage.getItem(`food_record_${dateStr}`);
+      // 優先讀取以每日資料為準的 Key
+      const savedDataStr = await AsyncStorage.getItem(`${currentUid}_food_record_${dateStr}`);
       if (savedDataStr) {
         const parsed = JSON.parse(savedDataStr);
         setWeight(parsed.weight || '');
@@ -101,9 +123,24 @@ export default function DailyRecordScreen() {
         setBmiStatus(parsed.bmiStatus || '');
         setMealBlocks(parsed.mealBlocks || { 早餐: [], 午餐: [], 晚餐: [] });
       } else {
-        setWeight('');
-        setBmi('—');
-        setBmiStatus('');
+        // 如果當天尚無紀錄，去抓取全域體重當作預設
+        const globalWeight = await AsyncStorage.getItem(`${currentUid}_user_weight`);
+        if (globalWeight && globalWeight.trim() !== '') {
+          setWeight(globalWeight);
+          if (userHeight) {
+            const hInMeters = userHeight / 100;
+            const wVal = parseFloat(globalWeight);
+            if (!isNaN(wVal) && wVal > 0) {
+              const calcBmi = (wVal / (hInMeters * hInMeters)).toFixed(1);
+              setBmi(calcBmi);
+              setBmiStatus(getBmiStatusLabel(parseFloat(calcBmi)));
+            }
+          }
+        } else {
+          setWeight('');
+          setBmi('—');
+          setBmiStatus('');
+        }
         setMealBlocks({ 早餐: [], 午餐: [], 晚餐: [] });
       }
     } catch (e) {
@@ -118,15 +155,37 @@ export default function DailyRecordScreen() {
     currentMeals: typeof mealBlocks
   ) => {
     try {
+      // 1️⃣ 第一路：儲存每日資料（飲食紀錄首頁與歷史總結的基準點）
       const dataToSave = {
         weight: currentWeight,
         bmi: currentBmi,
         bmiStatus: currentBmiStatus,
         mealBlocks: currentMeals
       };
-      await AsyncStorage.setItem(`food_record_${currentDate}`, JSON.stringify(dataToSave));
+      await AsyncStorage.setItem(`${userId}_food_record_${currentDate}`, JSON.stringify(dataToSave));
+
+      // 2️⃣ 第二路：同步歷史紀錄/圖表專用的通用欄位 Key
+      await AsyncStorage.setItem(`${userId}_user_weight`, currentWeight);
+      await AsyncStorage.setItem(`user_weight`, currentWeight); // 備用無 UID 欄位
+
+      // 3️⃣ 第三路：強制擊穿並同步更新「會員中心」可能正在使用的整合資訊物件
+      const userProfileStr = await AsyncStorage.getItem(`${userId}_user_profile`);
+      if (userProfileStr) {
+        const profileObj = JSON.parse(userProfileStr);
+        profileObj.weight = currentWeight; // 將每日資料的體重強行同步進去
+        if (currentBmi !== '—') profileObj.bmi = currentBmi;
+        await AsyncStorage.setItem(`${userId}_user_profile`, JSON.stringify(profileObj));
+      }
+
+      const userInfoStr = await AsyncStorage.getItem('user_info');
+      if (userInfoStr) {
+        const infoObj = JSON.parse(userInfoStr);
+        infoObj.weight = currentWeight;
+        await AsyncStorage.setItem('user_info', JSON.stringify(infoObj));
+      }
+
     } catch (e) {
-      console.error('同步至快取失敗', e);
+      console.error('同步至全域跨頁面快取失敗', e);
     }
   };
 
@@ -143,7 +202,6 @@ export default function DailyRecordScreen() {
   };
 
   const handleWeightChange = (text: string) => {
-    // 🟢 體重強制過濾只能輸入數字或小數點
     const cleanedText = text.replace(/[^0-9.]/g, '');
     setWeight(cleanedText);
     let calculatedBmi = '—';
@@ -175,10 +233,9 @@ export default function DailyRecordScreen() {
     return total;
   };
 
-  // ==================== 🎯 核心飲食增刪 ====================
+  // ==================== 🎯 食物增刪管理 ====================
   const handleDeleteItem = (category: '早餐' | '午餐' | '晚餐', id: string, name: string) => {
     const displayFoodName = name.trim() !== '' ? name : '未命名品項';
-    
     showConfirm(
       '確認刪除',
       `您確定要刪除這筆「${displayFoodName}」的紀錄嗎？`,
@@ -198,17 +255,8 @@ export default function DailyRecordScreen() {
     const trimmedUnitValue = inputUnitValue.trim();
     const trimmedCalories = inputCalories.trim();
 
-    // 🟢 嚴格驗證份量與熱量是否為純數字
-    const isUnitValid = /^\d+$/.test(trimmedUnitValue);
-    const isCaloriesValid = /^\d+$/.test(trimmedCalories);
-
     if (!trimmedItemName || !trimmedUnitValue || !trimmedCalories) {
       showAlert(`⚠️ 欄位未填寫完整\n請輸入完整的品項、份量數值與熱量。`);
-      return;
-    }
-
-    if (!isUnitValid || !isCaloriesValid) {
-      showAlert(`⚠️ 格式錯誤\n份量與熱量欄位「只能輸入數字」，請重新檢查。`);
       return;
     }
 
@@ -276,10 +324,7 @@ export default function DailyRecordScreen() {
   };
 
   return (
-    // 🟢 徹底移除原有的內建 header 區塊，改為乾淨容器，完全交給 Layout 控制
     <View style={{ flex: 1, backgroundColor: '#E0E7DA' }}>
-      
-      {/* 主內容區 */}
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
         <View style={styles.recordCard}>
           
@@ -299,7 +344,7 @@ export default function DailyRecordScreen() {
               <Text style={styles.label}>今日體重</Text>
               <TextInput
                 style={styles.input}
-                placeholder="輸入體重(四捨五入到整數位)"
+                placeholder="輸入體重(公斤)"
                 placeholderTextColor="#A9A9A9"
                 value={weight}
                 keyboardType="numeric"
@@ -341,11 +386,7 @@ export default function DailyRecordScreen() {
                   <View style={[styles.readOnlyTextWrapper, { flex: 1, alignItems: 'flex-end', marginRight: 15 }]}>
                     <Text style={styles.tableTextContent}>{food.calories}</Text>
                   </View>
-                  
-                  <TouchableOpacity 
-                    style={styles.deleteRowTextBtn} 
-                    onPress={() => handleDeleteItem(category, food.id, food.name)}
-                  >
+                  <TouchableOpacity style={styles.deleteRowTextBtn} onPress={() => handleDeleteItem(category, food.id, food.name)}>
                     <Text style={styles.deleteRowText}>刪除</Text>
                   </TouchableOpacity>
                 </View>
@@ -370,68 +411,34 @@ export default function DailyRecordScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.popupBox}>
             <Text style={styles.popupTitle}>新增飲食紀錄</Text>
-            
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>新增類別</Text>
               <View style={styles.disabledSelectBox}>
                 <Text style={styles.disabledSelectText}>{currentBlockCategory}</Text>
               </View>
             </View>
-
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>品項名稱</Text>
-              <TextInput 
-                style={styles.popupInput} 
-                placeholder="例如：御飯糰" 
-                placeholderTextColor="#A9A9A9"
-                value={inputItemName}
-                onChangeText={setInputItemName}
-              />
+              <TextInput style={styles.popupInput} placeholder="例如：御飯糰" placeholderTextColor="#A9A9A9" value={inputItemName} onChangeText={setInputItemName} />
             </View>
-
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>份量與單位</Text>
               <View style={styles.unitSelectorContainer}>
-                <TextInput 
-                  style={styles.unitNumberInput} 
-                  placeholder="限輸入數字" 
-                  placeholderTextColor="#A9A9A9"
-                  keyboardType="numeric"
-                  value={inputUnitValue}
-                  // 🟢 即時正則過濾，確保只能輸入純數字
-                  onChangeText={(text) => setInputUnitValue(text.replace(/[^0-9]/g, ''))}
-                />
-                
+                <TextInput style={styles.unitNumberInput} placeholder="限輸入數字" placeholderTextColor="#A9A9A9" keyboardType="numeric" value={inputUnitValue} onChangeText={(text) => setInputUnitValue(text.replace(/[^0-9]/g, ''))} />
                 <View style={styles.toggleButtonGroup}>
-                  <TouchableOpacity 
-                    style={[styles.toggleBtn, selectedUnitType === '克' && styles.toggleBtnActive]} 
-                    onPress={() => setSelectedUnitType('克')}
-                  >
+                  <TouchableOpacity style={[styles.toggleBtn, selectedUnitType === '克' && styles.toggleBtnActive]} onPress={() => setSelectedUnitType('克')}>
                     <Text style={[styles.toggleBtnText, selectedUnitType === '克' && styles.toggleBtnTextActive]}>克</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity 
-                    style={[styles.toggleBtn, selectedUnitType === 'ml' && styles.toggleBtnActive]} 
-                    onPress={() => setSelectedUnitType('ml')}
-                  >
+                  <TouchableOpacity style={[styles.toggleBtn, selectedUnitType === 'ml' && styles.toggleBtnActive]} onPress={() => setSelectedUnitType('ml')}>
                     <Text style={[styles.toggleBtnText, selectedUnitType === 'ml' && styles.toggleBtnTextActive]}>ml</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             </View>
-
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>熱 量 (大卡)</Text>
-              <TextInput 
-                style={styles.popupInput} 
-                placeholder="限輸入數字" 
-                placeholderTextColor="#A9A9A9"
-                keyboardType="numeric"
-                value={inputCalories}
-                // 🟢 即時正則過濾，確保只能輸入純數字
-                onChangeText={(text) => setInputCalories(text.replace(/[^0-9]/g, ''))}
-              />
+              <TextInput style={styles.popupInput} placeholder="限輸入數字" placeholderTextColor="#A9A9A9" keyboardType="numeric" value={inputCalories} onChangeText={(text) => setInputCalories(text.replace(/[^0-9]/g, ''))} />
             </View>
-
             <View style={styles.modalButtonGroup}>
               <TouchableOpacity style={[styles.modalButton, styles.modalBtnCancel]} onPress={handleCancelAddItem}>
                 <Text style={styles.modalBtnCancelText}>取消</Text>
@@ -444,7 +451,7 @@ export default function DailyRecordScreen() {
         </View>
       </Modal>
 
-      {/* ==================== 彈窗二：提示視窗 ==================== */}
+      {/* 提示彈窗 */}
       <Modal animationType="fade" transparent={true} visible={alertModalVisible} onRequestClose={() => setAlertModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertPopupBox}>
@@ -457,7 +464,7 @@ export default function DailyRecordScreen() {
         </View>
       </Modal>
 
-      {/* ==================== 彈窗三：確認防呆彈窗 ==================== */}
+      {/* 確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={confirmModalVisible} onRequestClose={() => setConfirmModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertPopupBox}>
@@ -467,13 +474,7 @@ export default function DailyRecordScreen() {
               <TouchableOpacity style={[styles.modalButton, styles.modalBtnCancel]} onPress={() => setConfirmModalVisible(false)}>
                 <Text style={styles.modalBtnCancelText}>返回</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={[styles.modalButton, styles.orangeAlertBtn]} 
-                onPress={() => {
-                  setConfirmModalVisible(false);
-                  confirmAction();
-                }}
-              >
+              <TouchableOpacity style={[styles.modalButton, styles.orangeAlertBtn]} onPress={() => { setConfirmModalVisible(false); confirmAction(); }}>
                 <Text style={styles.modalBtnConfirmText}>確定</Text>
               </TouchableOpacity>
             </View>
@@ -486,7 +487,6 @@ export default function DailyRecordScreen() {
 }
 
 const styles = StyleSheet.create({
-  // 🟢 已將原先舊 header 的相關樣式表全部乾淨刪除
   scrollContent: { minHeight: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5DC', paddingVertical: 40 },
   recordCard: { backgroundColor: 'white', width: '65%', minWidth: 650, borderRadius: 40, padding: 50 },
   titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 30, borderBottomWidth: 1, borderBottomColor: '#EEE', paddingBottom: 10 },
@@ -526,9 +526,9 @@ const styles = StyleSheet.create({
   inputLabel: { fontSize: 16, fontWeight: '600', color: '#4A4A4A', marginBottom: 8 },
   disabledSelectBox: { borderWidth: 1, borderColor: '#DDD', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: '#EEEEEE' },
   disabledSelectText: { fontSize: 16, color: '#666', fontWeight: 'bold' },
-  popupInput: { borderWidth: 1, borderColor: '#DDD', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, fontSize: 16, color: '#333', backgroundColor: '#FAFAFA', ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
+  popupInput: { borderWidth: 1, borderColor: '#DDD', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, fontSize: 16, color: '#333', backgroundColor: '#FAFAFA' },
   unitSelectorContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  unitNumberInput: { flex: 1, borderWidth: 1, borderColor: '#DDD', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, fontSize: 16, color: '#333', backgroundColor: '#FAFAFA', marginRight: 15, ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
+  unitNumberInput: { flex: 1, borderWidth: 1, borderColor: '#DDD', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, fontSize: 16, color: '#333', backgroundColor: '#FAFAFA', marginRight: 15 },
   toggleButtonGroup: { flexDirection: 'row', borderWidth: 1, borderColor: '#A3C1AD', borderRadius: 10, overflow: 'hidden', height: 44, width: 120 },
   toggleBtn: { flex: 1, backgroundColor: '#FFF', justifyContent: 'center', alignItems: 'center' },
   toggleBtnActive: { backgroundColor: '#A3C1AD' },
