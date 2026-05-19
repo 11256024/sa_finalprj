@@ -13,6 +13,7 @@ export default function BodyMetricsScreen() {
     height: '',
     weight: '',
     bmi: '---',
+    bmiStatus: '', 
     bmrValue: 0,
     isCalculated: false
   });
@@ -24,6 +25,9 @@ export default function BodyMetricsScreen() {
     height: false,
     weight: false
   });
+
+  // 用於判斷目前系統「有沒有身高數據」的狀態防呆
+  const [hasHeightData, setHasHeightData] = useState(true);
 
   const [userAvatar, setUserAvatar] = useState<string | null>(null);
 
@@ -40,46 +44,142 @@ export default function BodyMetricsScreen() {
   const weightOptions = Array.from({ length: 171 }, (_, i) => (i + 30).toString());
   const genderOptions = ['男', '女'];
 
-  // 從 LocalStorage 同步會員資料
+  // 🛠️ 輔助函式：根據 BMI 數值判斷體重狀態字串
+  const getBmiStatusText = (bmiNum: number): string => {
+    if (bmiNum < 18.5) return '體重過輕';
+    if (bmiNum >= 18.5 && bmiNum < 24) return '正常範圍';
+    if (bmiNum >= 24 && bmiNum < 27) return '異常過重';
+    return '肥胖';
+  };
+
+  // 🎯 核心：精準對照 Profile 會員中心資料與當天體重紀錄
   useEffect(() => {
     try {
       let savedProfile = null;
+      let todayWeight = '';
+
+      // 1. 取得當前選定或查詢的「當天日期」
+      let targetDateStr = '';
       if (Platform.OS === 'web') {
-        const localData = localStorage.getItem('user_profile');
-        if (localData) savedProfile = JSON.parse(localData);
+        targetDateStr = localStorage.getItem('current_selected_date') || '';
       }
 
-      if (savedProfile && savedProfile.gender && savedProfile.height && savedProfile.weight && savedProfile.birthday) {
-        const birthDate = new Date(savedProfile.birthday);
-        const today = new Date();
-        let age = today.getFullYear() - birthDate.getFullYear();
-        const monthDifference = today.getMonth() - birthDate.getMonth();
-        if (monthDifference < 0 || (monthDifference === 0 && today.getDate() < birthDate.getDate())) {
-          age--;
+      if (!targetDateStr) {
+        const todayObj = new Date();
+        const year = todayObj.getFullYear();
+        const month = String(todayObj.getMonth() + 1).padStart(2, '0');
+        const day = String(todayObj.getDate()).padStart(2, '0');
+        targetDateStr = `${year}-${month}-${day}`; 
+      }
+
+      if (Platform.OS === 'web') {
+        // 2. 讀取會員中心設定檔 (取得性別、年齡、身高、初始體重)
+        const localData = localStorage.getItem('user_profile');
+        if (localData) savedProfile = JSON.parse(localData);
+
+        // 3. 依據當天日期鍵值，撈取每日紀錄中的體重
+        const dailyRecordData = localStorage.getItem(`daily_record_${targetDateStr}`);
+        if (dailyRecordData) {
+          const parsedRecord = JSON.parse(dailyRecordData);
+          if (parsedRecord.weight) {
+            todayWeight = parsedRecord.weight.toString();
+          }
         }
-        
-        runCalculation(savedProfile.gender, age.toString(), savedProfile.height, savedProfile.weight);
+      }
+
+      // 4. 檢查身高（一律以會員 Profile 的身高為準）
+      const profileHeight = savedProfile?.height || '';
+      if (!profileHeight || parseFloat(profileHeight) <= 0) {
+        setHasHeightData(false); 
+      } else {
+        setHasHeightData(true);
+      }
+
+      if (savedProfile) {
+        // 5. 🎯 直接對照 Profile 會員中心的年齡欄位，不再自行換算
+        const finalAge = savedProfile.age ? savedProfile.age.toString() : '';
+
+        // 6. 體重優先權：當天紀錄有填就抓當天的，沒有才拿會員檔初始體重頂替
+        const finalWeight = todayWeight.trim() !== '' ? todayWeight : (savedProfile.weight || '');
+        const finalHeight = profileHeight;
+        const finalGender = savedProfile.gender || '';
+
+        // 7. 會員資料齊全且有身高，自動執行初次指數計算與載入
+        if (finalGender && finalAge && finalHeight && finalWeight && parseFloat(finalHeight) > 0) {
+          const weightNum = parseFloat(finalWeight);
+          const heightNum = parseFloat(finalHeight);
+          const ageNum = parseInt(finalAge);
+          
+          const heightInMeters = heightNum / 100;
+          const bmi = (weightNum / (heightInMeters * heightInMeters)).toFixed(1);
+          const bmiStatus = getBmiStatusText(parseFloat(bmi));
+
+          let bmr = 10 * weightNum + 6.25 * heightNum - 5 * ageNum;
+          if (finalGender === '男') bmr += 5;
+          else bmr -= 161;
+
+          setMetricsData({
+            gender: finalGender,
+            age: finalAge,
+            height: finalHeight,
+            weight: finalWeight,
+            bmi,
+            bmiStatus,
+            bmrValue: Math.round(bmr),
+            isCalculated: true
+          });
+        } else {
+          // 若有缺少，先將撈出來的欄位預設帶入
+          setMetricsData(prev => ({
+            ...prev,
+            gender: finalGender,
+            age: finalAge,
+            height: finalHeight,
+            weight: finalWeight,
+          }));
+        }
       }
     } catch (error) {
-      console.error("自動同步會員資料時發生錯誤：", error);
+      console.error("同步 Profile 資料與每日體重時發生錯誤：", error);
     }
   }, []);
 
-  // 即時計算 BMI
+  // 即時監聽：當使用者在畫面上手動重新選擇下拉選單時觸發
   useEffect(() => {
-    const weight = parseFloat(metricsData.weight);
     const height = parseFloat(metricsData.height);
+    const weight = parseFloat(metricsData.weight);
+
+    if (isNaN(height) || height <= 0) {
+      setHasHeightData(false);
+      return;
+    } else {
+      setHasHeightData(true);
+    }
 
     if (weight > 0 && height > 0) {
       const heightInMeters = height / 100;
       const calculatedBmi = (weight / (heightInMeters * heightInMeters)).toFixed(1);
-      setMetricsData(prev => ({ ...prev, bmi: calculatedBmi }));
+      const statusText = getBmiStatusText(parseFloat(calculatedBmi));
+      setMetricsData(prev => ({ 
+        ...prev, 
+        bmi: calculatedBmi,
+        bmiStatus: statusText
+      }));
     } else {
-      setMetricsData(prev => ({ ...prev, bmi: '---' }));
+      setMetricsData(prev => ({ ...prev, bmi: '---', bmiStatus: '' }));
     }
   }, [metricsData.height, metricsData.weight]);
 
   const handleManualCalculate = () => {
+    if (!hasHeightData || !metricsData.height) {
+      if (Platform.OS === 'web') {
+        window.alert('⚠️ 無法計算：請先至會員中心輸入身高數據！');
+      } else {
+        alert('無法計算：請先至會員中心輸入身高數據！');
+      }
+      return;
+    }
+
     if (!metricsData.gender || !metricsData.age || !metricsData.height || !metricsData.weight) {
       if (Platform.OS === 'web') {
         window.alert('請填寫完整的性別、年齡、身高、體重資訊後再進行計算！');
@@ -88,30 +188,24 @@ export default function BodyMetricsScreen() {
       }
       return;
     }
-    runCalculation(metricsData.gender, metricsData.age, metricsData.height, metricsData.weight);
-  };
-
-  const runCalculation = (gender: string, ageStr: string, heightStr: string, weightStr: string) => {
-    const weight = parseFloat(weightStr);
-    const height = parseFloat(heightStr);
-    const age = parseInt(ageStr);
-
+    
+    // 執行手動重新計算邏輯
+    const weight = parseFloat(metricsData.weight);
+    const height = parseFloat(metricsData.height);
+    const age = parseInt(metricsData.age);
     const heightInMeters = height / 100;
     const bmi = (weight / (heightInMeters * heightInMeters)).toFixed(1);
+    const bmiStatus = getBmiStatusText(parseFloat(bmi));
 
     let bmr = 10 * weight + 6.25 * height - 5 * age;
-    if (gender === '男') bmr += 5;
+    if (metricsData.gender === '男') bmr += 5;
     else bmr -= 161;
-    const finalBmr = Math.round(bmr);
 
     setMetricsData(prev => ({
       ...prev,
-      gender,
-      age: age.toString(),
-      height: height.toString(),
-      weight: weight.toString(),
       bmi,
-      bmrValue: finalBmr,
+      bmiStatus,
+      bmrValue: Math.round(bmr),
       isCalculated: true
     }));
   };
@@ -124,11 +218,10 @@ export default function BodyMetricsScreen() {
     { id: '5', title: '身體活動程度激烈', sub: '(長時間運動或體力勞動工作)', multiplier: 1.9, label: 'BMR x 1.9' },
   ];
 
-  // 控制外面「平時看得到的文字」顏色
   const getWebSelectStyle = (hasValue: boolean, fieldKey: 'gender' | 'age' | 'height' | 'weight') => {
     let textColor = '#E0E0E0'; 
     if (hasValue) {
-      textColor = isModified[fieldKey] ? '#333333' : '#999999'; // 會員拉來的顯示淺灰，自己改的變深黑
+      textColor = isModified[fieldKey] ? '#333333' : '#999999';
     }
 
     return {
@@ -140,7 +233,7 @@ export default function BodyMetricsScreen() {
       fontFamily: 'inherit',
       outline: 'none',
       width: '140px',
-      fontWeight: '500',
+      fontWeight: '500' as const,
       cursor: 'pointer',
     };
   };
@@ -167,9 +260,7 @@ export default function BodyMetricsScreen() {
           {userAvatar ? (
             <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
           ) : (
-            <View style={styles.defaultAvatar}>
-              <Text style={styles.defaultAvatarText}>林</Text>
-            </View>
+            <View style={styles.defaultAvatar}><Text style={styles.defaultAvatarText}>林</Text></View>
           )}
         </TouchableOpacity>
       </View>
@@ -197,16 +288,12 @@ export default function BodyMetricsScreen() {
                         }}
                         style={getWebSelectStyle(!!metricsData.gender, 'gender')}
                       >
-                        {/* 💡 修正：下拉選單打開後，所有的選項（包含請選擇）字體全部牢牢鎖定為深黑色 #333333 */}
                         <option value="" style={{ color: '#333333' }}>請選擇</option>
                         {genderOptions.map(g => <option key={g} value={g} style={{ color: '#333333' }}>{g}</option>)}
                       </select>
                     ) : (
                       <TextInput
-                        style={[
-                          styles.bmrInput, 
-                          metricsData.gender !== '' && (isModified.gender ? styles.darkValueText : styles.lightValueText)
-                        ]}
+                        style={[styles.bmrInput, metricsData.gender !== '' && (isModified.gender ? styles.darkValueText : styles.lightValueText)]}
                         value={metricsData.gender}
                         placeholder="請輸入男/女"
                         placeholderTextColor="#E0E0E0"
@@ -220,7 +307,7 @@ export default function BodyMetricsScreen() {
 
                   {/* 年齡 */}
                   <View style={styles.bmrRow}>
-                    <Text style={styles.bmrLabel}>年    齡</Text>
+                    <Text style={styles.bmrLabel}>年     齡</Text>
                     {Platform.OS === 'web' ? (
                       <select
                         value={metricsData.age}
@@ -230,16 +317,12 @@ export default function BodyMetricsScreen() {
                         }}
                         style={getWebSelectStyle(!!metricsData.age, 'age')}
                       >
-                        {/* 💡 修正：選單內的字全部維持深黑色 #333333 */}
                         <option value="" style={{ color: '#333333' }}>請選擇(歲)</option>
                         {ageOptions.map(a => <option key={a} value={a} style={{ color: '#333333' }}>{a} 歲</option>)}
                       </select>
                     ) : (
                       <TextInput
-                        style={[
-                          styles.bmrInput, 
-                          metricsData.age !== '' && (isModified.age ? styles.darkValueText : styles.lightValueText)
-                        ]}
+                        style={[styles.bmrInput, metricsData.age !== '' && (isModified.age ? styles.darkValueText : styles.lightValueText)]}
                         value={metricsData.age}
                         placeholder="請輸入年齡"
                         placeholderTextColor="#E0E0E0"
@@ -252,9 +335,9 @@ export default function BodyMetricsScreen() {
                     )}
                   </View>
 
-                  {/* 身高 */}
+                  {/* 身高（參照會員記錄檔） */}
                   <View style={styles.bmrRow}>
-                    <Text style={styles.bmrLabel}>身    高</Text>
+                    <Text style={styles.bmrLabel}>身     高</Text>
                     {Platform.OS === 'web' ? (
                       <select
                         value={metricsData.height}
@@ -264,16 +347,12 @@ export default function BodyMetricsScreen() {
                         }}
                         style={getWebSelectStyle(!!metricsData.height, 'height')}
                       >
-                        {/* 💡 修正：選單內的字全部維持深黑色 #333333 */}
                         <option value="" style={{ color: '#333333' }}>請選擇(cm)</option>
                         {heightOptions.map(h => <option key={h} value={h} style={{ color: '#333333' }}>{h} cm</option>)}
                       </select>
                     ) : (
                       <TextInput
-                        style={[
-                          styles.bmrInput, 
-                          metricsData.height !== '' && (isModified.height ? styles.darkValueText : styles.lightValueText)
-                        ]}
+                        style={[styles.bmrInput, metricsData.height !== '' && (isModified.height ? styles.darkValueText : styles.lightValueText)]}
                         value={metricsData.height}
                         placeholder="請輸入(cm)"
                         placeholderTextColor="#E0E0E0"
@@ -286,9 +365,9 @@ export default function BodyMetricsScreen() {
                     )}
                   </View>
 
-                  {/* 體重 */}
+                  {/* 體重（優先參照每日紀錄檔當天資料） */}
                   <View style={styles.bmrRow}>
-                    <Text style={styles.bmrLabel}>體    重</Text>
+                    <Text style={styles.bmrLabel}>體     重</Text>
                     {Platform.OS === 'web' ? (
                       <select
                         value={metricsData.weight}
@@ -298,16 +377,12 @@ export default function BodyMetricsScreen() {
                         }}
                         style={getWebSelectStyle(!!metricsData.weight, 'weight')}
                       >
-                        {/* 💡 修正：選單內的字全部維持深黑色 #333333 */}
                         <option value="" style={{ color: '#333333' }}>請選擇(kg)</option>
                         {weightOptions.map(w => <option key={w} value={w} style={{ color: '#333333' }}>{w} kg</option>)}
                       </select>
                     ) : (
                       <TextInput
-                        style={[
-                          styles.bmrInput, 
-                          metricsData.weight !== '' && (isModified.weight ? styles.darkValueText : styles.lightValueText)
-                        ]}
+                        style={[styles.bmrInput, metricsData.weight !== '' && (isModified.weight ? styles.darkValueText : styles.lightValueText)]}
                         value={metricsData.weight}
                         placeholder="請輸入(kg)"
                         placeholderTextColor="#E0E0E0"
@@ -320,32 +395,40 @@ export default function BodyMetricsScreen() {
                     )}
                   </View>
 
-                  {/* BMI */}
+                  {/* BMI 區塊 */}
                   <View style={styles.bmrRow}>
                     <Text style={styles.bmrLabel}>B  M  I</Text>
-                    <Text style={[styles.bmrValueText, metricsData.bmi !== '---' && styles.darkValueText]}>
-                      {metricsData.bmi}
-                    </Text>
+                    {!hasHeightData ? (
+                      <Text style={styles.errorRedText}>請至會員中心輸入身高數據</Text>
+                    ) : (
+                      <Text style={[styles.bmrValueText, metricsData.bmi !== '---' && styles.darkValueText]}>
+                        {metricsData.bmi} {metricsData.bmiStatus ? `(${metricsData.bmiStatus})` : ''}
+                      </Text>
+                    )}
                   </View>
                 </View>
                 
-                {/* 計算結果 */}
+                {/* 計算結果區塊 */}
                 <View style={styles.resultRow}>
                   <Text style={styles.resultLabel}>計算結果：</Text>
-                  <Text style={[styles.resultValue, metricsData.isCalculated && styles.activeBmrText]}>
-                    {metricsData.isCalculated ? `${metricsData.bmrValue} kcal` : 'BMR'}
-                  </Text>
+                  {!hasHeightData ? (
+                    <Text style={[styles.errorRedText, { fontSize: 20, marginLeft: 10, alignSelf: 'center' }]}>請至會員中心輸入身高數據</Text>
+                  ) : (
+                    <Text style={[styles.resultValue, metricsData.isCalculated && styles.activeBmrText]}>
+                      {metricsData.isCalculated ? `${metricsData.bmrValue} kcal` : 'BMR'}
+                    </Text>
+                  )}
                 </View>
 
                 <View style={styles.buttonContainer}>
                   <TouchableOpacity style={styles.calculateButton} onPress={handleManualCalculate}>
-                    <Text style={styles.calculateButtonText}>開始計算指數</Text>
+                    <Text style={styles.calculateButtonText}>重新計算指數</Text>
                   </TouchableOpacity>
                 </View>
               </View>
             </View>
 
-            {/* 右側 TDEE */}
+            {/* 右側 TDEE 區塊 */}
             <View style={styles.tdeeSection}>
               <View style={styles.tdeeTitleBox}>
                 <View style={styles.tdeeMainHeader}>
@@ -358,16 +441,24 @@ export default function BodyMetricsScreen() {
               <View style={styles.tdeeScrollArea}>
                 <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.tdeeItemsContainer}>
                   {tdeeItems.map((item) => {
-                    const finalTdeeValue = metricsData.isCalculated 
-                      ? `${Math.round(metricsData.bmrValue * item.multiplier)} kcal` 
-                      : item.label;
+                    let finalTdeeValue = item.label;
+                    
+                    if (!hasHeightData) {
+                      finalTdeeValue = '請至會員中心輸入身高數據';
+                    } else if (metricsData.isCalculated) {
+                      finalTdeeValue = `${Math.round(metricsData.bmrValue * item.multiplier)} kcal`;
+                    }
 
                     return (
                       <View key={item.id} style={styles.tdeeItemBox}>
                         <Text style={styles.activityTitle}>{item.title}</Text>
                         <Text style={styles.activitySub}>{item.sub}</Text>
                         <Text style={styles.formulaText}>
-                          {item.label} = <Text style={[styles.grayHighlight, metricsData.isCalculated && styles.orangeHighlight]}>{finalTdeeValue}</Text>
+                          {item.label} = <Text style={[
+                            styles.grayHighlight, 
+                            metricsData.isCalculated && hasHeightData && styles.orangeHighlight,
+                            !hasHeightData && styles.errorRedTextSmall
+                          ]}>{finalTdeeValue}</Text>
                         </Text>
                       </View>
                     );
@@ -385,12 +476,7 @@ export default function BodyMetricsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#E0E7DA' },
-  header: { 
-    height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', 
-    alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30, 
-    zIndex: 10,
-    ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } }) 
-  },
+  header: { height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30, zIndex: 10, ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } }) },
   headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
   headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30 },
   menuWrapper: { flexDirection: 'row', alignItems: 'center' },
@@ -415,10 +501,13 @@ const styles = StyleSheet.create({
   bmrLabel: { fontSize: 20, fontWeight: '600', color: '#444', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }, 
   
   bmrInput: { fontSize: 18, textAlign: 'right', width: '140px', fontWeight: '500', padding: 0 },
-  bmrValueText: { fontSize: 18, color: '#DCDCDC', fontWeight: '500', textAlign: 'right', width: '140px' }, 
+  bmrValueText: { fontSize: 18, color: '#DCDCDC', fontWeight: '500', textAlign: 'right', width: '190px' }, 
   
   lightValueText: { color: '#999999', fontWeight: '600' }, 
   darkValueText: { color: '#333333', fontWeight: '600' },  
+
+  errorRedText: { color: '#E74C3C', fontSize: 16, fontWeight: 'bold', textAlign: 'right' },
+  errorRedTextSmall: { color: '#E74C3C', fontSize: 18, fontWeight: 'bold' },
   
   resultRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: 25, marginBottom: 25, justifyContent: 'center' },
   resultLabel: { fontSize: 24, color: '#F3B07E', fontWeight: 'bold' },

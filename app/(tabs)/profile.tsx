@@ -2,7 +2,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Alert, Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-
+// 🎯 核心補上：引入跨平台本機資料庫套件
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface ProfileType {
   name: string;
@@ -14,10 +15,8 @@ interface ProfileType {
   password: string;
 }
 
-
 export default function ProfileScreen() {
   const router = useRouter();
-
 
   // 1. 狀態控制
   const [isEditing, setIsEditing] = useState(false);
@@ -25,49 +24,63 @@ export default function ProfileScreen() {
   const [saveModalVisible, setSaveModalVisible] = useState(false);      
   const [cancelModalVisible, setCancelModalVisible] = useState(false);  
 
-
-  // 2. 🎯 【核心修正】：設定帳號與密碼的「預設顯示值」，其餘保持空字串
+  // 2. 初始狀態設定
   const [profileData, setProfileData] = useState<ProfileType>({
     name: '',
     birthday: '',
     height: '',
     weight: '',
     gender: '',
-    account: 'xiaoming123', // 這裡填入您預設要顯示的帳號
-    password: 'yourpassword', // 這裡填入您預設要顯示的密碼
+    account: 'xiaoming123', // 預設顯示的帳號
+    password: 'yourpassword', // 預設顯示的密碼
   });
-
 
   // 暫存編輯區（跟隨初始化的預設值）
   const [tempData, setTempData] = useState<ProfileType>({ ...profileData });
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
+  // 📅 核心防呆：獲取今天日期的 YYYY-MM-DD 格式，用來限制生日最大值
+  const getTodayDateString = () => {
+    const today = new Date();
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0'); // 月份從 0 開始，所以要 +1
+    const dd = String(today.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  };
 
-  // 頁面初始化：若本機有自訂儲存過的值則覆蓋，沒有的話就沿用上述的預設帳密與空白欄位
+  // 🎯 核心修正：頁面初始化改用跨平台的 AsyncStorage 讀取
   useEffect(() => {
-    const loadProfileData = () => {
-      try {
-        if (Platform.OS === 'web') {
-          const localData = localStorage.getItem('user_profile');
-          if (localData) {
-            const parsedData = JSON.parse(localData);
-            setProfileData(parsedData);
-            setTempData(parsedData);
-          }
-        }
-      } catch (error) {
-        console.error("加載使用者動態資料失敗：", error);
-      }
-    };
     loadProfileData();
   }, []);
 
+  const loadProfileData = async () => {
+    try {
+      // 雙重讀取保險：先讀取新格式的 userProfile 物件，若沒有再讀舊有的 user_profile
+      let localData = await AsyncStorage.getItem('userProfile');
+      if (!localData) {
+        localData = await AsyncStorage.getItem('user_profile');
+      }
+      
+      // 同步讀取大頭貼快取
+      const savedAvatar = await AsyncStorage.getItem('user_avatar');
+
+      if (localData) {
+        const parsedData = JSON.parse(localData);
+        setProfileData(parsedData);
+        setTempData(parsedData);
+      }
+      if (savedAvatar) {
+        setAvatarUri(savedAvatar);
+      }
+    } catch (error) {
+      console.error("加載使用者本機快取資料失敗：", error);
+    }
+  };
 
   // 下拉選單資料源
   const heightOptions = Array.from({ length: 151 }, (_, i) => (i + 100).toString());
   const weightOptions = Array.from({ length: 171 }, (_, i) => (i + 30).toString());  
   const genderOptions = ['男', '女'];
-
 
   // 計算精準年齡
   const calculateAge = (birthdayStr: string) => {
@@ -81,7 +94,6 @@ export default function ProfileScreen() {
     }
     return age >= 0 ? ` (${age} 歲)` : '';
   };
-
 
   // 大頭貼更換
   const pickImage = async () => {
@@ -98,10 +110,16 @@ export default function ProfileScreen() {
       quality: 1,
     });
     if (!result.canceled) {
-      setAvatarUri(result.assets[0].uri);
+      const selectedUri = result.assets[0].uri;
+      setAvatarUri(selectedUri);
+      // 即時保存頭像路徑到 AsyncStorage
+      try {
+        await AsyncStorage.setItem('user_avatar', selectedUri);
+      } catch (e) {
+        console.log('保存頭像快取失敗', e);
+      }
     }
   };
-
 
   // 錯誤警告彈窗
   const showWarningAlert = (message: string) => {
@@ -111,7 +129,6 @@ export default function ProfileScreen() {
       Alert.alert("儲存失敗", `⚠️ ${message}`);
     }
   };
-
 
   // 核心防呆：檢查可編輯欄位是否留白
   const handleEditPress = () => {
@@ -137,7 +154,6 @@ export default function ProfileScreen() {
         return;
       }
 
-
       // 全部通過，開啟二次確認視窗
       setSaveModalVisible(true);
     } else {
@@ -146,35 +162,46 @@ export default function ProfileScreen() {
     }
   };
 
-
-  // 點擊確認彈窗的「確定儲存」
+  // 🎯 核心聯動修正：點擊確認儲存時，將身高體重以直通車格式與打包物件高強度寫入 AsyncStorage
   const handleConfirmSave = async () => {
     setSaveModalVisible(false);
     try {
+      // 1. 更新 React 元件內部狀態
       setProfileData({ ...tempData });
       setIsEditing(false);
+
+      // 2. 寫入萬用打包物件（相容新舊格式）
+      const stringifiedData = JSON.stringify({ ...tempData });
+      await AsyncStorage.setItem('userProfile', stringifiedData);
+      await AsyncStorage.setItem('user_profile', stringifiedData);
+
+      // 3. 💥 關鍵直通車：把身高與體重單獨再存一份！
+      // 讓每日紀錄與身體指數頁面呼叫 AsyncStorage.getItem('height') 時百分之百秒抽到數據！
+      if (tempData.height) {
+        await AsyncStorage.setItem('height', tempData.height.toString());
+      }
+      if (tempData.weight) {
+        await AsyncStorage.setItem('weight', tempData.weight.toString());
+      }
+
       if (Platform.OS === 'web') {
-        localStorage.setItem('user_profile', JSON.stringify({ ...tempData }));
-        window.alert("個人資料已成功更新！");
+        window.alert("個人資料已成功更新！飲食紀錄與身體指數已同步連動。");
       } else {
-        Alert.alert("成功", "個人資料已成功更新！");
+        Alert.alert("成功", "個人資料已成功更新！飲食紀錄與身體指數已同步連動。");
       }
     } catch (error) {
-      console.error("儲存動態資料失敗：", error);
+      console.error("儲存本機動態資料庫失敗：", error);
     }
   };
-
 
   const handleCancelPress = () => {
     setCancelModalVisible(true);
   };
 
-
   const handleConfirmCancel = () => {
     setCancelModalVisible(false);
     setIsEditing(false);
   };
-
 
   const handleConfirmLogout = () => {
     setLogoutModalVisible(false);
@@ -186,7 +213,6 @@ export default function ProfileScreen() {
     }
   };
 
-
   const handleMenuPress = (menuName: string) => {
     if (menuName === '會員中心') router.push('/profile');
     else if (menuName === '每日紀錄') router.push('/daily-record');
@@ -195,7 +221,6 @@ export default function ProfileScreen() {
     else if (menuName === '查詢商品') router.push('/products');
     else if (menuName === '成就管理') router.push('/achievements');
   };
-
 
   const webSelectStyle = {
     fontSize: '16px',
@@ -209,7 +234,6 @@ export default function ProfileScreen() {
     outline: 'none',
     width: '65%'
   };
-
 
   return (
     <SafeAreaView style={styles.container}>
@@ -226,7 +250,6 @@ export default function ProfileScreen() {
           </ScrollView>
         </View>
 
-
         <View style={styles.headerRightGroup}>
           <TouchableOpacity style={styles.memberCenterBtnActive} onPress={() => handleMenuPress('會員中心')}>
             <Text style={styles.memberCenterText}>會員中心</Text>
@@ -237,10 +260,9 @@ export default function ProfileScreen() {
         </View>
       </View>
 
-
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
         <View style={styles.profileCard}>
-         
+          
           {/* 左側欄位：頭像與姓名 */}
           <View style={styles.leftSection}>
             <TouchableOpacity style={styles.avatarContainer} onPress={pickImage} activeOpacity={0.8}>
@@ -253,7 +275,6 @@ export default function ProfileScreen() {
                 <Text style={styles.editIconText}>✏️</Text>
               </View>
             </TouchableOpacity>
-
 
             {isEditing ? (
               <TextInput
@@ -270,13 +291,11 @@ export default function ProfileScreen() {
             )}
           </View>
 
-
           <View style={styles.divider} />
-
 
           {/* 右側欄位：詳細表單 */}
           <View style={styles.rightSection}>
-           
+            
             {/* 生日欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>生 日</Text>
@@ -284,6 +303,7 @@ export default function ProfileScreen() {
                 <input
                   type="date"
                   value={tempData.birthday}
+                  max={getTodayDateString()} // 🎯 核心修正：最晚只能點選到今天，未來日期變灰無法點擊
                   onChange={(e) => setTempData({ ...tempData, birthday: e.target.value })}
                   style={webSelectStyle}
                 />
@@ -300,7 +320,6 @@ export default function ProfileScreen() {
                 </Text>
               )}
             </View>
-
 
             {/* 身高欄位 */}
             <View style={styles.infoRow}>
@@ -321,7 +340,6 @@ export default function ProfileScreen() {
               )}
             </View>
 
-
             {/* 體重欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>體 重 (kg)</Text>
@@ -340,7 +358,6 @@ export default function ProfileScreen() {
                 </Text>
               )}
             </View>
-
 
             {/* 性別欄位 */}
             <View style={styles.infoRow}>
@@ -361,8 +378,7 @@ export default function ProfileScreen() {
               )}
             </View>
 
-
-            {/* 帳號欄位 🔒【核心修正】：移除原本的短路提示文字，直接顯示資料值 */}
+            {/* 帳號欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>帳 號</Text>
               <Text style={[styles.infoValue, styles.readOnlyText]}>
@@ -370,15 +386,13 @@ export default function ProfileScreen() {
               </Text>
             </View>
 
-
-            {/* 密碼欄位 🔒【核心修正】：移除「請輸入密碼」，在唯讀狀態下永遠固定顯示為遮蔽符號 */}
+            {/* 密碼欄位 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>密 碼</Text>
               <Text style={[styles.infoValue, styles.readOnlyText]}>
                 ••••••••
               </Text>
             </View>
-
 
             {/* 按鈕操作區塊 */}
             <View style={styles.btnGroupRow}>
@@ -401,10 +415,8 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-
         </View>
       </ScrollView>
-
 
       {/* 儲存確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={saveModalVisible} onRequestClose={() => setSaveModalVisible(false)}>
@@ -424,7 +436,6 @@ export default function ProfileScreen() {
         </View>
       </Modal>
 
-
       {/* 取消變更確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={cancelModalVisible} onRequestClose={() => setCancelModalVisible(false)}>
         <View style={styles.modalOverlay}>
@@ -442,7 +453,6 @@ export default function ProfileScreen() {
           </View>
         </View>
       </Modal>
-
 
       {/* 登出確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={logoutModalVisible} onRequestClose={() => setLogoutModalVisible(false)}>
@@ -462,11 +472,9 @@ export default function ProfileScreen() {
         </View>
       </Modal>
 
-
     </SafeAreaView>
   );
 }
-
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#E0E7DA' },
@@ -481,13 +489,12 @@ const styles = StyleSheet.create({
   menuButton: { paddingHorizontal: 15 },
   headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8 },
   nonClickableText: { ...Platform.select({ web: { userSelect: 'none' } }) },
- 
+  
   headerRightGroup: { flexDirection: 'row', alignItems: 'center' },
   memberCenterBtnActive: { backgroundColor: 'white', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1, borderColor: 'white', marginRight: 15 },
   memberCenterText: { color: '#A3C1AD', fontSize: 16, fontWeight: 'bold' },
   logoutHeaderBtn: { backgroundColor: 'rgba(231, 76, 60, 0.8)', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10 },
   logoutHeaderBtnText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
-
 
   scrollContent: { minHeight: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5DC', paddingVertical: 40 },
   profileCard: { backgroundColor: 'white', width: '55%', minWidth: 580, flexDirection: 'row', borderRadius: 40, padding: 50, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 10 },
@@ -497,34 +504,30 @@ const styles = StyleSheet.create({
   avatarImage: { width: 140, height: 140, borderRadius: 70 },
   editIconBadge: { position: 'absolute', bottom: 5, right: 5, backgroundColor: 'white', width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', elevation: 3 },
   editIconText: { fontSize: 16 },
- 
+  
   memberName: { fontSize: 24, fontWeight: 'bold', color: '#333' },
   placeholderText: { color: '#A9A9A9', fontWeight: 'normal' },
- 
+  
   nameInput: { fontSize: 20, fontWeight: 'bold', color: '#333', borderBottomWidth: 1, borderColor: '#ccc', textAlign: 'center', width: '80%', paddingVertical: 2, ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
- 
+  
   divider: { width: 1, backgroundColor: '#EBEBEB', marginHorizontal: 40 },
   rightSection: { flex: 1.5, justifyContent: 'center' },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, borderBottomWidth: 1, borderBottomColor: '#F2F2F2', paddingBottom: 6 },
   infoLabel: { fontSize: 18, color: '#333', fontWeight: '600' },
   infoValue: { fontSize: 18, color: '#666' },
- 
-  // 🔒 唯讀欄位樣式調整，提示禁止游標
+  
   readOnlyText: { color: '#777', ...Platform.select({ web: { cursor: 'not-allowed', userSelect: 'none' } }) },
- 
+  
   btnGroupRow: { flexDirection: 'row', alignSelf: 'flex-end', marginTop: 15 },
   editBtn: { paddingVertical: 10, paddingHorizontal: 35, borderRadius: 15 },
   editBtnText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
 
-
   ageHighlightText: { fontSize: 18, color: '#333', marginLeft: 4 },
-
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
   alertContent: { backgroundColor: '#FFF', width: 380, padding: 25, borderRadius: 20, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10, elevation: 10 },
   alertTitle: { fontSize: 20, fontWeight: 'bold', color: '#333', marginBottom: 12, textAlign: 'center' },
   alertMessage: { fontSize: 14, color: '#666', lineHeight: 22, marginBottom: 25, textAlign: 'center' },
-
 
   modalButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', width: '100%' },
   modalBtn: { flex: 1, height: 45, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginHorizontal: 6 },
@@ -533,4 +536,3 @@ const styles = StyleSheet.create({
   orangeAlertBtn: { backgroundColor: '#F3B07E' },
   modalBtnConfirmText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' }
 });
-
