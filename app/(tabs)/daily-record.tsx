@@ -14,7 +14,7 @@ export default function DailyRecordScreen() {
   const [weight, setWeight] = useState('');
   const [bmi, setBmi] = useState('—');
 
-  // 🎯 宣告 useRef 用來控制右邊單位欄位的焦點
+  // 宣告 useRef 用來控制右邊單位欄位的焦點
   const unitInputRef = useRef<TextInput>(null);
 
   // 控制【核心新增飲食彈窗】顯示狀態
@@ -46,6 +46,20 @@ export default function DailyRecordScreen() {
     午餐: [{ id: 'l1', name: '', calories: '' }], 
     晚餐: [{ id: 'd1', name: '', calories: '' }], 
   });
+
+  // 🎯 核心功能：動態計算早、午、晚三餐的全天熱量總和
+  const calculateTotalCalories = () => {
+    let total = 0;
+    Object.values(mealBlocks).forEach((foods) => {
+      foods.forEach((item) => {
+        const cal = parseInt(item.calories, 10);
+        if (!isNaN(cal)) {
+          total += cal;
+        }
+      });
+    });
+    return total;
+  };
 
   // 體重與 BMI 換算
   const handleWeightChange = (text: string) => {
@@ -251,10 +265,20 @@ export default function DailyRecordScreen() {
               ))}
             </View>
           ))}
+
+          {/* 🎯 新增：最底下的全天熱量總和加總顯示區塊 */}
+          <View style={styles.totalCaloriesCard}>
+            <Text style={styles.totalCaloriesLabel}>今日攝取總熱量</Text>
+            <View style={styles.totalCaloriesValueGroup}>
+              <Text style={styles.totalCaloriesNumber}>{calculateTotalCalories()}</Text>
+              <Text style={styles.totalCaloriesUnit}> 大卡</Text>
+            </View>
+          </View>
+
         </View>
       </ScrollView>
 
-      {/* ==================== 🎯 彈窗一：飲食輸入視窗 (Modal) ==================== */}
+      {/* ==================== 彈窗一：飲食輸入視窗 (Modal) ==================== */}
       <Modal animationType="fade" transparent={true} visible={addModalVisible} onRequestClose={handleCancelAddItem}>
         <View style={styles.modalOverlay}>
           <View style={styles.popupBox}>
@@ -273,32 +297,30 @@ export default function DailyRecordScreen() {
               <Text style={styles.inputLabel}>品項 / 單位</Text>
               <View style={styles.splitInputContainer}>
                 
-                {/* 💡 左邊品項輸入框：按下 Enter 自動跳轉 */}
+                {/* 左邊品項輸入框：按下 Enter 自動跳轉 */}
                 <TextInput 
                   style={[styles.splitInput, { flex: 1.3 }]} 
                   placeholder={currentBlockCategory === '早餐' ? '例如：御飯糰' : currentBlockCategory === '午餐' ? '例如：雞肉便當' : '例如：烤鮭魚'} 
                   placeholderTextColor="#A9A9A9"
                   value={inputItemName}
                   onChangeText={setInputItemName}
-                  
-                  returnKeyType="next"                         // 將鍵盤右下角按鈕設為「下一步」樣式
-                  blurOnSubmit={false}                         // 🎯 防呆：按下 Enter 時不要縮回鍵盤
-                  onSubmitEditing={() => unitInputRef.current?.focus()} // 🎯 核心：自動將焦點 Focus 切換至右邊單位
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => unitInputRef.current?.focus()}
                 />
                 
                 <Text style={styles.splitDivider}>/</Text>
                 
-                {/* 💡 右邊單位輸入框：綁定 useRef */}
+                {/* 右邊單位輸入框：綁定 useRef */}
                 <TextInput 
-                  ref={unitInputRef}                           // 🎯 綁定 Ref，接收左邊傳過來的焦點
+                  ref={unitInputRef}
                   style={[styles.splitInput, { flex: 0.8 }]} 
                   placeholder="單位請用克或ｍｌ" 
                   placeholderTextColor="#A9A9A9"
                   value={inputUnit}
                   onChangeText={setInputUnit}
-                  
-                  returnKeyType="done"                         // 將鍵盤按鈕設為「完成」
-                  onSubmitEditing={handleConfirmAddItem}       // 右邊按 Enter 時直接觸發確認防呆
+                  returnKeyType="done"
+                  onSubmitEditing={handleConfirmAddItem}
                 />
 
               </View>
@@ -331,7 +353,7 @@ export default function DailyRecordScreen() {
         </View>
       </Modal>
 
-      {/* ==================== 🎯 彈窗二：自訂警告提示彈窗 (Modal) ==================== */}
+      {/* ==================== 彈窗二：自訂警告提示彈窗 (Modal) ==================== */}
       <Modal animationType="fade" transparent={true} visible={alertModalVisible} onRequestClose={() => setAlertModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertPopupBox}>
@@ -344,7 +366,7 @@ export default function DailyRecordScreen() {
         </View>
       </Modal>
 
-      {/* ==================== 🎯 彈窗三：自訂雙向確認防呆彈窗 (Modal) ==================== */}
+      {/* ==================== 彈窗三：自訂雙向確認防呆彈窗 (Modal) ==================== */}
       <Modal animationType="fade" transparent={true} visible={confirmModalVisible} onRequestClose={() => setConfirmModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertPopupBox}>
@@ -413,6 +435,28 @@ const styles = StyleSheet.create({
   thLabel: { fontSize: 18, fontWeight: '600', color: '#7F8C8D' },
   tableRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   tableInput: { fontSize: 18, borderBottomWidth: 1, borderBottomColor: '#EBEBEB', paddingVertical: 4, color: '#333', paddingHorizontal: 6, ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
+
+  // 🎯 新增：總熱量卡片樣式
+  totalCaloriesCard: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    backgroundColor: '#FFF2E6', 
+    borderWidth: 1, 
+    borderColor: '#F3B07E', 
+    borderRadius: 20, 
+    paddingVertical: 20, 
+    paddingHorizontal: 30, 
+    marginTop: 10,
+    shadowColor: '#F3B07E',
+    shadowOpacity: 0.1,
+    shadowRadius: 5,
+    elevation: 2
+  },
+  totalCaloriesLabel: { fontSize: 22, fontWeight: 'bold', color: '#D35400' },
+  totalCaloriesValueGroup: { flexDirection: 'row', alignItems: 'baseline' },
+  totalCaloriesNumber: { fontSize: 32, fontWeight: 'bold', color: '#E67E22' },
+  totalCaloriesUnit: { fontSize: 18, fontWeight: '600', color: '#7F8C8D' },
 
   // 飲食輸入彈窗樣式
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },

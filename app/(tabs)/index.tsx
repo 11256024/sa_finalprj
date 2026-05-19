@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { Alert, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useState } from 'react';
+import { Alert, Modal, Platform, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function LoginScreen() {
   const router = useRouter(); 
@@ -8,15 +8,10 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [showError, setShowError] = useState(false);
   
-  // 💡 保持全域登入狀態（預設未登入 false）
+  // 保持全域登入狀態（預設未登入 false）
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  // 💡 自訂防呆登出彈窗的顯示狀態
+  // 自訂防呆登出彈窗的顯示狀態
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
-
-  // 頂部導覽列點擊事件
-  const handleMenuPress = (menuName: string) => {
-    Alert.alert("導航", `即將前往：${menuName}`);
-  };
 
   // 登入驗證與跳轉邏輯
   const handleLogin = () => {
@@ -29,23 +24,23 @@ export default function LoginScreen() {
     }
     setShowError(false);
     
-    // 2. 💡 帳密與身分分流驗證
+    // 2. 帳密與身分分流驗證
     if (username.trim() === 'admin' && password === 'Admin123!') {
       setIsLoggedIn(true);
       if (Platform.OS === 'web') {
         window.alert("歡迎回來，尊貴的系統管理員！");
-        router.replace('/admin-review'); // 🎯 使用 replace 徹底取代頁面
+        router.replace('/admin-review'); // 使用 replace 徹底取代頁面
       } else {
         Alert.alert("登入成功", "歡迎回來，尊貴的系統管理員！", [
           { text: "進入後台", onPress: () => router.replace('/admin-review') }
         ]);
       }
     } else {
-      // 一般一般使用者登入
+      // 一般使用者登入
       setIsLoggedIn(true);
       if (Platform.OS === 'web') {
         window.alert("普通使用者登入成功！");
-        router.replace('/profile'); // 🎯 改為 replace，防止背景登入狀態卡死
+        router.replace('/profile'); // 改為 replace，防止背景登入狀態卡死
       } else {
         Alert.alert("登入成功", "普通使用者登入成功！", [
           { text: "確定", onPress: () => router.replace('/profile') }
@@ -54,12 +49,12 @@ export default function LoginScreen() {
     }
   };
 
-  // 🛠️ 觸發登出防呆
+  // 觸發登出防呆
   const handleLogoutTrigger = () => {
     setLogoutModalVisible(true);
   };
 
-  // 🛠️ 確認登出動作
+  // 確認登出動作
   const handleConfirmLogout = () => {
     setIsLoggedIn(false);         
     setUsername('');              
@@ -75,19 +70,10 @@ export default function LoginScreen() {
   return (
     <SafeAreaView style={styles.container}>
       
-      {/* 頂部導覽列 */}
+      {/* 頂部導覽列 - 純淨保留「食半功倍」 */}
       <View style={styles.header}>
         <View style={styles.headerLeftGroup}>
-          <TouchableOpacity onPress={() => handleMenuPress('首頁')}>
-            <Text style={styles.headerTitle}>食半功倍</Text>
-          </TouchableOpacity>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
-            {['每日紀錄', '歷史紀錄', '身體指數查詢', '查詢商品', '成就管理'].map((item) => (
-              <TouchableOpacity key={item} onPress={() => handleMenuPress(item)} style={styles.menuButton}>
-                <Text style={styles.headerMenu}>{item}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          <Text style={styles.headerTitle}>食半功倍</Text>
         </View>
 
         {/* 右側動態按鈕：若為登入狀態，顯示防呆登出按鈕 */}
@@ -109,6 +95,7 @@ export default function LoginScreen() {
               <TextInput 
                 style={styles.input} 
                 placeholder="請輸入帳號"
+                placeholderTextColor="#A9A9A9"
                 value={username}
                 onChangeText={(text) => { setUsername(text); setShowError(false); }}
                 autoCapitalize="none"
@@ -121,6 +108,7 @@ export default function LoginScreen() {
               <TextInput 
                 style={styles.input} 
                 placeholder="請輸入密碼"
+                placeholderTextColor="#A9A9A9"
                 secureTextEntry={true}
                 value={password}
                 onChangeText={(text) => { setPassword(text); setShowError(false); }}
@@ -200,10 +188,7 @@ const styles = StyleSheet.create({
     ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } })
   },
   headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30 },
-  menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500' },
+  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', ...Platform.select({ web: { cursor: 'default', userSelect: 'none' } }) },
   
   logoutHeaderBtn: { 
     backgroundColor: 'rgba(231, 76, 60, 0.8)', 
@@ -235,7 +220,13 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   label: { fontSize: 20, color: '#333', fontWeight: '600', marginBottom: 5 },
-  input: { fontSize: 16, color: '#333', paddingVertical: 10 },
+  // 🎯 修正處：將 Web 專屬的點選外框樣式（outlineStyle）正確寫在 style 裡面
+  input: { 
+    fontSize: 16, 
+    color: '#333', 
+    paddingVertical: 10,
+    ...Platform.select({ web: { outlineStyle: 'none' as any } })
+  },
   
   hintArea: { minHeight: 60, marginBottom: 15 },
   errorBox: {

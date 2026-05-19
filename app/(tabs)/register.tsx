@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { Alert, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useState } from 'react';
+import { Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function RegisterScreen() {
   const router = useRouter();
@@ -11,10 +11,6 @@ export default function RegisterScreen() {
   // 狀態管理
   const [formatError, setFormatError] = useState(false);
   const [matchError, setMatchError] = useState(false);
-
-  const handleMenuPress = (menuName: string) => {
-    Alert.alert("導航", `即將前往：${menuName}`);
-  };
 
   const handleRegister = () => {
     // 正確的正規表達式驗證：大寫、小寫、數字、特殊字元，且至少8字元
@@ -40,22 +36,14 @@ export default function RegisterScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* 頂部導覽列 */}
+      
+      {/* 頂部導覽列 - 🎯 已移除多餘選單，保留可點擊回登入頁的「食半功倍」 */}
       <View style={styles.header}>
         <View style={styles.headerLeftGroup}>
-          <TouchableOpacity onPress={() => router.push('/')}>
+          <TouchableOpacity onPress={() => router.push('/')} activeOpacity={0.7}>
             <Text style={styles.headerTitle}>食半功倍</Text>
           </TouchableOpacity>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
-            {['每日紀錄', '歷史紀錄', '身體指數查詢', '查詢商品', '成就管理'].map((item) => (
-              <TouchableOpacity key={item} onPress={() => handleMenuPress(item)} style={styles.menuButton}>
-                <Text style={styles.headerMenu}>{item}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
         </View>
-
-        {/* 右側會員中心按鈕已移除，維持乾淨導覽列 */}
       </View>
 
       {/* 核心滾動區域 */}
@@ -72,6 +60,7 @@ export default function RegisterScreen() {
               <TextInput 
                 style={styles.input} 
                 placeholder="請輸入帳號" 
+                placeholderTextColor="#A9A9A9"
                 value={username}
                 onChangeText={setUsername}
                 autoCapitalize="none"
@@ -84,6 +73,7 @@ export default function RegisterScreen() {
               <TextInput 
                 style={styles.input} 
                 placeholder="請輸入密碼" 
+                placeholderTextColor="#A9A9A9"
                 secureTextEntry={true}
                 value={password}
                 onChangeText={(text) => { setPassword(text); setFormatError(false); setMatchError(false); }}
@@ -100,6 +90,7 @@ export default function RegisterScreen() {
               <TextInput 
                 style={styles.input} 
                 placeholder="請再次輸入密碼" 
+                placeholderTextColor="#A9A9A9"
                 secureTextEntry={true}
                 value={confirmPassword}
                 onChangeText={(text) => { setConfirmPassword(text); setFormatError(false); setMatchError(false); }}
@@ -107,7 +98,7 @@ export default function RegisterScreen() {
             </View>
           </View>
 
-          {/* 【重新補回：警示框區塊】 */}
+          {/* 警示框區塊 */}
           {formatError && (
             <View style={styles.errorContainer}>
               <Text style={styles.errorText}>❌ 需包含至少一個大寫英文字母；一個小寫英文字母；一個數字；一個特殊字元，如：.!?@；且長度至少 8 字元！</Text>
@@ -143,10 +134,7 @@ const styles = StyleSheet.create({
     ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } })
   },
   headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30 },
-  menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500' },
+  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold' },
 
   // 滾動內容排版優化間距
   scrollContent: { 
@@ -154,7 +142,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center', 
     alignItems: 'center', 
     backgroundColor: '#F5F5DC', 
-    paddingTop: 60,       
+    paddingTop: 60,      
     paddingBottom: 60     
   },
   pageTitle: { fontSize: 36, marginBottom: 30, color: '#333', fontWeight: 'bold' },
@@ -166,7 +154,14 @@ const styles = StyleSheet.create({
   inputContainer: { width: '100%' },
   inputGroup: { marginBottom: 20, borderBottomWidth: 1, borderBottomColor: '#ccc' },
   label: { fontSize: 20, color: '#333', fontWeight: '600', marginBottom: 5 },
-  input: { fontSize: 16, color: '#333', paddingVertical: 10 },
+  
+  // 🎯 修正處：將 Web 專屬的點選外框樣式（outlineStyle）正確寫在 style 裡面
+  input: { 
+    fontSize: 16, 
+    color: '#333', 
+    paddingVertical: 10,
+    ...Platform.select({ web: { outlineStyle: 'none' as any } })
+  },
   
   hintText: { fontSize: 13, color: '#888', marginBottom: 15, lineHeight: 18 },
 
