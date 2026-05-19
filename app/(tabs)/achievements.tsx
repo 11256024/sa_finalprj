@@ -1,7 +1,6 @@
 import { Feather } from '@expo/vector-icons';
-import { usePathname, useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { Image, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // 💡【數據動態化】：模擬未來從資料庫（API）撈出來的數據結構
 const dummyAchievements = [
@@ -15,26 +14,7 @@ const dummyAchievements = [
 ];
 
 export default function AchievementsScreen() {
-  const router = useRouter();
-  const pathname = usePathname(); // 🔄 動態偵測當前路由路徑
   const [activeTab, setActiveTab] = useState<'locked' | 'unlocked'>('locked');
-
-  // 👤 模擬會員頭像狀態 (與其他主要功能頁面完全同步)
-  const [userAvatar, setUserAvatar] = useState<string | null>(null);
-
-  // 🌐 定義橫幅選單的名稱與對應路由 (完美對齊前幾頁)
-  const menuItems = [
-    { name: '每日紀錄', path: '/daily-record' },
-    { name: '歷史紀錄', path: '/history' },
-    { name: '身體指數查詢', path: '/body-metrics' },
-    { name: '查詢商品', path: '/products' },
-    { name: '成就管理', path: '/achievements' },
-  ];
-
-  // 💡 導覽列路由跳轉
-  const handleMenuPress = (path: string) => {
-    router.push(path as any);
-  };
 
   // 根據 Tab 過濾資料
   const filteredAchievements = dummyAchievements.filter(item => 
@@ -48,40 +28,9 @@ export default function AchievementsScreen() {
   return (
     <SafeAreaView style={styles.container}>
       
-      {/* 1. 上方綠色導覽列 */}
-      <View style={styles.header}>
-        <View style={styles.headerLeftGroup}>
-          <Text style={styles.headerTitle}>食半功倍</Text>
-          
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
-            {menuItems.map((item) => {
-              // 🎯 核心高亮邏輯：動態偵測當前路徑
-              const isActive = pathname === item.path;
-              
-              return (
-                <TouchableOpacity key={item.name} onPress={() => handleMenuPress(item.path)} style={styles.menuButton}>
-                  <Text style={[styles.headerMenu, isActive && styles.activeMenu]}>
-                    {item.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
+      {/* 🟢 這裡移除了重複寫死的舊 header 區塊，將控制權還給全域母版 */}
 
-        {/* 👤 右上角：圓形大頭貼按鈕（與其餘主要頁面完全同步） */}
-        <TouchableOpacity style={styles.avatarButton} onPress={() => router.push('/profile')}>
-          {userAvatar ? (
-            <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
-          ) : (
-            <View style={styles.defaultAvatar}>
-              <Text style={styles.defaultAvatarText}>林</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {/* 2. 主內容包裝區 */}
+      {/* 主內容包裝區 */}
       <View style={styles.mainContent}>
         
         {/* 我的成就總進度卡片 */}
@@ -107,7 +56,7 @@ export default function AchievementsScreen() {
           </TouchableOpacity>
         </View>
 
-        {/* 3. 成就列表 */}
+        {/* 成就列表 */}
         <View style={styles.listContainer}>
           <ScrollView 
             showsVerticalScrollIndicator={true}
@@ -136,28 +85,8 @@ export default function AchievementsScreen() {
 }
 
 const styles = StyleSheet.create({
-  // 🎯 修正全域背景色，與專案其餘頁面色彩完全連貫
   container: { flex: 1, backgroundColor: '#F6EFE5' },
   
-  /* 導覽列 */
-  header: { 
-    height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', 
-    alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30, zIndex: 10,
-    ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } })
-  },
-  headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30, ...Platform.select({ web: { cursor: 'default', userSelect: 'none' } }) },
-  menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15, paddingVertical: 10 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8, paddingBottom: 4 },
-  activeMenu: { opacity: 1, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: 'white' },
-
-  // 👤 圓形大頭貼按鈕樣式 (全系統設計語彙一致)
-  avatarButton: { width: 50, height: 50, borderRadius: 25, overflow: 'hidden', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
-  avatarImage: { width: '100%', height: '100%', resizeMode: 'cover' },
-  defaultAvatar: { width: '100%', height: '100%', backgroundColor: '#D3D3D3', justifyContent: 'center', alignItems: 'center' },
-  defaultAvatarText: { color: '#555', fontSize: 18, fontWeight: 'bold' },
-
   /* 主內容容器 */
   mainContent: {
     flex: 1,

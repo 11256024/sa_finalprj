@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
-import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 // 定義單一食物項目的資料結構
 interface FoodItem {
@@ -63,26 +63,14 @@ export default function DailyRecordScreen() {
     stateRef.current = { weight, bmi, bmiStatus, mealBlocks, currentDate };
   }, [weight, bmi, bmiStatus, mealBlocks, currentDate]);
 
-  const menuItems = [
-    { name: '每日紀錄', path: '/daily-record' },
-    { name: '歷史紀錄', path: '/history' },
-    { name: '身體指數查詢', path: '/body-metrics' },
-    { name: '查詢商品', path: '/products' },
-    { name: '成就管理', path: '/achievements' },
-  ];
-
   // ==================== 🔄 核心生命週期 ====================
   useEffect(() => {
     loadDataByDate(currentDate);
 
-    // 每 10 秒自動檢查一次是否跨夜
     const interval = setInterval(async () => {
       const latestDateStr = getTaiwanDateString();
       
       if (latestDateStr !== stateRef.current.currentDate) {
-        console.log(`[跨夜自動存檔] 日期變更: ${stateRef.current.currentDate} -> ${latestDateStr}`);
-        
-        // 跨夜存檔
         try {
           const oldDataToSave = {
             weight: stateRef.current.weight,
@@ -95,7 +83,6 @@ export default function DailyRecordScreen() {
           console.error("跨夜自動存檔失敗", err);
         }
 
-        // 更新日期核心狀態並重置/載入新畫面
         setCurrentDate(latestDateStr);
         await loadDataByDate(latestDateStr);
       }
@@ -104,7 +91,6 @@ export default function DailyRecordScreen() {
     return () => clearInterval(interval);
   }, [currentDate, pathname]);
 
-  // 從 AsyncStorage 讀取指定日期資料
   const loadDataByDate = async (dateStr: string) => {
     try {
       const savedDataStr = await AsyncStorage.getItem(`food_record_${dateStr}`);
@@ -125,7 +111,6 @@ export default function DailyRecordScreen() {
     }
   };
 
-  // 通用儲存至 AsyncStorage 的方法
   const saveDataToStorage = async (
     currentWeight: string, 
     currentBmi: string, 
@@ -158,11 +143,13 @@ export default function DailyRecordScreen() {
   };
 
   const handleWeightChange = (text: string) => {
-    setWeight(text);
+    // 🟢 體重強制過濾只能輸入數字或小數點
+    const cleanedText = text.replace(/[^0-9.]/g, '');
+    setWeight(cleanedText);
     let calculatedBmi = '—';
     let calculatedStatus = '';
 
-    const w = parseFloat(text);
+    const w = parseFloat(cleanedText);
     if (!isNaN(w) && w > 0 && userHeight && userHeight > 0) {
       const hInMeters = userHeight / 100;
       calculatedBmi = (w / (hInMeters * hInMeters)).toFixed(1);
@@ -174,7 +161,7 @@ export default function DailyRecordScreen() {
       setBmiStatus('');
     }
 
-    saveDataToStorage(text, calculatedBmi, calculatedStatus, mealBlocks);
+    saveDataToStorage(cleanedText, calculatedBmi, calculatedStatus, mealBlocks);
   };
 
   const calculateTotalCalories = () => {
@@ -211,8 +198,17 @@ export default function DailyRecordScreen() {
     const trimmedUnitValue = inputUnitValue.trim();
     const trimmedCalories = inputCalories.trim();
 
+    // 🟢 嚴格驗證份量與熱量是否為純數字
+    const isUnitValid = /^\d+$/.test(trimmedUnitValue);
+    const isCaloriesValid = /^\d+$/.test(trimmedCalories);
+
     if (!trimmedItemName || !trimmedUnitValue || !trimmedCalories) {
       showAlert(`⚠️ 欄位未填寫完整\n請輸入完整的品項、份量數值與熱量。`);
+      return;
+    }
+
+    if (!isUnitValid || !isCaloriesValid) {
+      showAlert(`⚠️ 格式錯誤\n份量與熱量欄位「只能輸入數字」，請重新檢查。`);
       return;
     }
 
@@ -275,34 +271,14 @@ export default function DailyRecordScreen() {
     setConfirmModalVisible(true);
   };
 
-  // 斜線格式化器 (顯示用)
   const formatDisplayDate = (dateStr: string) => {
     return dateStr.replace(/-/g, '/');
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* 頂部導覽列 */}
-      <View style={styles.header}>
-        <View style={styles.headerLeftGroup}>
-          <Text style={styles.headerTitle}>食半功倍</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
-            {menuItems.map((item) => {
-              const isActive = pathname === item.path || (item.name === '每日紀錄' && (pathname === '/' || pathname.includes('daily-record')));
-              return (
-                <TouchableOpacity key={item.name} onPress={() => router.push(item.path as any)} style={styles.menuButton}>
-                  <Text style={[styles.headerMenu, isActive && styles.activeMenu]}>{item.name}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-
-        <TouchableOpacity style={styles.avatarButton} onPress={() => router.push('/profile')}>
-          <View style={styles.defaultAvatar}><Text style={styles.defaultAvatarText}>林</Text></View>
-        </TouchableOpacity>
-      </View>
-
+    // 🟢 徹底移除原有的內建 header 區塊，改為乾淨容器，完全交給 Layout 控制
+    <View style={{ flex: 1, backgroundColor: '#E0E7DA' }}>
+      
       {/* 主內容區 */}
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
         <View style={styles.recordCard}>
@@ -418,11 +394,12 @@ export default function DailyRecordScreen() {
               <View style={styles.unitSelectorContainer}>
                 <TextInput 
                   style={styles.unitNumberInput} 
-                  placeholder="例如：60" 
+                  placeholder="限輸入數字" 
                   placeholderTextColor="#A9A9A9"
                   keyboardType="numeric"
                   value={inputUnitValue}
-                  onChangeText={setInputUnitValue}
+                  // 🟢 即時正則過濾，確保只能輸入純數字
+                  onChangeText={(text) => setInputUnitValue(text.replace(/[^0-9]/g, ''))}
                 />
                 
                 <View style={styles.toggleButtonGroup}>
@@ -446,11 +423,12 @@ export default function DailyRecordScreen() {
               <Text style={styles.inputLabel}>熱 量 (大卡)</Text>
               <TextInput 
                 style={styles.popupInput} 
-                placeholder="例如：350" 
+                placeholder="限輸入數字" 
                 placeholderTextColor="#A9A9A9"
                 keyboardType="numeric"
                 value={inputCalories}
-                onChangeText={setInputCalories}
+                // 🟢 即時正則過濾，確保只能輸入純數字
+                onChangeText={(text) => setInputCalories(text.replace(/[^0-9]/g, ''))}
               />
             </View>
 
@@ -503,22 +481,12 @@ export default function DailyRecordScreen() {
         </View>
       </Modal>
 
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#E0E7DA' },
-  header: { height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30, ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } }) },
-  headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30 },
-  menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15, paddingVertical: 10 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8 },
-  activeMenu: { opacity: 1, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: 'white' },
-  avatarButton: { width: 50, height: 50, borderRadius: 25, overflow: 'hidden' },
-  defaultAvatar: { width: '100%', height: '100%', backgroundColor: '#D3D3D3', justifyContent: 'center', alignItems: 'center' },
-  defaultAvatarText: { color: '#555', fontSize: 18, fontWeight: 'bold' },
+  // 🟢 已將原先舊 header 的相關樣式表全部乾淨刪除
   scrollContent: { minHeight: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5DC', paddingVertical: 40 },
   recordCard: { backgroundColor: 'white', width: '65%', minWidth: 650, borderRadius: 40, padding: 50 },
   titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 30, borderBottomWidth: 1, borderBottomColor: '#EEE', paddingBottom: 10 },

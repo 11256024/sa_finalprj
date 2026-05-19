@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useIsFocused } from '@react-navigation/native';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { ActivityIndicator, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // 📋 配合每日紀錄的資料結構進行定義
 interface FoodItem {
@@ -33,31 +33,12 @@ export default function HistoryScreen() {
   const [thirtyDaysRecords, setThirtyDaysRecords] = useState<DailyRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [userAvatar, setUserAvatar] = useState<string | null>(null);
-
-  const menuItems = [
-    { name: '每日紀錄', path: '/daily-record' },
-    { name: '歷史紀錄', path: '/history' },
-    { name: '身體指數查詢', path: '/body-metrics' },
-    { name: '查詢商品', path: '/products' },
-    { name: '成就管理', path: '/achievements' },
-  ];
 
   useEffect(() => {
     if (isFocused) {
-      loadUserAvatar();
       fetchDatabaseRecords();
     }
   }, [isFocused]);
-
-  const loadUserAvatar = async () => {
-    try {
-      const savedAvatar = await AsyncStorage.getItem('user_avatar');
-      if (savedAvatar) setUserAvatar(savedAvatar);
-    } catch (e) {
-      console.log('載入頭像失敗', e);
-    }
-  };
 
   // 🌐 精準撈取與 `daily-record` 對接
   const fetchDatabaseRecords = async () => {
@@ -146,7 +127,7 @@ export default function HistoryScreen() {
     return foods.reduce((sum, item) => sum + (parseInt(item.calories, 10) || 0), 0);
   };
 
-  // 🛠️ 品項欄位視覺美化拆解 (把 "御飯糰/60克" 漂亮地拆開顯示，或者留作原樣降維顯示)
+  // 🛠️ 品項欄位視覺美化拆解 (把 "御飯糰/60克" 漂亮地拆開顯示)
   const renderFoodRows = (foods: FoodItem[]) => {
     return foods.map((food) => {
       let displayName = food.name;
@@ -170,30 +151,7 @@ export default function HistoryScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* 頂部導覽列 */}
-      <View style={styles.header}>
-        <View style={styles.headerLeftGroup}>
-          <Text style={styles.headerTitle}>食半功倍</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
-            {menuItems.map((item) => {
-              const isActive = pathname === item.path || (item.name === '歷史紀錄' && pathname.includes('history'));
-              return (
-                <TouchableOpacity key={item.name} onPress={() => router.push(item.path as any)} style={styles.menuButton}>
-                  <Text style={[styles.headerMenu, isActive && styles.activeMenu]}>
-                    {item.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-
-        <TouchableOpacity style={styles.avatarButton} onPress={() => router.push('/profile')}>
-          <View style={styles.defaultAvatar}>
-            <Text style={styles.defaultAvatarText}>林</Text>
-          </View>
-        </TouchableOpacity>
-      </View>
+      {/* 🟢 這裡移除了重複寫死的舊 header 區塊，將控制權還給全域母版 */}
 
       {/* 主內容 */}
       <View style={styles.content}>
@@ -336,22 +294,7 @@ export default function HistoryScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#E0E7DA' },
-  header: {
-    height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row',
-    alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30,
-    zIndex: 10,
-    ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } })
-  },
-  headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30 },
-  menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15, paddingVertical: 10 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8, paddingBottom: 4 },
-  activeMenu: { opacity: 1, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: 'white' },
-  avatarButton: { width: 50, height: 50, borderRadius: 25, overflow: 'hidden' },
-  defaultAvatar: { width: '100%', height: '100%', backgroundColor: '#D3D3D3', justifyContent: 'center', alignItems: 'center' },
-  defaultAvatarText: { color: '#555', fontSize: 18, fontWeight: 'bold' },
-  content: { flex: 1, backgroundColor: '#F5F5DC' }, // 配合你的每日紀錄底色 #F5F5DC
+  content: { flex: 1, backgroundColor: '#F5F5DC' }, 
   mainLayout: { flex: 1, flexDirection: 'row', maxWidth: 1200, width: '90%', alignSelf: 'center', marginVertical: 30 },
   centerState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
   loadingText: { marginTop: 15, fontSize: 18, color: '#666', fontWeight: '500' },

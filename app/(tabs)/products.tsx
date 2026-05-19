@@ -1,6 +1,6 @@
 import { usePathname, useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 // 1. 全頁面配置物件
 const pageLanguageConfig = {
@@ -61,16 +61,13 @@ const initialProducts = [
 
 export default function ProductsScreen() {
   const router = useRouter();
-  const pathname = usePathname(); // 🔄 動態偵測當前路由路徑
+  const pathname = usePathname(); // 🔄 用於在 Layout 控制或紀錄當前路由路徑
   const txt = pageLanguageConfig;
 
   // 狀態管理
   const [searchQuery, setSearchQuery] = useState('');
   const [products, setProducts] = useState(initialProducts); 
   
-  // 👤 模擬會員頭像狀態 (與其餘主要頁面完全同步)
-  const [userAvatar, setUserAvatar] = useState<string | null>(null);
-
   // 新增自訂商品彈窗控制
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newProductName, setNewProductName] = useState('');
@@ -100,11 +97,6 @@ export default function ProductsScreen() {
     confirmText = txt.btnConfirm
   ) => {
     setCustomAlert({ visible: true, title, message, onConfirm, cancelText, confirmText });
-  };
-  
-  // 💡 導覽列路由跳轉
-  const handleMenuPress = (path: string) => {
-    router.push(path as any);
   };
 
   // 開啟新增彈窗
@@ -189,40 +181,7 @@ export default function ProductsScreen() {
   return (
     <SafeAreaView style={styles.container}>
       
-      {/* 1. 上方導覽列 */}
-      <View style={styles.header}>
-        <View style={styles.headerLeftGroup}>
-          <Text style={styles.headerTitle}>{txt.appName}</Text>
-          
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
-            {txt.menuItems.map((item) => {
-              // 🎯 核心高亮邏輯：動態對齊當前路徑
-              const isActive = pathname === item.path;
-              
-              return (
-                <TouchableOpacity key={item.name} onPress={() => handleMenuPress(item.path)} style={styles.menuButton}>
-                  <Text style={[styles.headerMenu, isActive && styles.activeMenu]}>
-                    {item.name}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-
-        {/* 👤 右上角：圓形大頭貼按鈕（與歷史圖表等其餘主頁面完全同步） */}
-        <TouchableOpacity style={styles.avatarButton} onPress={() => router.push('/profile')}>
-          {userAvatar ? (
-            <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
-          ) : (
-            <View style={styles.defaultAvatar}>
-              <Text style={styles.defaultAvatarText}>林</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {/* 2. 主內容卡片 */}
+      {/* 🎯 橫幅移入 Layout，此處直接保留乾淨的主內容卡片 */}
       <View style={styles.mainContent}>
         <View style={styles.cardContainer}>
           
@@ -252,7 +211,7 @@ export default function ProductsScreen() {
 
           <Text style={styles.recentText}>{txt.recentSearchLabel}</Text>
 
-          {/* 3. 商品清單 */}
+          {/* 商品清單 */}
           <View style={styles.listContainer}>
             <ScrollView showsVerticalScrollIndicator={true} contentContainerStyle={styles.scrollListContent}>
               {filteredProducts.map((item) => (
@@ -385,28 +344,9 @@ export default function ProductsScreen() {
 }
 
 const styles = StyleSheet.create({
-  // 🎯 修正全域背景色，與專案其餘頁面色彩和諧一致
+  // 全域背景色
   container: { flex: 1, backgroundColor: '#F6EFE5' },
   
-  /* 導覽列 */
-  header: { 
-    height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', 
-    alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30, zIndex: 10,
-    ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } })
-  },
-  headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30, ...Platform.select({ web: { cursor: 'default', userSelect: 'none' } }) },
-  menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15, paddingVertical: 10 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8, paddingBottom: 4 },
-  activeMenu: { opacity: 1, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: 'white' },
-  
-  // 👤 圓形大頭貼按鈕樣式 (完美整合專案全域設計)
-  avatarButton: { width: 50, height: 50, borderRadius: 25, overflow: 'hidden', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
-  avatarImage: { width: '100%', height: '100%', resizeMode: 'cover' },
-  defaultAvatar: { width: '100%', height: '100%', backgroundColor: '#D3D3D3', justifyContent: 'center', alignItems: 'center' },
-  defaultAvatarText: { color: '#555', fontSize: 18, fontWeight: 'bold' },
-
   /* 主介面佈局 */
   mainContent: { flex: 1, paddingHorizontal: 80, paddingTop: 30, paddingBottom: 20 },
   cardContainer: {

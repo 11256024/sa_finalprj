@@ -1,11 +1,10 @@
-import { useRouter, usePathname } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Dimensions, Image, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Dimensions, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LineChart } from "react-native-chart-kit";
 
 export default function WeightPicScreen() {
   const router = useRouter();
-  const pathname = usePathname(); // 🔄 動態偵測當前路由路徑
   const screenWidth = Dimensions.get("window").width;
   const [selectedPeriod, setSelectedPeriod] = useState('周');
 
@@ -14,18 +13,6 @@ export default function WeightPicScreen() {
   const [chartLabels, setChartLabels] = useState<string[]>([]);
   const [weightData, setWeightData] = useState<number[]>([]);
   const [bmiData, setBmiData] = useState<number[]>([]);
-
-  // 👤 模擬會員頭像狀態 (與其他主要功能頁面完全同步)
-  const [userAvatar, setUserAvatar] = useState<string | null>(null);
-
-  // 🌐 定義橫幅選單的名稱與對應路由
-  const menuItems = [
-    { name: '每日紀錄', path: '/daily-record' },
-    { name: '歷史紀錄', path: '/history' },
-    { name: '身體指數查詢', path: '/body-metrics' },
-    { name: '查詢商品', path: '/products' },
-    { name: '成就管理', path: '/achievements' },
-  ];
 
   // 🌐 【核心功能】：從後端 API 撈取動態數據
   const fetchHistoryData = async (period: string) => {
@@ -67,52 +54,14 @@ export default function WeightPicScreen() {
     }
   };
 
-  // 🎣 當頁面第一次載入，或者使用者切換「年/月/周/日」時，自動重新觸發資料庫查詢
+  // 🎣 當選擇週期改變時自動重新查詢
   useEffect(() => {
     fetchHistoryData(selectedPeriod);
   }, [selectedPeriod]);
 
-  // 💡 導覽列路由跳轉
-  const handleMenuPress = (path: string) => {
-    router.push(path as any);
-  };
-
   return (
     <SafeAreaView style={styles.container}>
-      {/* 頂部導覽列 */}
-      <View style={styles.header}>
-        <View style={styles.headerLeftGroup}>
-          <Text style={styles.headerTitle}>食半功倍</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
-            {menuItems.map((item) => {
-              // 🎯 核心高亮邏輯：
-              // 如果巡迴到「每日紀錄」這個選項，且目前網址包含 daily-record 或 weightpic，就賦予 activeMenu 樣式
-              const isActive = 
-                pathname === item.path || 
-                (item.name === '每日紀錄' && (pathname.includes('daily-record') || pathname.includes('weightpic')));
-              
-              return (
-                <TouchableOpacity key={item.name} onPress={() => handleMenuPress(item.path)} style={styles.menuButton}>
-                  <Text style={[styles.headerMenu, isActive && styles.activeMenu]}>{item.name}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-
-        {/* 👤 右上角：圓形大頭貼按鈕（與其餘主要功能頁面完全同步） */}
-        <TouchableOpacity style={styles.avatarButton} onPress={() => router.push('/profile')}>
-          {userAvatar ? (
-            <Image source={{ uri: userAvatar }} style={styles.avatarImage} />
-          ) : (
-            <View style={styles.defaultAvatar}>
-              <Text style={styles.defaultAvatarText}>林</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      {/* 主內容區 */}
+      {/* 主內容區：頂部完全淨空，直接呈現卡片內容 */}
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
         <View style={styles.mainWrapper}>
           <View style={styles.chartCard}>
@@ -177,21 +126,8 @@ export default function WeightPicScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#E0E7DA' },
-  header: { height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30, zIndex: 10, ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } }) },
-  headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', marginRight: 30, ...Platform.select({ web: { cursor: 'default', userSelect: 'none' } }) },
-  menuWrapper: { flexDirection: 'row', alignItems: 'center' },
-  menuButton: { paddingHorizontal: 15, paddingVertical: 10 },
-  headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8, paddingBottom: 4 },
-  activeMenu: { opacity: 1, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: 'white' },
   
-  // 👤 圓形大頭貼按鈕樣式 (與其餘主要頁面完全同步)
-  avatarButton: { width: 50, height: 50, borderRadius: 25, overflow: 'hidden', elevation: 2, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4 },
-  avatarImage: { width: '100%', height: '100%', resizeMode: 'cover' },
-  defaultAvatar: { width: '100%', height: '100%', backgroundColor: '#D3D3D3', justifyContent: 'center', alignItems: 'center' },
-  defaultAvatarText: { color: '#555', fontSize: 18, fontWeight: 'bold' },
-
-  // 🎯 修正背景色，保持專案米色基調一致
+  // 背景色保持專案米色基調一致
   scrollContent: { minHeight: '100%', backgroundColor: '#F6EFE5' },
   mainWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 50 },
   chartCard: { backgroundColor: 'white', width: '65%', minWidth: 720, borderRadius: 40, paddingVertical: 40, paddingHorizontal: 30, elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 12 },

@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react'; // 💡 引入 useEffect 和 useRef
+import React, { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function LoginScreen() {
@@ -10,7 +11,7 @@ export default function LoginScreen() {
   const [showError, setShowError] = useState(false);
   const [errorMsg, setErrorMsg] = useState(''); 
   
-  // 💡 建立兩個 Ref 用來控制焦點切換
+  // 建立兩個 Ref 用來控制焦點切換
   const usernameRef = useRef<TextInput>(null);
   const passwordRef = useRef<TextInput>(null);
 
@@ -22,9 +23,8 @@ export default function LoginScreen() {
   // 自訂防呆登出彈窗的顯示狀態
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
 
-  // 💡 頁面一載入，自動將滑鼠/焦點聚集在帳號欄位
+  // 頁面一載入，自動將滑鼠/焦點聚集在帳號欄位
   useEffect(() => {
-    // 稍微延遲一下確保元件完全渲染（特別是在 Web 端或某些裝置上）
     const timer = setTimeout(() => {
       usernameRef.current?.focus();
     }, 100);
@@ -32,7 +32,7 @@ export default function LoginScreen() {
   }, []);
 
   // 登入驗證與跳轉邏輯
-  const handleLogin = () => {
+  const handleLogin = async () => {
     if (!username.trim() || !password) {
       setErrorMsg('⚠️ 請輸入帳號與密碼！');
       setShowError(true);
@@ -43,25 +43,28 @@ export default function LoginScreen() {
     const isLengthValid = password.length >= 6;
     
     if (!hasUpperCase || !isLengthValid) {
-      setErrorMsg('⚠️ 請輸入一個大寫字母，且長度需大於或等於 6 位數！');
+      setErrorMsg('⚠️ 密碼請輸入一個大寫字母，且長度需大於或等於 6 位數！');
       setShowError(true);
       return; 
     }
     
     setShowError(false);
     
-    if (username.trim() === 'admin' && password === 'Admin123!') {
+    try {
+      // 登入成功時，將最新的帳號與密碼寫入快取，讓 Profile 頁面讀取
+      await AsyncStorage.setItem('account', username.trim());
+      await AsyncStorage.setItem('password', password);
+      
       setIsLoggedIn(true);
-      router.replace('/admin-review'); 
-    } else {
-      setIsLoggedIn(true);
-      router.replace('/profile'); 
-    }
-  };
 
-  // 觸發登出防呆
-  const handleLogoutTrigger = () => {
-    setLogoutModalVisible(true);
+      if (username.trim() === 'admin' && password === 'Admin123!') {
+        router.replace('/admin-review'); 
+      } else {
+        router.replace('/profile'); 
+      }
+    } catch (e) {
+      console.error('儲存登入帳密快取失敗', e);
+    }
   };
 
   // 確認登出動作
@@ -75,61 +78,53 @@ export default function LoginScreen() {
   return (
     <SafeAreaView style={styles.container}>
       
-      {/* 頂部導覽列 */}
-      <View style={styles.header}>
-        <View style={styles.headerLeftGroup}>
-          <Text style={styles.headerTitle}>食半功倍</Text>
-        </View>
-
-        {isLoggedIn && (
-          <TouchableOpacity style={styles.logoutHeaderBtn} onPress={handleLogoutTrigger}>
-            <Text style={styles.logoutHeaderBtnText}>登 出</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-
       <View style={styles.content}>
         <Text style={styles.pageTitle}>登 入</Text>
         
         <View style={styles.cardContainer}>
           <View style={styles.inputContainer}>
             
-            {/* 帳號欄位 */}
+            {/* 帳號欄位：支援英文字母與數字，禁用中文/特殊符號 */}
             <View style={styles.inputGroup}>
               <Text style={styles.label}>帳 號</Text>
               <TextInput 
-                ref={usernameRef} // 💡 綁定帳號的 Ref
+                ref={usernameRef}
                 style={styles.input} 
-                placeholder="請輸入帳號(限用英文字母)"
+                placeholder="請輸入帳號 (限用英文字母與數字)"
                 placeholderTextColor="#A9A9A9"
                 value={username}
                 onChangeText={(text) => { 
-                  setUsername(text.replace(/[^a-zA-Z]/g, '')); 
+                  // 🎯 允許輸入大小寫英文字母 (a-zA-Z) 與數字 (0-9)
+                  setUsername(text.replace(/[^a-zA-Z0-9]/g, '')); 
                   setShowError(false); 
                 }}
                 autoCapitalize="none"
-                returnKeyType="next" // 💡 讓手機鍵盤右下角顯示「下一步」
-                blurOnSubmit={false} // 💡 預防按 Enter 時手機鍵盤收起來
-                onSubmitEditing={() => passwordRef.current?.focus()} // 💡 按 Enter 直接跳到密碼欄位
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => passwordRef.current?.focus()}
               />
             </View>
 
-            {/* 密碼欄位 */}
+            {/* 密碼欄位：支援英文字母與數字，禁用中文/特殊符號 */}
             <View style={[styles.inputGroup, { marginBottom: 10, borderBottomWidth: 0 }]}>
               <Text style={styles.label}>密 碼</Text>
               <View style={styles.passwordRow}>
                 <TextInput 
-                  ref={passwordRef} // 💡 綁定密碼的 Ref
+                  ref={passwordRef}
                   style={[styles.input, { flex: 1 }]} 
-                  placeholder="請輸入密碼(限用英文字母)"
+                  placeholder="請輸入密碼 (限用英文字母與數字)"
                   placeholderTextColor="#A9A9A9"
                   secureTextEntry={isPasswordSecure}
                   value={password}
-                  onChangeText={(text) => { setPassword(text); setShowError(false); }}
-                  returnKeyType="done" // 💡 密碼輸完後右下角顯示「完成」
-                  onSubmitEditing={handleLogin} // 💡 在密碼欄位按 Enter 可以直接觸發登入，超方便！
+                  onChangeText={(text) => { 
+                    // 🎯 核心修改：密碼同樣利用 Regex 限制只能輸入大小寫英文字母與數字，直接禁用中文
+                    setPassword(text.replace(/[^a-zA-Z0-9]/g, '')); 
+                    setShowError(false); 
+                  }}
+                  autoCapitalize="none"
+                  returnKeyType="done"
+                  onSubmitEditing={handleLogin}
                 />
-                {/* 查看/隱藏 密碼的切換按鈕 */}
                 <TouchableOpacity 
                   style={styles.eyeButton} 
                   onPress={() => setIsPasswordSecure(!isPasswordSecure)}
@@ -151,7 +146,8 @@ export default function LoginScreen() {
                 </View>
               ) : (
                 <Text style={styles.hintText}>
-                  * 必須至少輸入一個大寫字母，且長度需大於或等於 6 位數！
+                  * 帳號與密碼限用英文字母與數字。{"\n"}
+                  * 密碼必須至少輸入一個大寫字母，且長度需大於或等於 6 位數！
                 </Text>
               )}
             </View>
@@ -208,84 +204,22 @@ export default function LoginScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#E0E7DA' },
-  header: { 
-    height: 100, backgroundColor: '#A3C1AD', flexDirection: 'row', 
-    alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 30,
-    ...Platform.select({ ios: { paddingTop: 20 }, android: { paddingTop: 10 } })
-  },
-  headerLeftGroup: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { color: 'white', fontSize: 32, fontWeight: 'bold', ...Platform.select({ web: { cursor: 'default', userSelect: 'none' } }) },
-  
-  logoutHeaderBtn: { 
-    backgroundColor: 'rgba(231, 76, 60, 0.8)', 
-    paddingVertical: 8, 
-    paddingHorizontal: 18, 
-    borderRadius: 20 
-  },
-  logoutHeaderBtnText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' },
-
   content: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5DC' },
   pageTitle: { fontSize: 36, marginBottom: 30, color: '#333', fontWeight: 'bold' },
-  
-  cardContainer: {
-    backgroundColor: 'white',
-    width: '45%', 
-    minWidth: 420, 
-    padding: 40,
-    borderRadius: 30, 
-    alignItems: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4,
-    elevation: 5,
-  },
-  
+  cardContainer: { backgroundColor: 'white', width: '45%', minWidth: 420, padding: 40, borderRadius: 30, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 4, elevation: 5 },
   inputContainer: { width: '100%' },
-  inputGroup: { 
-    marginBottom: 20, 
-    borderBottomWidth: 1, 
-    borderBottomColor: '#ccc',
-    width: '100%',
-  },
+  inputGroup: { marginBottom: 20, borderBottomWidth: 1, borderBottomColor: '#ccc', width: '100%' },
   label: { fontSize: 20, color: '#333', fontWeight: '600', marginBottom: 5 },
-  input: { 
-    fontSize: 16, 
-    color: '#333', 
-    paddingVertical: 10,
-    ...Platform.select({ web: { outlineStyle: 'none' as any } })
-  },
-
-  passwordRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#ccc',
-    width: '100%',
-  },
-  eyeButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  
-  hintArea: { minHeight: 60, marginTop: 15, marginBottom: 15 },
-  errorBox: {
-    backgroundColor: '#FFF5F5', borderWidth: 1, borderColor: '#FF4D4F',
-    borderRadius: 8, padding: 10,
-  },
+  input: { fontSize: 16, color: '#333', paddingVertical: 10, ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
+  passwordRow: { flexDirection: 'row', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#ccc', width: '100%' },
+  eyeButton: { paddingHorizontal: 10, paddingVertical: 8, justifyContent: 'center', alignItems: 'center' },
+  hintArea: { minHeight: 75, marginTop: 15, marginBottom: 15 },
+  errorBox: { backgroundColor: '#FFF5F5', borderWidth: 1, borderColor: '#FF4D4F', borderRadius: 8, padding: 10 },
   errorText: { color: '#FF4D4F', fontSize: 13, fontWeight: '600', lineHeight: 18 },
   hintText: { fontSize: 13, color: '#888', lineHeight: 18, paddingHorizontal: 5 },
-
-  confirmButton: { 
-    backgroundColor: '#F3B07E', 
-    paddingVertical: 14, 
-    width: '100%', 
-    borderRadius: 15, 
-    alignItems: 'center', 
-    marginTop: 10 
-  },
+  confirmButton: { backgroundColor: '#F3B07E', paddingVertical: 14, width: '100%', borderRadius: 15, alignItems: 'center', marginTop: 10 },
   confirmButtonText: { color: 'white', fontSize: 22, fontWeight: 'bold' },
   registerLink: { color: '#5876F1', marginTop: 20, fontSize: 18, textDecorationLine: 'underline' },
-
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
   logoutAlertContent: { backgroundColor: '#FFF', width: 380, padding: 25, borderRadius: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 10, elevation: 10 },
   logoutAlertTitle: { fontSize: 20, fontWeight: 'bold', color: '#333', marginBottom: 12, textAlign: 'center' },
