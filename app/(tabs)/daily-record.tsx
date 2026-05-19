@@ -299,7 +299,7 @@ export default function DailyRecordScreen() {
               <Text style={styles.label}>今日體重</Text>
               <TextInput
                 style={styles.input}
-                placeholder="輸入體重"
+                placeholder="輸入體重(四捨五入到整數位)"
                 placeholderTextColor="#A9A9A9"
                 value={weight}
                 keyboardType="numeric"

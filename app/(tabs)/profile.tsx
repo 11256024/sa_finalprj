@@ -22,7 +22,7 @@ export default function ProfileScreen() {
   const [isEditing, setIsEditing] = useState(false);
   const [saveModalVisible, setSaveModalVisible] = useState(false);      
 
-  // 初始化個人資料狀態
+  // 初始化個人資料狀態（預設全空）
   const [profileData, setProfileData] = useState<ProfileType>({
     name: '',
     birthday: '',
@@ -37,7 +37,7 @@ export default function ProfileScreen() {
   const [tempData, setTempData] = useState<ProfileType>({ ...profileData });
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
-  // 獲取今天日期 YYYY-MM-DD 格式 (用於精準綁定當日飲食紀錄)
+  // 獲取今天日期 YYYY-MM-DD 格式
   const getTodayDateString = () => {
     const today = new Date();
     const yyyy = today.getFullYear();
@@ -52,57 +52,62 @@ export default function ProfileScreen() {
 
   const loadProfileData = async () => {
     try {
-      const todayKey = `food_record_${getTodayDateString()}`;
-      
-      // 🚨 【核心修改一】優先讀取今日最新每日飲食紀錄檔
-      const dailyFoodRecordRaw = await AsyncStorage.getItem(todayKey);
-      let dailyWeight = '';
-      let dailyHeight = '';
-      
-      if (dailyFoodRecordRaw) {
-        try {
-          const parsedFood = JSON.parse(dailyFoodRecordRaw);
-          // 優先查看最新每日紀錄檔內隨附的體重與身高
-          if (parsedFood.weight) dailyWeight = parsedFood.weight.toString();
-          if (parsedFood.height) dailyHeight = parsedFood.height.toString();
-        } catch (e) {
-          console.log("解析今日飲食紀錄失敗:", e);
-        }
-      }
+      // 1. 🔍 首先讀取當前嚴格登入/註冊的帳密（這是一定要同步顯示的）
+      const singleAccount = await AsyncStorage.getItem('account') || await AsyncStorage.getItem('username') || '';
+      const singlePassword = await AsyncStorage.getItem('password') || '';
 
-      // 2. 🔍 讀取原本的次級備份快取 Key
-      const singleName = await AsyncStorage.getItem('user_name_key');
-      const singleHeight = await AsyncStorage.getItem('user_height_key') || await AsyncStorage.getItem('height');
-      const singleWeight = await AsyncStorage.getItem('user_weight_key') || await AsyncStorage.getItem('weight');
-      const singleAge = await AsyncStorage.getItem('age');
-      
-      // 帳密連動登入端快取 Key
-      const singleAccount = await AsyncStorage.getItem('account') || await AsyncStorage.getItem('username');
-      const singlePassword = await AsyncStorage.getItem('password');
-
+      // 2. 讀取大禮包快取
       let localData = await AsyncStorage.getItem('userProfile') || await AsyncStorage.getItem('user_profile');
       let parsedProfile: any = {};
       if (localData) {
         try { parsedProfile = JSON.parse(localData); } catch (e) {}
       }
 
-      // 🚨 【核心修改二】權重決定：飲食紀錄檔 > 單一 Key > 大禮包
-      const rawName = singleName || parsedProfile.name || '';
-      const rawBirthday = parsedProfile.birthday || '';
-      const rawHeight = dailyHeight || singleHeight || parsedProfile.height || '';
-      const rawWeight = dailyWeight || singleWeight || parsedProfile.weight || '';
-      const rawGender = parsedProfile.gender || '';
-      
-      // 帳密嚴格唯讀，與登入頁同步
-      const rawAccount = singleAccount || parsedProfile.account || '';
-      const rawPassword = singlePassword || parsedProfile.password || '';
+      // 🎯【跨帳號防呆機制】
+      // 如果大禮包裡面紀錄的帳號，跟目前登入的帳號不同，或者是新註冊帳號完全沒大禮包
+      // 代表這些身高體重全是「上一任登出者」或「舊測試」留下的殘留髒資料，必須切斷繼承！
+      const isSameAccount = parsedProfile.account && singleAccount && (parsedProfile.account === singleAccount);
 
-      // 3. 🧼 【精準過濾舊測試髒資料】
-      const cleanName = (rawName === '王小' || rawName === '王小明' || rawName === '你好') ? '' : rawName;
-      const cleanBirthday = rawBirthday === '1995-01-15' ? '' : rawBirthday;
-      const cleanHeight = rawHeight === '156' ? '' : rawHeight;
-      const cleanWeight = rawWeight; 
+      let rawName = '';
+      let rawBirthday = '';
+      let rawHeight = '';
+      let rawWeight = '';
+      let rawGender = '';
+
+      if (isSameAccount) {
+        // 如果帳號對得上，才去信任並讀取歷史大禮包與獨立 Key
+        const singleName = await AsyncStorage.getItem('user_name_key');
+        const singleHeight = await AsyncStorage.getItem('user_height_key') || await AsyncStorage.getItem('height');
+        const singleWeight = await AsyncStorage.getItem('user_weight_key') || await AsyncStorage.getItem('weight');
+
+        rawName = singleName || parsedProfile.name || '';
+        rawBirthday = parsedProfile.birthday || '';
+        rawHeight = singleHeight || parsedProfile.height || '';
+        rawWeight = singleWeight || parsedProfile.weight || '';
+        rawGender = parsedProfile.gender || '';
+      }
+
+      // 3. 🚨【飲食紀錄檔權重最高】不論是否同帳號，若今天飲食紀錄有填，優先覆蓋（且飲食紀錄也要綁定今日）
+      const todayKey = `food_record_${getTodayDateString()}`;
+      const dailyFoodRecordRaw = await AsyncStorage.getItem(todayKey);
+      if (dailyFoodRecordRaw) {
+        try {
+          const parsedFood = JSON.parse(dailyFoodRecordRaw);
+          if (parsedFood.weight) rawWeight = parsedFood.weight.toString();
+          if (parsedFood.height) rawHeight = parsedFood.height.toString();
+        } catch (e) {
+          console.log("解析今日飲食紀錄失敗:", e);
+        }
+      }
+
+      // 4. 🧼 萬用過濾名單，徹底消滅指定測試髒資料
+      const cleanName = (rawName === '王小' || rawName === '王小明' || rawName === '你好' || rawName === 'xx') ? '' : rawName;
+      const cleanBirthday = (rawBirthday === '1995-01-15' || rawBirthday === '2008-11-13') ? '' : rawBirthday;
+      const cleanHeight = (rawHeight === '156' || rawHeight === '102' || rawHeight === '103') ? '' : rawHeight;
+      const cleanWeight = (rawWeight === '47' || rawWeight === '43' || rawWeight === '30') ? '' : rawWeight; 
       const cleanGender = (rawGender === '女' && cleanName === '') ? '' : rawGender;
+
+      const singleAge = await AsyncStorage.getItem('age');
 
       const safeData = {
         name: cleanName,
@@ -110,17 +115,20 @@ export default function ProfileScreen() {
         height: cleanHeight,
         weight: cleanWeight,
         gender: cleanGender,
-        account: rawAccount, 
-        password: rawPassword, 
-        age: singleAge || parsedProfile.age || ''
+        account: singleAccount, // 強制連動目前最新的登入帳號
+        password: singlePassword, // 強制連動目前最新的登入密碼
+        age: isSameAccount ? (singleAge || parsedProfile.age || '') : ''
       };
 
       setProfileData(safeData);
       setTempData(safeData);
 
+      // 大頭貼防呆：如果換帳號了，就先用預設灰底，避免看到上個人的照片
       const savedAvatar = await AsyncStorage.getItem('user_avatar');
-      if (savedAvatar) {
+      if (savedAvatar && isSameAccount) {
         setAvatarUri(savedAvatar);
+      } else {
+        setAvatarUri(null);
       }
     } catch (error) {
       console.error("加載快取失敗：", error);
@@ -133,7 +141,7 @@ export default function ProfileScreen() {
   const genderOptions = ['男', '女'];
 
   const getPureAgeValue = (birthdayStr: string): string => {
-    if (!birthdayStr || birthdayStr === '1995-01-15') return '';
+    if (!birthdayStr || birthdayStr === '1995-01-15' || birthdayStr === '2008-11-13') return '';
     const birthDate = new Date(birthdayStr);
     const today = new Date();
     let age = today.getFullYear() - birthDate.getFullYear();
@@ -195,7 +203,7 @@ export default function ProfileScreen() {
 
       const stringifiedData = JSON.stringify(updatedData);
       
-      // 1. 儲存個人基本資料大禮包與獨立 Key（不觸碰唯讀的帳密）
+      // 1. 儲存個人基本資料大禮包與獨立 Key
       await AsyncStorage.setItem('userProfile', stringifiedData);
       await AsyncStorage.setItem('user_profile', stringifiedData);
       await AsyncStorage.setItem('user_name_key', updatedData.name.trim());
@@ -207,7 +215,7 @@ export default function ProfileScreen() {
         await AsyncStorage.setItem('age', updatedData.age);
       }
 
-      // 2. 🚨 【即時回填並同步至飲食紀錄檔】確保計算 BMI 時兩邊數據絕對一致
+      // 2. 即時回填並同步至飲食紀錄檔
       const todayKey = `food_record_${getTodayDateString()}`;
       const dailyFoodRecordRaw = await AsyncStorage.getItem(todayKey);
       
@@ -216,11 +224,10 @@ export default function ProfileScreen() {
         try { parsedFood = JSON.parse(dailyFoodRecordRaw); } catch (e) {}
       }
 
-      // 將在個人資料更新的身高、體重同步強灌至今日飲食紀錄檔中
       parsedFood.weight = updatedData.weight;
-      parsedFood.height = updatedData.height; // 同步保存身高以便其他頁面計算 BMI
+      parsedFood.height = updatedData.height; 
 
-      // ⚡️ 即時幫飲食紀錄計算最新 BMI
+      // BMI 計算
       const hMeter = parseFloat(updatedData.height) / 100;
       const wKg = parseFloat(updatedData.weight);
       if (hMeter > 0 && wKg > 0) {
@@ -230,7 +237,6 @@ export default function ProfileScreen() {
         else parsedFood.bmiStatus = "肥胖";
       }
 
-      // 寫回每日快取
       await AsyncStorage.setItem(todayKey, JSON.stringify(parsedFood));
 
       if (Platform.OS === 'web') window.alert("個人資料已成功更新！");
@@ -353,7 +359,7 @@ export default function ProfileScreen() {
               )}
             </View>
 
-            {/* 體重（優先連動當日飲食紀錄） */}
+            {/* 體重 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>體 重 (kg)</Text>
               {isEditing ? (
@@ -363,7 +369,7 @@ export default function ProfileScreen() {
                     onChange={(e) => setTempData({ ...tempData, weight: e.target.value })}
                     style={webSelectStyle}
                   >
-                    <option value="">請選擇體重</option>
+                    <option value="">請選擇體重(四捨五入到整數位)</option>
                     {weightOptions.map(w => <option key={w} value={w}>{w} kg</option>)}
                   </select>
                 ) : (
@@ -412,7 +418,7 @@ export default function ProfileScreen() {
               )}
             </View>
 
-            {/* 🔒 帳號：不論是否在編輯模式，均完全唯讀，不提供任何 input 控制項 */}
+            {/* 🔒 帳號 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>帳 號</Text>
               <Text style={[styles.infoValue, styles.readOnlyText, (!profileData.account || profileData.account.trim() === '') && styles.placeholderText]}>
@@ -420,7 +426,7 @@ export default function ProfileScreen() {
               </Text>
             </View>
 
-            {/* 🔒 密碼：不論是否在編輯模式，均完全唯讀，不提供任何 input 控制項 */}
+            {/* 🔒 密碼 */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>密 碼</Text>
               <Text style={[styles.infoValue, styles.readOnlyText, (!profileData.password || profileData.password.trim() === '') && styles.placeholderText]}>
@@ -450,7 +456,7 @@ export default function ProfileScreen() {
         </View>
       </ScrollView>
 
-      {/* 彈窗 */}
+      {/* 儲存確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={saveModalVisible} onRequestClose={() => setSaveModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
