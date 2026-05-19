@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useRouter, usePathname } from 'expo-router';
 import React, { useRef, useState } from 'react';
 import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
@@ -11,6 +11,8 @@ interface FoodItem {
 
 export default function DailyRecordScreen() {
   const router = useRouter();
+  const pathname = usePathname(); // 👈 自動偵測網址路徑，確保高亮底線100%精準
+
   const [weight, setWeight] = useState('');
   const [bmi, setBmi] = useState('—');
 
@@ -47,7 +49,16 @@ export default function DailyRecordScreen() {
     晚餐: [{ id: 'd1', name: '', calories: '' }], 
   });
 
-  // 🎯 核心功能：動態計算早、午、晚三餐的全天熱量總和
+  // 定義橫幅選單的名稱與路由對照表
+  const menuItems = [
+    { name: '每日紀錄', path: '/daily-record' },
+    { name: '歷史紀錄', path: '/history' },
+    { name: '身體指數查詢', path: '/body-metrics' },
+    { name: '查詢商品', path: '/products' },
+    { name: '成就管理', path: '/achievements' },
+  ];
+
+  // 🎯 動態計算全天熱量總和
   const calculateTotalCalories = () => {
     let total = 0;
     Object.values(mealBlocks).forEach((foods) => {
@@ -66,7 +77,7 @@ export default function DailyRecordScreen() {
     setWeight(text);
     const w = parseFloat(text);
     if (!isNaN(w) && w > 0) {
-      const h = 1.75;
+      const h = 1.75; // 預設身高
       const bmiCalc = (w / (h * h)).toFixed(1);
       setBmi(bmiCalc);
     } else {
@@ -173,15 +184,6 @@ export default function DailyRecordScreen() {
     }
   };
 
-  const handleMenuPress = (menuName: string) => {
-    if (menuName === '會員中心') router.push('/profile');
-    else if (menuName === '每日紀錄') router.push('/daily-record');
-    else if (menuName === '歷史紀錄') router.push('/history');
-    else if (menuName === '身體指數查詢') router.push('/body-metrics'); 
-    else if (menuName === '查詢商品') router.push('/products');
-    else if (menuName === '成就管理') router.push('/achievements');
-  };
-
   return (
     <SafeAreaView style={styles.container}>
       {/* 頂部導覽列 */}
@@ -189,14 +191,21 @@ export default function DailyRecordScreen() {
         <View style={styles.headerLeftGroup}>
           <Text style={styles.headerTitle}>食半功倍</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.menuWrapper}>
-            {['每日紀錄', '歷史紀錄', '身體指數查詢', '查詢商品', '成就管理'].map((item) => (
-              <TouchableOpacity key={item} onPress={() => handleMenuPress(item)} style={styles.menuButton}>
-                <Text style={[styles.headerMenu, item === '每日紀錄' && styles.activeMenu]}>{item}</Text>
-              </TouchableOpacity>
-            ))}
+            {menuItems.map((item) => {
+              // 🎯 動態判斷：如果 pathname 包含此路徑，或是當前就是每日紀錄頁面
+              const isActive = pathname === item.path || (item.name === '每日紀錄' && (pathname === '/' || pathname.includes('daily-record')));
+              
+              return (
+                <TouchableOpacity key={item.name} onPress={() => router.push(item.path as any)} style={styles.menuButton}>
+                  <Text style={[styles.headerMenu, isActive && styles.activeMenu]}>
+                    {item.name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         </View>
-        <TouchableOpacity style={styles.memberCenterBtn} onPress={() => handleMenuPress('會員中心')}>
+        <TouchableOpacity style={styles.memberCenterBtn} onPress={() => router.push('/profile')}>
           <Text style={styles.memberCenterText}>會員中心</Text>
         </TouchableOpacity>
       </View>
@@ -206,7 +215,8 @@ export default function DailyRecordScreen() {
         <View style={styles.recordCard}>
           <View style={styles.titleRow}>
             <Text style={styles.mainTitle}>每日紀錄</Text>
-            <TouchableOpacity onPress={() => handleMenuPress('歷史紀錄')}>
+            {/* 👈 點擊白框卡片右上角「點我看體重紀錄」，跳轉至趨勢圖表頁 weightpic */}
+            <TouchableOpacity onPress={() => router.push('/weightpic')}>
               <Text style={styles.linkText}>點我看體重紀錄</Text>
             </TouchableOpacity>
           </View>
@@ -266,7 +276,7 @@ export default function DailyRecordScreen() {
             </View>
           ))}
 
-          {/* 🎯 新增：最底下的全天熱量總和加總顯示區塊 */}
+          {/* 全天熱量總和 */}
           <View style={styles.totalCaloriesCard}>
             <Text style={styles.totalCaloriesLabel}>今日攝取總熱量</Text>
             <View style={styles.totalCaloriesValueGroup}>
@@ -284,7 +294,6 @@ export default function DailyRecordScreen() {
           <View style={styles.popupBox}>
             <Text style={styles.popupTitle}>新增飲食紀錄</Text>
             
-            {/* 寫死固定分類 */}
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>新增類別</Text>
               <View style={styles.disabledSelectBox}>
@@ -292,12 +301,9 @@ export default function DailyRecordScreen() {
               </View>
             </View>
 
-            {/* 內建斜線的「雙向安全輸入欄位」 */}
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>品項 / 單位</Text>
               <View style={styles.splitInputContainer}>
-                
-                {/* 左邊品項輸入框：按下 Enter 自動跳轉 */}
                 <TextInput 
                   style={[styles.splitInput, { flex: 1.3 }]} 
                   placeholder={currentBlockCategory === '早餐' ? '例如：御飯糰' : currentBlockCategory === '午餐' ? '例如：雞肉便當' : '例如：烤鮭魚'} 
@@ -308,10 +314,7 @@ export default function DailyRecordScreen() {
                   blurOnSubmit={false}
                   onSubmitEditing={() => unitInputRef.current?.focus()}
                 />
-                
                 <Text style={styles.splitDivider}>/</Text>
-                
-                {/* 右邊單位輸入框：綁定 useRef */}
                 <TextInput 
                   ref={unitInputRef}
                   style={[styles.splitInput, { flex: 0.8 }]} 
@@ -322,11 +325,9 @@ export default function DailyRecordScreen() {
                   returnKeyType="done"
                   onSubmitEditing={handleConfirmAddItem}
                 />
-
               </View>
             </View>
 
-            {/* 熱量輸入 */}
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>熱 量 (大卡)</Text>
               <TextInput 
@@ -340,7 +341,6 @@ export default function DailyRecordScreen() {
               />
             </View>
 
-            {/* 操作按鈕 */}
             <View style={styles.modalButtonGroup}>
               <TouchableOpacity style={[styles.modalBtn, styles.modalBtnCancel]} onPress={handleCancelAddItem}>
                 <Text style={styles.modalBtnCancelText}>取消</Text>
@@ -372,7 +372,6 @@ export default function DailyRecordScreen() {
           <View style={styles.alertPopupBox}>
             <Text style={styles.alertPopupTitle}>{confirmTitle}</Text>
             <Text style={styles.alertPopupMessage}>{confirmMessage}</Text>
-            
             <View style={styles.modalButtonGroup}>
               <TouchableOpacity style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => setConfirmModalVisible(false)}>
                 <Text style={styles.modalBtnCancelText}>返回</Text>
@@ -408,7 +407,10 @@ const styles = StyleSheet.create({
   menuWrapper: { flexDirection: 'row', alignItems: 'center' },
   menuButton: { paddingHorizontal: 15 },
   headerMenu: { color: 'white', fontSize: 18, fontWeight: '500', opacity: 0.8 },
+  
+  // 🎯 白線底線高亮樣式
   activeMenu: { opacity: 1, fontWeight: 'bold', borderBottomWidth: 2, borderBottomColor: 'white' },
+  
   memberCenterBtn: { backgroundColor: 'rgba(255,255,255,0.25)', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.5)' },
   memberCenterText: { color: 'white', fontSize: 16, fontWeight: 'bold' },
   
@@ -425,7 +427,7 @@ const styles = StyleSheet.create({
   bmiRow: { alignItems: 'flex-end' },
   bmiValue: { fontSize: 20, color: '#888', fontWeight: '500' },
   
-  mealBlockCard: { backgroundColor: '#FCFCF9', borderWidth: 1, borderColor: '#EDEEEA', borderRadius: 20, padding: 25, marginBottom: 30, shadowColor: '#000', shadowOpacity: 0.02, shadowRadius: 5, elevation: 2 },
+  mealBlockCard: { backgroundColor: '#FCFCF9', borderWidth: 1, borderColor: '#EDEEEA', borderRadius: 20, padding: 25, marginBottom: 30 },
   blockHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
   blockCategoryTitle: { fontSize: 24, fontWeight: 'bold', color: '#2C3E50' },
   blockAddBtn: { backgroundColor: '#A3C1AD', paddingVertical: 6, paddingHorizontal: 16, borderRadius: 10 },
@@ -436,42 +438,23 @@ const styles = StyleSheet.create({
   tableRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   tableInput: { fontSize: 18, borderBottomWidth: 1, borderBottomColor: '#EBEBEB', paddingVertical: 4, color: '#333', paddingHorizontal: 6, ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
 
-  // 🎯 新增：總熱量卡片樣式
-  totalCaloriesCard: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    backgroundColor: '#FFF2E6', 
-    borderWidth: 1, 
-    borderColor: '#F3B07E', 
-    borderRadius: 20, 
-    paddingVertical: 20, 
-    paddingHorizontal: 30, 
-    marginTop: 10,
-    shadowColor: '#F3B07E',
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
-    elevation: 2
-  },
+  totalCaloriesCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFF2E6', borderWidth: 1, borderColor: '#F3B07E', borderRadius: 20, paddingVertical: 20, paddingHorizontal: 30, marginTop: 10 },
   totalCaloriesLabel: { fontSize: 22, fontWeight: 'bold', color: '#D35400' },
   totalCaloriesValueGroup: { flexDirection: 'row', alignItems: 'baseline' },
   totalCaloriesNumber: { fontSize: 32, fontWeight: 'bold', color: '#E67E22' },
   totalCaloriesUnit: { fontSize: 18, fontWeight: '600', color: '#7F8C8D' },
 
-  // 飲食輸入彈窗樣式
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  popupBox: { backgroundColor: '#FFF', width: 460, padding: 35, borderRadius: 25, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 10, elevation: 10 },
+  popupBox: { backgroundColor: '#FFF', width: 460, padding: 35, borderRadius: 25 },
   popupTitle: { fontSize: 24, fontWeight: 'bold', color: '#333', marginBottom: 25, textAlign: 'center' },
   inputGroup: { marginBottom: 18 },
   inputLabel: { fontSize: 16, fontWeight: '600', color: '#4A4A4A', marginBottom: 8 },
   disabledSelectBox: { borderWidth: 1, borderColor: '#DDD', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: '#EEEEEE' },
   disabledSelectText: { fontSize: 16, color: '#666', fontWeight: 'bold' },
   
-  // 左右拆分輸入框
   splitInputContainer: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#DDD', borderRadius: 10, backgroundColor: '#FAFAFA', paddingHorizontal: 10 },
   splitInput: { paddingVertical: 10, fontSize: 16, color: '#333', ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
   splitDivider: { fontSize: 20, color: '#BBB', fontWeight: '400', paddingHorizontal: 8 },
-
   popupInput: { borderWidth: 1, borderColor: '#DDD', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, fontSize: 16, color: '#333', backgroundColor: '#FAFAFA', ...Platform.select({ web: { outlineStyle: 'none' as any } }) },
 
   modalButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 15 },
@@ -481,8 +464,7 @@ const styles = StyleSheet.create({
   orangeAlertBtn: { backgroundColor: '#E67E22' }, 
   modalBtnConfirmText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
 
-  // 自訂提示小彈窗
-  alertPopupBox: { backgroundColor: '#FFF', width: 360, padding: 25, borderRadius: 20, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 8, elevation: 10 },
+  alertPopupBox: { backgroundColor: '#FFF', width: 360, padding: 25, borderRadius: 20, alignItems: 'center' },
   alertPopupTitle: { fontSize: 20, fontWeight: 'bold', color: '#333', marginBottom: 12 },
   alertPopupMessage: { fontSize: 16, color: '#555', textAlign: 'center', lineHeight: 24, marginBottom: 25, paddingHorizontal: 10 },
   alertSingleBtn: { backgroundColor: '#A3C1AD', width: '100%', height: 45, borderRadius: 10, justifyContent: 'center', alignItems: 'center' },
