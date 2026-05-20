@@ -247,6 +247,24 @@ export default function ProfileScreen() {
     }
   };
 
+  // 🛠️ 智能取消判斷：比對暫存值與原始資料是否有差異
+  const handleCancelPress = () => {
+    const isChanged = 
+      tempData.name !== profileData.name ||
+      tempData.birthday !== profileData.birthday ||
+      tempData.height !== profileData.height ||
+      tempData.weight !== profileData.weight ||
+      tempData.gender !== profileData.gender;
+
+    if (isChanged) {
+      // 有更改過欄位內容 ➡️ 跳出確認防呆彈窗
+      setCancelModalVisible(true);
+    } else {
+      // 什麼都沒改 ➡️ 直接跳出編輯狀態，不顯示彈窗
+      setIsEditing(false);
+    }
+  };
+
   // 確定要放棄編輯
   const handleConfirmCancel = () => {
     setCancelModalVisible(false);
@@ -459,7 +477,8 @@ export default function ProfileScreen() {
             <View style={styles.btnGroupRow}>
               {isEditing ? (
                 <View style={{ flexDirection: 'row' }}>
-                  <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#ccc', marginRight: 15 }]} onPress={() => setCancelModalVisible(true)}>
+                  {/* 🛠️ 取消按鈕改為呼叫新的智慧判斷函式 handleCancelPress */}
+                  <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#ccc', marginRight: 15 }]} onPress={handleCancelPress}>
                     <Text style={styles.editBtnText}>取 消</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#F3B07E' }]} onPress={handleEditPress}>
