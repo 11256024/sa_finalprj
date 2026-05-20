@@ -1,10 +1,9 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useIsFocused } from '@react-navigation/native';
-import React, { useEffect, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 export default function BodyMetricsScreen() {
-  const isFocused = useIsFocused();
 
   // 核心數據狀態 - 初始一律為空字串，對齊選單的「請選擇」
   const [metricsData, setMetricsData] = useState({
@@ -58,24 +57,24 @@ export default function BodyMetricsScreen() {
       try { savedProfile = JSON.parse(userProfileRaw); } catch (e) {}
     }
 
-    // 1. 身高抓取：地毯式掃描出的優先，否則取 profile
+    // 1. 身高抓取
     let rawHeight = scannedHeight || savedProfile?.height || '';
     let cleanHeight = (rawHeight === '請選擇身高' || !rawHeight || rawHeight.toString().includes('請選擇')) 
       ? '' 
       : rawHeight.toString().replace(/[^0-9.]/g, '').trim();
 
-    // 2. 體重抓取：🎯 嚴格規定只抓取今天當天飲食紀錄檔的體重
-    let rawWeight = todayFoodWeight; // 👈 砍掉舊有 fallback 到 profile 的邏輯，只看當天紀錄
+    // 2. 體重抓取
+    let rawWeight = todayFoodWeight; 
     let cleanWeight = (rawWeight === '請選擇體重' || !rawWeight || rawWeight.toString().includes('請選擇')) 
       ? '' 
       : rawWeight.toString().replace(/[^0-9.]/g, '').trim(); 
 
-    // 🛑 真正安全的防老鼠屎機制 (只阻斷整包 Json 字串或極端幽靈數字)
+    // 安全攔截機制門檻同步調整為 30 ~ 200 kg
     const parsedWeight = parseFloat(cleanWeight);
-    if (cleanWeight.includes('{') || isNaN(parsedWeight) || parsedWeight > 500 || parsedWeight < 2) {
-      cleanWeight = '';
+    if (cleanWeight.includes('{') || isNaN(parsedWeight) || parsedWeight > 200 || parsedWeight < 30) {
+      cleanWeight = ''; 
     } else {
-      cleanWeight = parsedWeight.toString();
+      cleanWeight = Math.round(parsedWeight).toString();
     }
 
     // 3. 性別解析
@@ -109,29 +108,16 @@ export default function BodyMetricsScreen() {
     return { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge };
   };
 
-  // 💥【自動化載入】每次進入頁面或切換帳號時，精準讀取與即時清空
-  useEffect(() => {
-    const autoLoadOrReset = async () => {
-      if (isFocused) {
-        try {
-          // 1. 取得當前登入的 User ID
-          const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
-          
-          // 🛑【核心修正】先手動把舊畫面的殘留數據與對比狀態全部清空！
-          // 確保切換帳號後，如果是沒有填寫的新帳號，底子能完全恢復初始狀態
-          setMetricsData({
-            gender: '',
-            age: '',
-            height: '',
-            weight: '',
-            bmi: '---',
-            bmiStatus: '', 
-            bmrValue: 0,
-            isCalculated: false
-          });
-          setInitialProfile(null);
+  // 💥【自動化載入】焦點監聽
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
 
-          // 🔍 【地毯式身高搜查】
+      const autoLoadOrReset = async () => {
+        try {
+          const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
+
+          // 身高搜查
           let scannedHeight = '';
           const possibleHeightKeys = [
             `${savedUserId}_user_height`,
@@ -149,7 +135,7 @@ export default function BodyMetricsScreen() {
             }
           }
 
-          // 🎯 【精準撈取當天紀錄檔體重】
+          // 撈取當天紀錄檔體重
           let todayWeight = '';
           const todayFoodKey = `${savedUserId}_food_record_${getTodayDateString()}`;
           const backupFoodKey = `food_record_${getTodayDateString()}`;
@@ -164,42 +150,33 @@ export default function BodyMetricsScreen() {
             } catch (e) {}
           }
 
-          // 讀取該使用者的 Profile (拿來配對性別與年齡)
           const localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`) || await AsyncStorage.getItem('userProfile') || await AsyncStorage.getItem('user_profile');
 
           const { cleanGender, finalAge, cleanHeight, cleanWeight } = parseAndCleanProfile(localData, todayWeight, scannedHeight);
 
-          // 3. 重新寫入當前使用者的正確資料（若全新帳號抓出來是空的，畫面就會保持乾淨）
-          setInitialProfile({ gender: cleanGender, age: finalAge, height: cleanHeight, weight: cleanWeight });
-          setMetricsData(prev => ({
-            ...prev,
-            gender: cleanGender,
-            age: finalAge,
-            height: cleanHeight,
-            weight: cleanWeight,
-          }));
+          if (isMounted) {
+            setInitialProfile({ gender: cleanGender, age: finalAge, height: cleanHeight, weight: cleanWeight });
+            setMetricsData(prev => ({
+              ...prev,
+              gender: cleanGender,
+              age: finalAge,
+              height: cleanHeight,
+              weight: cleanWeight,
+            }));
+          }
 
         } catch (e) {
           console.error("背景自動同步失敗：", e);
         }
-      } else {
-        // 💡 當頁面斷開焦點 (離開這一頁、登出) 時，也主動清空，確保安全
-        setMetricsData({
-          gender: '',
-          age: '',
-          height: '',
-          weight: '',
-          bmi: '---',
-          bmiStatus: '', 
-          bmrValue: 0,
-          isCalculated: false
-        });
-        setInitialProfile(null);
-      }
-    };
+      };
 
-    autoLoadOrReset();
-  }, [isFocused]);
+      autoLoadOrReset();
+
+      return () => {
+        isMounted = false;
+      };
+    }, [])
+  );
 
   // 🔄 手動點擊「同步會員資料」按鈕邏輯
   const loadSyncProfileData = async () => {
@@ -241,9 +218,8 @@ export default function BodyMetricsScreen() {
 
       const { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge } = parseAndCleanProfile(localData, todayWeight, scannedHeight);
 
-      // 🟢 體重防呆攔截：若當天飲食紀錄沒有體重，則彈出警告並不予同步
       if (!cleanWeight || cleanWeight.trim() === '' || parseFloat(cleanWeight) === 0) {
-        showAlert('請先到今日飲食紀錄填寫當天體重數據');
+        showAlert('請先到今日飲食紀錄填寫當天 30 ~ 200 kg 的體重數據');
         return;
       }
 
@@ -328,7 +304,7 @@ export default function BodyMetricsScreen() {
     const { gender, age, height, weight } = metricsData;
     
     if (!weight || weight.trim() === '' || parseFloat(weight) === 0) {
-      showAlert('請先到今日飲食紀錄填寫當天體重數據');
+      showAlert('請先到今日飲食紀錄填寫當天 30 ~ 200 kg 的體重數據');
       return;
     }
 
@@ -351,6 +327,7 @@ export default function BodyMetricsScreen() {
     { id: '5', title: '身體活動程度激烈', sub: '(長時間運動或體力勞動工作)', multiplier: 1.9, label: 'BMR x 1.9' },
   ];
 
+  // 🎯 Web 專用純原生選單樣式（四個欄位完全共用，保證視覺風格與行為精準對齊）
   const getWebSelectStyle = (value: string, fieldKey: 'gender' | 'age' | 'height' | 'weight') => {
     const hasValue = value !== '';
     let textColor = '#E0E0E0'; 
@@ -385,7 +362,7 @@ export default function BodyMetricsScreen() {
               <Text style={styles.bmrMainTitle}>基礎代謝率BMR</Text>
               
               <View style={styles.bmrList}>
-                {/* 生生理性別 */}
+                {/* 生理性別 */}
                 <View style={styles.bmrRow}>
                   <Text style={styles.bmrLabel}>生 理 性 別</Text>
                   {Platform.OS === 'web' ? (
@@ -413,7 +390,7 @@ export default function BodyMetricsScreen() {
 
                 {/* 年齡 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>年       齡</Text>
+                  <Text style={styles.bmrLabel}>年       齡</Text>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.age}
@@ -455,7 +432,7 @@ export default function BodyMetricsScreen() {
 
                 {/* 身高 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>身       高</Text>
+                  <Text style={styles.bmrLabel}>身       高</Text>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.height}
@@ -482,7 +459,7 @@ export default function BodyMetricsScreen() {
 
                 {/* 體重 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>體       重</Text>
+                  <Text style={styles.bmrLabel}>體       重</Text>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.weight}
@@ -509,7 +486,7 @@ export default function BodyMetricsScreen() {
 
                 {/* BMI */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>B  M  I</Text>
+                  <Text style={styles.bmrLabel}>B  M  I</Text>
                   <Text style={[styles.bmrValueText, hasBmiDisplay && styles.darkValueText]}>
                     {hasBmiDisplay ? metricsData.bmi : '---'} {(metricsData.bmiStatus && hasBmiDisplay) ? `(${metricsData.bmiStatus})` : ''}
                   </Text>
@@ -547,17 +524,17 @@ export default function BodyMetricsScreen() {
 
             <ScrollView style={styles.tdeeScrollArea} contentContainerStyle={styles.tdeeItemsContainer} showsVerticalScrollIndicator={false}>
               {tdeeItems.map((item) => {
-                let finalTdeeValue = item.label;
-                if (metricsData.isCalculated && hasFullDisplay) {
-                  finalTdeeValue = `${Math.round(metricsData.bmrValue * item.multiplier)} kcal`;
-                }
+                const isCalculated = metricsData.isCalculated && hasFullDisplay;
+                const finalTdeeValue = isCalculated 
+                  ? `${Math.round(metricsData.bmrValue * item.multiplier)} kcal`
+                  : '';
 
                 return (
                   <View key={item.id} style={styles.tdeeItemBox}>
                     <Text style={styles.activityTitle}>{item.title}</Text>
                     <Text style={styles.activitySub}>{item.sub}</Text>
                     <Text style={styles.formulaText}>
-                      {item.label} = <Text style={[styles.grayHighlight, (metricsData.isCalculated && hasFullDisplay) && styles.orangeHighlight]}>{finalTdeeValue}</Text>
+                      {item.label} = {isCalculated && <Text style={styles.orangeHighlight}>{finalTdeeValue}</Text>}
                     </Text>
                   </View>
                 );

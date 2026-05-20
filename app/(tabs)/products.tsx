@@ -1,5 +1,6 @@
-import { usePathname, useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useRef, useState } from 'react'; // 引入 useRef
 import { Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 // 1. 全頁面配置物件
@@ -50,6 +51,7 @@ const pageLanguageConfig = {
   labelCalorie: '熱 量（ 大 卡 ）',
   modalConfirm: '確 認',
   modalCancel: '取 消',
+  caloriePlaceholder: '限輸入數字'
 };
 
 // 2. 初始商品數據
@@ -61,7 +63,6 @@ const initialProducts = [
 
 export default function ProductsScreen() {
   const router = useRouter();
-  const pathname = usePathname(); // 🔄 用於在 Layout 控制或紀錄當前路由路徑
   const txt = pageLanguageConfig;
 
   // 狀態管理
@@ -73,6 +74,45 @@ export default function ProductsScreen() {
   const [newProductName, setNewProductName] = useState('');
   const [newProductUnit, setNewProductUnit] = useState('');
   const [newProductCalorie, setNewProductCalorie] = useState('');
+
+  // 宣告控制輸入框焦點的 Refs
+  const unitInputRef = useRef<TextInput>(null);
+  const calorieInputRef = useRef<TextInput>(null);
+
+  // 🔍 核心機制：載入持久化商品資料
+  const loadSavedProducts = async () => {
+    try {
+      const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
+      const storedProductsRaw = await AsyncStorage.getItem(`${savedUserId}_custom_products`);
+      if (storedProductsRaw) {
+        const customList = JSON.parse(storedProductsRaw);
+        // 合併初始內建數據與使用者自訂數據
+        setProducts([...customList, ...initialProducts]);
+      } else {
+        setProducts(initialProducts);
+      }
+    } catch (e) {
+      console.error('讀取商品快取失敗:', e);
+    }
+  };
+
+  // 1. 初次渲染載入
+  useEffect(() => {
+    loadSavedProducts();
+  }, []);
+
+  // 2. 當路由焦點切換回本頁面時重新載入同步
+  useFocusEffect(
+    useCallback(() => {
+      loadSavedProducts();
+    }, [])
+  );
+
+  // 處理熱量輸入，只允許數字
+  const handleCalorieChange = (text: string) => {
+    const cleanNumber = text.replace(/[^0-9]/g, '');
+    setNewProductCalorie(cleanNumber);
+  };
 
   // 全域通用自訂警示框狀態
   const [customAlert, setCustomAlert] = useState<{
@@ -124,7 +164,7 @@ export default function ProductsScreen() {
   };
 
   // 確認送出商品
-  const handleConfirmAdd = () => {
+  const handleConfirmAdd = async () => {
     if (!newProductName.trim() || !newProductUnit.trim() || !newProductCalorie.trim()) {
       showCustomAlert(txt.alertWarningTitle, txt.alertMissingFields, () => {}, '', txt.btnConfirm);
       return;
@@ -145,8 +185,19 @@ export default function ProductsScreen() {
       status: 'pending' 
     };
 
-    setProducts([pendingProductItem, ...products]);
+    // 1. 先更新當前畫面狀態
+    const updatedProducts = [pendingProductItem, ...products];
+    setProducts(updatedProducts);
     setIsModalVisible(false);
+
+    // 2. 存入儲存空間（過濾掉初始資料，只存自訂的）
+    try {
+      const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
+      const onlyCustomItems = updatedProducts.filter(item => item.id.startsWith('pending_'));
+      await AsyncStorage.setItem(`${savedUserId}_custom_products`, JSON.stringify(onlyCustomItems));
+    } catch (e) {
+      console.error('儲存新商品資料失敗:', e);
+    }
 
     setTimeout(() => {
       showCustomAlert(
@@ -164,8 +215,18 @@ export default function ProductsScreen() {
     showCustomAlert(
       txt.deleteAlertTitle,
       `商品：${name}`,
-      () => {
-        setProducts(prevList => prevList.filter(item => item.id !== id));
+      async () => {
+        const filteredList = products.filter(item => item.id !== id);
+        setProducts(filteredList);
+
+        // 同步自訂清單變更至持久化空間
+        try {
+          const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
+          const onlyCustomItems = filteredList.filter(item => item.id.startsWith('pending_'));
+          await AsyncStorage.setItem(`${savedUserId}_custom_products`, JSON.stringify(onlyCustomItems));
+        } catch (e) {
+          console.error('同步更新商品存檔失敗:', e);
+        }
       }
     );
   };
@@ -181,7 +242,6 @@ export default function ProductsScreen() {
   return (
     <SafeAreaView style={styles.container}>
       
-      {/* 🎯 橫幅移入 Layout，此處直接保留乾淨的主內容卡片 */}
       <View style={styles.mainContent}>
         <View style={styles.cardContainer}>
           
@@ -211,13 +271,11 @@ export default function ProductsScreen() {
 
           <Text style={styles.recentText}>{txt.recentSearchLabel}</Text>
 
-          {/* 商品清單 */}
           <View style={styles.listContainer}>
             <ScrollView showsVerticalScrollIndicator={true} contentContainerStyle={styles.scrollListContent}>
               {filteredProducts.map((item) => (
                 <View key={item.id} style={styles.productRow}>
                   
-                  {/* 將商品名稱與審核狀態寫在同一個 Text 標籤內，並強制單行 */}
                   <View style={styles.nameAndStatusWrapper}>
                     <Text style={styles.productName} numberOfLines={1}>
                       {item.name}
@@ -245,7 +303,7 @@ export default function ProductsScreen() {
         </View>
       </View>
 
-      {/* 📦 視窗 A：正方形新增商品彈窗 */}
+      {/* 📦 新增商品彈窗 */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -268,24 +326,37 @@ export default function ProductsScreen() {
                 value={newProductName}
                 onChangeText={setNewProductName}
                 autoFocus={true}
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => unitInputRef.current?.focus()} // 按 Enter 跳到單位
               />
             </View>
 
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>{txt.labelUnit}</Text>
               <TextInput
+                ref={unitInputRef} // 綁定單位 Ref
                 style={styles.underlineInput}
                 value={newProductUnit}
                 onChangeText={setNewProductUnit}
+                returnKeyType="next"
+                blurOnSubmit={false}
+                onSubmitEditing={() => calorieInputRef.current?.focus()} // 按 Enter 跳到熱量
               />
             </View>
 
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>{txt.labelCalorie}</Text>
               <TextInput
+                ref={calorieInputRef} // 綁定熱量 Ref
                 style={styles.underlineInput}
                 value={newProductCalorie}
-                onChangeText={setNewProductCalorie}
+                onChangeText={handleCalorieChange}
+                keyboardType="numeric"
+                placeholder={txt.caloriePlaceholder}
+                placeholderTextColor="#999"
+                returnKeyType="done"
+                onSubmitEditing={handleConfirmAdd} // 熱量按 Enter 直接觸發送出確認
               />
             </View>
 
@@ -303,7 +374,7 @@ export default function ProductsScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* 💡 視窗 B：通用自訂提示與警示對話框 */}
+      {/* 💡 通用提示對話框 */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -344,10 +415,7 @@ export default function ProductsScreen() {
 }
 
 const styles = StyleSheet.create({
-  // 全域背景色
   container: { flex: 1, backgroundColor: '#F6EFE5' },
-  
-  /* 主介面佈局 */
   mainContent: { flex: 1, paddingHorizontal: 80, paddingTop: 30, paddingBottom: 20 },
   cardContainer: {
     flex: 1, backgroundColor: '#FFF', borderRadius: 30, paddingHorizontal: 40, paddingTop: 35, paddingBottom: 15,
@@ -356,16 +424,12 @@ const styles = StyleSheet.create({
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
   pageTitle: { fontSize: 28, fontWeight: 'bold', color: '#333', letterSpacing: 2 },
   addText: { fontSize: 16, color: '#4A90E2', fontWeight: 'bold' },
-
-  /* 搜尋欄 */
   searchRowContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 15, width: '100%' },
   searchBoxWrapper: { flex: 1, backgroundColor: '#EBEBEB', borderRadius: 25, paddingHorizontal: 20, height: 46, justifyContent: 'center' },
   searchInput: { fontSize: 15, color: '#333' },
   searchCancelButton: { paddingLeft: 15, paddingVertical: 10, justifyContent: 'center' },
   searchCancelText: { fontSize: 16, color: '#666', fontWeight: '500' },
   recentText: { fontSize: 14, color: '#A0A0A0', marginBottom: 15, paddingLeft: 5, letterSpacing: 1 },
-
-  /* 列表排版與審核狀態樣式 */
   listContainer: { flex: 1, width: '100%' },
   scrollListContent: { paddingBottom: 10 },
   productRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#F0F0F0', paddingVertical: 20, paddingHorizontal: 5 },
@@ -375,17 +439,13 @@ const styles = StyleSheet.create({
   productCalorie: { flex: 1.5, fontSize: 15, color: '#888', textAlign: 'center' },
   deleteText: { flex: 0.5, fontSize: 15, color: '#4A90E2', fontWeight: 'bold', textAlign: 'right' },
   emptyText: { textAlign: 'center', color: '#999', marginTop: 30, fontSize: 15 },
-
-  /* 彈窗遮罩 */
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
-  
-  /* 正方形自訂商品彈窗 */
   squareModalContent: { 
     backgroundColor: '#FFDDBB', 
-    width: 440,                  
-    height: 440,                 
+    width: 440, 
+    height: 440, 
     paddingHorizontal: 40,
-    justifyContent: 'center',    
+    justifyContent: 'center', 
     borderRadius: 24, 
     shadowColor: '#000', 
     shadowOffset: { width: 0, height: 10 }, 
@@ -394,8 +454,6 @@ const styles = StyleSheet.create({
     elevation: 8 
   },
   orangeModalTitle: { fontSize: 26, fontWeight: 'bold', color: '#000', letterSpacing: 3, textAlign: 'center', marginBottom: 25 },
-  
-  /* 輸入框樣式 */
   inputGroup: { marginBottom: 20, width: '100%' },
   inputLabel: { fontSize: 16, fontWeight: '600', color: '#000', marginBottom: 5 },
   underlineInput: { 
@@ -406,8 +464,6 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     paddingHorizontal: 2
   },
-
-  /* 按鈕群組 */
   orangeRowButtonGroup: { 
     flexDirection: 'row', 
     justifyContent: 'space-between', 
@@ -443,8 +499,6 @@ const styles = StyleSheet.create({
     elevation: 3
   },
   orangeConfirmBtnText: { color: '#FFF', fontSize: 18, fontWeight: 'bold', letterSpacing: 2 },
-
-  /* 提示彈窗樣式 */
   alertContent: { backgroundColor: '#FFF', width: 380, padding: 25, borderRadius: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 10, elevation: 10 },
   alertTitle: { fontSize: 19, fontWeight: 'bold', color: '#333', marginBottom: 12, textAlign: 'center' },
   alertMessage: { fontSize: 14, color: '#666', lineHeight: 20, marginBottom: 20, textAlign: 'center' },

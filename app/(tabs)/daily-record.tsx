@@ -3,37 +3,34 @@ import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-// 定義單一食物項目的資料結構
 interface FoodItem {
   id: string;
-  name: string;      // 品項 / 單位 (例如: 御飯糰/60克)
-  calories: string;  // 熱量
+  name: string;      
+  calories: string;  
 }
 
 export default function DailyRecordScreen() {
   const router = useRouter();
   const pathname = usePathname(); 
 
-  // ==================== 🔑 使用者帳號隔離狀態 ====================
-  const [userId, setUserId] = useState<string>('guest'); // 預設為 guest
+  const [userId, setUserId] = useState<string>('guest'); 
 
-  // ==================== 📅 台灣時間自動切換核心狀態 ====================
   const getTaiwanDateString = () => {
     const now = new Date();
-    const twTime = new Date(now.getTime() + (8 * 60 * 60 * 1000) + (now.getTimezoneOffset() * 1000));
-    const year = twTime.getFullYear();
-    const month = String(twTime.getMonth() + 1).padStart(2, '0');
-    const day = String(twTime.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`; 
+    const formatter = new Intl.DateTimeFormat('zh-TW', {
+      timeZone: 'Asia/Taipei',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const parts = formatter.format(now).split('/');
+    return `${parts[0]}-${parts[1]}-${parts[2]}`;
   };
 
   const [currentDate, setCurrentDate] = useState<string>(getTaiwanDateString());
-
-  // ==================== 📊 健康指數與彈窗狀態 ====================
   const [weight, setWeight] = useState('');
   const [bmi, setBmi] = useState('—');
   const [bmiStatus, setBmiStatus] = useState(''); 
-
   const [userHeight, setUserHeight] = useState<number | null>(175); 
 
   const [addModalVisible, setAddModalVisible] = useState(false);
@@ -60,62 +57,46 @@ export default function DailyRecordScreen() {
     晚餐: [], 
   });
 
-  // 使用 useRef 保持最新狀態，供跨夜計時器背景存檔使用
   const stateRef = useRef({ weight, bmi, bmiStatus, mealBlocks, currentDate, userId });
   useEffect(() => {
     stateRef.current = { weight, bmi, bmiStatus, mealBlocks, currentDate, userId };
   }, [weight, bmi, bmiStatus, mealBlocks, currentDate, userId]);
 
-  // ==================== 🔄 核心生命週期 ====================
   useEffect(() => {
     const initUserAndLoad = async () => {
       try {
         const savedUserId = await AsyncStorage.getItem('current_user_id'); 
         const finalId = savedUserId || 'guest';
-        
         setUserId(finalId);
-        await loadDataByDate(currentDate, finalId);
+        
+        const todayStr = getTaiwanDateString();
+        setCurrentDate(todayStr);
+
+        const possibleHeightKeys = [`${finalId}_user_height`, `${finalId}_height`, 'user_height'];
+        for (const key of possibleHeightKeys) {
+          const val = await AsyncStorage.getItem(key);
+          if (val && parseFloat(val) > 0) {
+            setUserHeight(parseFloat(val));
+            break;
+          }
+        }
+        await loadDataByDate(todayStr, finalId);
       } catch (e) {
-        console.error('取得使用者 ID 失敗', e);
-        await loadDataByDate(currentDate, 'guest');
+        console.error('初始化失敗', e);
+        const todayStr = getTaiwanDateString();
+        await loadDataByDate(todayStr, 'guest');
       }
     };
-
     initUserAndLoad();
   }, [pathname]);
 
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      const latestDateStr = getTaiwanDateString();
-      
-      if (latestDateStr !== stateRef.current.currentDate) {
-        try {
-          const oldDataToSave = {
-            weight: stateRef.current.weight,
-            bmi: stateRef.current.bmi,
-            bmiStatus: stateRef.current.bmiStatus,
-            mealBlocks: stateRef.current.mealBlocks
-          };
-          await AsyncStorage.setItem(
-            `${stateRef.current.userId}_food_record_${stateRef.current.currentDate}`, 
-            JSON.stringify(oldDataToSave)
-          );
-        } catch (err) {
-          console.error("跨夜自動存檔失敗", err);
-        }
-
-        setCurrentDate(latestDateStr);
-        await loadDataByDate(latestDateStr, stateRef.current.userId);
-      }
-    }, 10000);
-
-    return () => clearInterval(interval);
-  }, []);
-
   const loadDataByDate = async (dateStr: string, currentUid: string = userId) => {
     try {
-      // 優先讀取以每日資料為準的 Key
-      const savedDataStr = await AsyncStorage.getItem(`${currentUid}_food_record_${dateStr}`);
+      let savedDataStr = await AsyncStorage.getItem(`${currentUid}_food_record_${dateStr}`);
+      if (!savedDataStr) {
+        savedDataStr = await AsyncStorage.getItem(`food_record_${dateStr}`);
+      }
+
       if (savedDataStr) {
         const parsed = JSON.parse(savedDataStr);
         setWeight(parsed.weight || '');
@@ -123,7 +104,6 @@ export default function DailyRecordScreen() {
         setBmiStatus(parsed.bmiStatus || '');
         setMealBlocks(parsed.mealBlocks || { 早餐: [], 午餐: [], 晚餐: [] });
       } else {
-        // 如果當天尚無紀錄，去抓取全域體重當作預設
         const globalWeight = await AsyncStorage.getItem(`${currentUid}_user_weight`);
         if (globalWeight && globalWeight.trim() !== '') {
           setWeight(globalWeight);
@@ -144,7 +124,7 @@ export default function DailyRecordScreen() {
         setMealBlocks({ 早餐: [], 午餐: [], 晚餐: [] });
       }
     } catch (e) {
-      console.error('載入本機快取失敗', e);
+      console.error('載入失敗', e);
     }
   };
 
@@ -155,41 +135,23 @@ export default function DailyRecordScreen() {
     currentMeals: typeof mealBlocks
   ) => {
     try {
-      // 1️⃣ 第一路：儲存每日資料（飲食紀錄首頁與歷史總結的基準點）
       const dataToSave = {
         weight: currentWeight,
         bmi: currentBmi,
         bmiStatus: currentBmiStatus,
         mealBlocks: currentMeals
       };
+      
       await AsyncStorage.setItem(`${userId}_food_record_${currentDate}`, JSON.stringify(dataToSave));
-
-      // 2️⃣ 第二路：同步歷史紀錄/圖表專用的通用欄位 Key
+      await AsyncStorage.setItem(`food_record_${currentDate}`, JSON.stringify(dataToSave));
       await AsyncStorage.setItem(`${userId}_user_weight`, currentWeight);
-      await AsyncStorage.setItem(`user_weight`, currentWeight); // 備用無 UID 欄位
-
-      // 3️⃣ 第三路：強制擊穿並同步更新「會員中心」可能正在使用的整合資訊物件
-      const userProfileStr = await AsyncStorage.getItem(`${userId}_user_profile`);
-      if (userProfileStr) {
-        const profileObj = JSON.parse(userProfileStr);
-        profileObj.weight = currentWeight; // 將每日資料的體重強行同步進去
-        if (currentBmi !== '—') profileObj.bmi = currentBmi;
-        await AsyncStorage.setItem(`${userId}_user_profile`, JSON.stringify(profileObj));
-      }
-
-      const userInfoStr = await AsyncStorage.getItem('user_info');
-      if (userInfoStr) {
-        const infoObj = JSON.parse(userInfoStr);
-        infoObj.weight = currentWeight;
-        await AsyncStorage.setItem('user_info', JSON.stringify(infoObj));
-      }
+      await AsyncStorage.setItem(`user_weight`, currentWeight); 
 
     } catch (e) {
-      console.error('同步至全域跨頁面快取失敗', e);
+      console.error('同步失敗', e);
     }
   };
 
-  // ==================== 🧮 體重與 BMI 計算 ====================
   const getBmiStatusLabel = (bmiValue: number) => {
     if (bmiValue < 18.5) return '體重過輕';
     if (bmiValue >= 18.5 && bmiValue < 24) return '健康體重';
@@ -202,11 +164,13 @@ export default function DailyRecordScreen() {
   };
 
   const handleWeightChange = (text: string) => {
-    const cleanedText = text.replace(/[^0-9.]/g, '');
+    let cleanedText = text.replace(/[^0-9.]/g, '');
+    const parts = cleanedText.split('.');
+    if (parts.length > 2) cleanedText = `${parts[0]}.${parts.slice(1).join('')}`;
     setWeight(cleanedText);
+
     let calculatedBmi = '—';
     let calculatedStatus = '';
-
     const w = parseFloat(cleanedText);
     if (!isNaN(w) && w > 0 && userHeight && userHeight > 0) {
       const hInMeters = userHeight / 100;
@@ -218,8 +182,40 @@ export default function DailyRecordScreen() {
       setBmi('—');
       setBmiStatus('');
     }
-
     saveDataToStorage(cleanedText, calculatedBmi, calculatedStatus, mealBlocks);
+  };
+
+  const handleWeightBlur = () => {
+    if (weight.trim() === '') return; 
+    const w = parseFloat(weight);
+    let finalWeight = weight;
+
+    if (isNaN(w)) {
+      finalWeight = '';
+      setWeight('');
+      setBmi('—');
+      setBmiStatus('');
+    } else if (w < 30) {
+      finalWeight = '30';
+      setWeight('30');
+      showAlert('⚠️ 體重輸入限制範圍為 30 ~ 200 KG\n已自動修正為：30 KG');
+    } else if (w > 200) {
+      finalWeight = '200';
+      setWeight('200');
+      showAlert('⚠️ 體重輸入限制範圍為 30 ~ 200 KG\n已自動修正為：200 KG');
+    }
+
+    let calculatedBmi = '—';
+    let calculatedStatus = '';
+    const finalWNum = parseFloat(finalWeight);
+    if (!isNaN(finalWNum) && finalWNum > 0 && userHeight && userHeight > 0) {
+      const hInMeters = userHeight / 100;
+      calculatedBmi = (finalWNum / (hInMeters * hInMeters)).toFixed(1);
+      calculatedStatus = getBmiStatusLabel(parseFloat(calculatedBmi));
+      setBmi(calculatedBmi);
+      setBmiStatus(calculatedStatus);
+    }
+    saveDataToStorage(finalWeight, calculatedBmi, calculatedStatus, mealBlocks);
   };
 
   const calculateTotalCalories = () => {
@@ -233,21 +229,15 @@ export default function DailyRecordScreen() {
     return total;
   };
 
-  // ==================== 🎯 食物增刪管理 ====================
   const handleDeleteItem = (category: '早餐' | '午餐' | '晚餐', id: string, name: string) => {
-    const displayFoodName = name.trim() !== '' ? name : '未命名品項';
-    showConfirm(
-      '確認刪除',
-      `您確定要刪除這筆「${displayFoodName}」的紀錄嗎？`,
-      () => {
-        const updatedMeals = {
-          ...mealBlocks,
-          [category]: mealBlocks[category].filter(item => item.id !== id)
-        };
-        setMealBlocks(updatedMeals);
-        saveDataToStorage(weight, bmi, bmiStatus, updatedMeals);
-      }
-    );
+    showConfirm('確認刪除', `您確定要刪除「${name || '此品項'}」嗎？`, () => {
+      const updatedMeals = {
+        ...mealBlocks,
+        [category]: mealBlocks[category].filter(item => item.id !== id)
+      };
+      setMealBlocks(updatedMeals);
+      saveDataToStorage(weight, bmi, bmiStatus, updatedMeals);
+    });
   };
 
   const handleConfirmAddItem = () => {
@@ -256,7 +246,7 @@ export default function DailyRecordScreen() {
     const trimmedCalories = inputCalories.trim();
 
     if (!trimmedItemName || !trimmedUnitValue || !trimmedCalories) {
-      showAlert(`⚠️ 欄位未填寫完整\n請輸入完整的品項、份量數值與熱量。`);
+      showAlert('欄位未填寫完整\n請輸入完整的品項、份量數值與熱量。');
       return;
     }
 
@@ -274,21 +264,16 @@ export default function DailyRecordScreen() {
 
     setMealBlocks(updatedMeals);
     saveDataToStorage(weight, bmi, bmiStatus, updatedMeals);
-
     resetModalInputs();
     setAddModalVisible(false);
   };
 
   const handleCancelAddItem = () => {
     if (inputItemName.trim() !== '' || inputUnitValue.trim() !== '' || inputCalories.trim() !== '') {
-      showConfirm(
-        '確認取消',
-        '您確定要取消新增嗎？先前輸入的內容將不會被儲存。',
-        () => {
-          resetModalInputs();
-          setAddModalVisible(false);
-        }
-      );
+      showConfirm('確認取消', '確定要取消新增嗎？內容將不會被儲存。', () => {
+        resetModalInputs();
+        setAddModalVisible(false);
+      });
     } else {
       resetModalInputs();
       setAddModalVisible(false);
@@ -319,10 +304,6 @@ export default function DailyRecordScreen() {
     setConfirmModalVisible(true);
   };
 
-  const formatDisplayDate = (dateStr: string) => {
-    return dateStr.replace(/-/g, '/');
-  };
-
   return (
     <View style={{ flex: 1, backgroundColor: '#E0E7DA' }}>
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
@@ -331,24 +312,24 @@ export default function DailyRecordScreen() {
           <View style={styles.titleRow}>
             <View style={styles.titleWithDateGroup}>
               <Text style={styles.mainTitle}>每日紀錄</Text>
-              <Text style={styles.todayDateText}>{formatDisplayDate(currentDate)}</Text>
+              <Text style={styles.todayDateText}>{currentDate.replace(/-/g, '/')}</Text>
             </View>
             <TouchableOpacity onPress={() => router.push('/weightpic')}>
               <Text style={styles.linkText}>點我看體重紀錄</Text>
             </TouchableOpacity>
           </View>
 
-          {/* 今日體重 */}
           <View style={styles.weightSection}>
             <View style={styles.weightInputRow}>
               <Text style={styles.label}>今日體重</Text>
               <TextInput
                 style={styles.input}
-                placeholder="輸入體重(公斤)"
+                placeholder="輸入體重 (30~200 KG)"
                 placeholderTextColor="#A9A9A9"
                 value={weight}
                 keyboardType="numeric"
                 onChangeText={handleWeightChange}
+                onBlur={handleWeightBlur}
               />
             </View>
             <View style={styles.bmiRow}>
@@ -361,7 +342,6 @@ export default function DailyRecordScreen() {
             </View>
           </View>
 
-          {/* 三大餐點區塊 */}
           {(['早餐', '午餐', '晚餐'] as const).map((category) => (
             <View key={category} style={styles.mealBlockCard}>
               <View style={styles.blockHeaderRow}>
@@ -373,17 +353,17 @@ export default function DailyRecordScreen() {
 
               {mealBlocks[category].length > 0 && (
                 <View style={styles.tableHeader}>
-                  <Text style={[styles.thLabel, { flex: 3, textAlign: 'left' }]}>品項 / 單位</Text>
+                  <Text style={[styles.thLabel, { flex: 3 }]}>品項 / 單位</Text>
                   <Text style={[styles.thLabel, { flex: 1, textAlign: 'right', marginRight: 65 }]}>熱量 (大卡)</Text>
                 </View>
               )}
 
               {mealBlocks[category].map((food) => (
                 <View key={food.id} style={styles.tableRow}>
-                  <View style={[styles.readOnlyTextWrapper, { flex: 3 }]}>
+                  <View style={{ flex: 3, paddingVertical: 6 }}>
                     <Text style={styles.tableTextContent}>{food.name}</Text>
                   </View>
-                  <View style={[styles.readOnlyTextWrapper, { flex: 1, alignItems: 'flex-end', marginRight: 15 }]}>
+                  <View style={{ flex: 1, alignItems: 'flex-end', marginRight: 15 }}>
                     <Text style={styles.tableTextContent}>{food.calories}</Text>
                   </View>
                   <TouchableOpacity style={styles.deleteRowTextBtn} onPress={() => handleDeleteItem(category, food.id, food.name)}>
@@ -394,7 +374,6 @@ export default function DailyRecordScreen() {
             </View>
           ))}
 
-          {/* 今日攝取總熱量 */}
           <View style={styles.totalCaloriesCard}>
             <Text style={styles.totalCaloriesLabel}>今日攝取總熱量</Text>
             <View style={styles.totalCaloriesValueGroup}>
@@ -406,16 +385,14 @@ export default function DailyRecordScreen() {
         </View>
       </ScrollView>
 
-      {/* ==================== 彈窗：新增飲食紀錄 (Modal) ==================== */}
+      {/* 新增飲食彈窗 */}
       <Modal animationType="fade" transparent={true} visible={addModalVisible} onRequestClose={handleCancelAddItem}>
         <View style={styles.modalOverlay}>
           <View style={styles.popupBox}>
             <Text style={styles.popupTitle}>新增飲食紀錄</Text>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>新增類別</Text>
-              <View style={styles.disabledSelectBox}>
-                <Text style={styles.disabledSelectText}>{currentBlockCategory}</Text>
-              </View>
+              <View style={styles.disabledSelectBox}><Text style={styles.disabledSelectText}>{currentBlockCategory}</Text></View>
             </View>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>品項名稱</Text>
@@ -440,18 +417,18 @@ export default function DailyRecordScreen() {
               <TextInput style={styles.popupInput} placeholder="限輸入數字" placeholderTextColor="#A9A9A9" keyboardType="numeric" value={inputCalories} onChangeText={(text) => setInputCalories(text.replace(/[^0-9]/g, ''))} />
             </View>
             <View style={styles.modalButtonGroup}>
-              <TouchableOpacity style={[styles.modalButton, styles.modalBtnCancel]} onPress={handleCancelAddItem}>
-                <Text style={styles.modalBtnCancelText}>取消</Text>
+              <TouchableOpacity style={styles.modalBtnLeft} onPress={handleCancelAddItem}>
+                <Text style={styles.modalBtnLeftText}>取消</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalButton, styles.orangeAlertBtn]} onPress={handleConfirmAddItem}>
-                <Text style={styles.modalBtnConfirmText}>確認新增</Text>
+              <TouchableOpacity style={styles.modalBtnRight} onPress={handleConfirmAddItem}>
+                <Text style={styles.modalBtnRightText}>確認新增</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* 提示彈窗 */}
+      {/* 提示與確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={alertModalVisible} onRequestClose={() => setAlertModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertPopupBox}>
@@ -464,18 +441,17 @@ export default function DailyRecordScreen() {
         </View>
       </Modal>
 
-      {/* 確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={confirmModalVisible} onRequestClose={() => setConfirmModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertPopupBox}>
             <Text style={styles.alertPopupTitle}>{confirmTitle}</Text>
             <Text style={styles.alertPopupMessage}>{confirmMessage}</Text>
             <View style={styles.modalButtonGroup}>
-              <TouchableOpacity style={[styles.modalButton, styles.modalBtnCancel]} onPress={() => setConfirmModalVisible(false)}>
-                <Text style={styles.modalBtnCancelText}>返回</Text>
+              <TouchableOpacity style={styles.modalBtnLeft} onPress={() => setConfirmModalVisible(false)}>
+                <Text style={styles.modalBtnLeftText}>返回</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalButton, styles.orangeAlertBtn]} onPress={() => { setConfirmModalVisible(false); confirmAction(); }}>
-                <Text style={styles.modalBtnConfirmText}>確定</Text>
+              <TouchableOpacity style={styles.modalBtnRight} onPress={() => { setConfirmModalVisible(false); confirmAction(); }}>
+                <Text style={styles.modalBtnRightText}>確定</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -508,9 +484,8 @@ const styles = StyleSheet.create({
   blockAddBtn: { backgroundColor: '#A3C1AD', paddingVertical: 6, paddingHorizontal: 16, borderRadius: 10 },
   blockAddBtnText: { color: 'white', fontSize: 15, fontWeight: 'bold' },
   tableHeader: { flexDirection: 'row', borderBottomWidth: 1, borderBottomColor: '#DDD', paddingBottom: 6, marginBottom: 12 },
-  thLabel: { fontSize: 18, fontWeight: '600', color: '#7F8C8D' },
+  thLabel: { fontSize: 18, fontWeight: '600', color: '#7F8C8D', textAlign: 'left' },
   tableRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
-  readOnlyTextWrapper: { paddingVertical: 6, paddingHorizontal: 6, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
   tableTextContent: { fontSize: 18, color: '#333', fontWeight: '500' },
   deleteRowTextBtn: { paddingHorizontal: 12, paddingVertical: 6, marginLeft: 10, backgroundColor: '#FADBD8', borderRadius: 8 },
   deleteRowText: { fontSize: 15, color: '#C0392B', fontWeight: 'bold' },
@@ -535,11 +510,10 @@ const styles = StyleSheet.create({
   toggleBtnText: { fontSize: 15, color: '#A3C1AD', fontWeight: '600' },
   toggleBtnTextActive: { color: '#FFF', fontWeight: 'bold' },
   modalButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 15 },
-  modalButton: { flex: 1, height: 48, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginHorizontal: 6 },
-  modalBtnCancel: { backgroundColor: '#F5F5F5', borderWidth: 1, borderColor: '#333' },
-  modalBtnCancelText: { color: '#333', fontSize: 16, fontWeight: 'bold' },
-  orangeAlertBtn: { backgroundColor: '#E67E22' }, 
-  modalBtnConfirmText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
+  modalBtnLeft: { flex: 1, height: 48, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginHorizontal: 6, backgroundColor: '#F5F5F5', borderWidth: 1, borderColor: '#333' },
+  modalBtnLeftText: { color: '#333', fontSize: 16, fontWeight: 'bold' },
+  modalBtnRight: { flex: 1, height: 48, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginHorizontal: 6, backgroundColor: '#E67E22' },
+  modalBtnRightText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
   alertPopupBox: { backgroundColor: '#FFF', width: 360, padding: 25, borderRadius: 20, alignItems: 'center' },
   alertPopupTitle: { fontSize: 20, fontWeight: 'bold', color: '#333', marginBottom: 12 },
   alertPopupMessage: { fontSize: 16, color: '#555', textAlign: 'center', lineHeight: 24, marginBottom: 25 },
