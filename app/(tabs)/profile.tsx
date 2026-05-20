@@ -163,8 +163,28 @@ export default function ProfileScreen() {
       quality: 1,
     });
     if (!result.canceled) {
-      setAvatarUri(result.assets[0].uri);
-      await AsyncStorage.setItem('user_avatar', result.assets[0].uri);
+      const imageUri = result.assets[0].uri;
+      setAvatarUri(imageUri);
+      
+      // 🟢 新增：將圖片轉換為 Base64 並保存（而不是保存 blob URL）
+      try {
+        const response = await fetch(imageUri);
+        const blob = await response.blob();
+        
+        // 轉換 Blob 為 Base64
+        const reader = new FileReader();
+        reader.onload = async () => {
+          const base64Data = reader.result as string;
+          // 保存 Base64 編碼的圖片
+          await AsyncStorage.setItem('user_avatar', base64Data);
+          console.log('✅ 圖片已保存為 Base64');
+        };
+        reader.readAsDataURL(blob);
+      } catch (e) {
+        console.log('⚠️ Base64 轉換失敗，使用原始 URI:', e);
+        // 降級方案：直接保存 URI
+        await AsyncStorage.setItem('user_avatar', imageUri);
+      }
     }
   };
 

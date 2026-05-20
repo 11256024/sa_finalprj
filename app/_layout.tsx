@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Slot, usePathname, useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 export default function RootLayout() {
@@ -17,69 +17,111 @@ export default function RootLayout() {
     { name: '成就管理', path: '/achievements' },
   ];
 
-  useEffect(() => {
-    const loadUserAvatarAndData = async () => {
-      try {
-        // 1. 多重管道撈取頭像圖片 URI
-        const savedUri = await AsyncStorage.getItem('user_avatar_uri');
-        const savedAvatar = await AsyncStorage.getItem('user_avatar');
+  // 🟢 用 useCallback 確保函數引用不變
+  const loadUserAvatarAndData = useCallback(async () => {
+    try {
+      // 1. 多重管道撈取頭像圖片 URI
+      const savedUri = await AsyncStorage.getItem('user_avatar_uri');
+      const savedAvatar = await AsyncStorage.getItem('user_avatar');
+      
+      console.log('🔴 存儲檢查 - savedUri:', savedUri);
+      console.log('🔴 存儲檢查 - savedAvatar:', savedAvatar);
+      
+      // 2. 同步讀取整包個人檔案或使用者資訊物件
+      const savedProfileStr = await AsyncStorage.getItem('user_profile');
+      const savedUserStr = await AsyncStorage.getItem('user');
+      // 🟢 新增：直接讀取獨立儲存的名字 key
+      const savedNameKey = await AsyncStorage.getItem('user_name_key');
+
+      console.log('🔍 Debug 撈取:', { savedNameKey, savedProfileStr: savedProfileStr ? '存在' : '不存在' });
+
+      let avatarFromProfile = null;
+      let detectedName = '';
+
+      // 🟢 最高優先級：直接讀取獨立儲存的名字 key（profile 頁面保存時的標準位置）
+      if (savedNameKey && savedNameKey.trim().length > 0) {
+        detectedName = savedNameKey.trim();
+        console.log('✅ 從 user_name_key 讀到名字:', detectedName);
+      }
+      
+      // 3. 🎯 終極解析邏輯：全面防禦，確保一定能抓到「王小明」
+      if (!detectedName.trim() && savedProfileStr) {
+        const profile = JSON.parse(savedProfileStr);
+        avatarFromProfile = profile.avatarUrl || profile.avatar || profile.avatarUri || profile.image || profile.uri || null;
         
-        // 2. 同步讀取整包個人檔案或使用者資訊物件
-        const savedProfileStr = await AsyncStorage.getItem('user_profile');
-        const savedUserStr = await AsyncStorage.getItem('user');
-
-        let avatarFromProfile = null;
-        let detectedName = '';
-
-        // 3. 🎯 終極解析邏輯：全面防禦，確保一定能抓到「王小明」
-        if (savedProfileStr) {
-          const profile = JSON.parse(savedProfileStr);
-          avatarFromProfile = profile.avatarUrl || profile.avatar || profile.avatarUri || profile.image || profile.uri || null;
-          
-          // 🟢 1. 優先嘗試所有可能的標準名字欄位 key 
-          detectedName = profile.name || profile.username || profile.nickname || profile.displayName || '';
-          
-          // 🟢 2. 【大絕招防禦】如果還是空的，掃描物件內所有屬性，只要是字串且不是密碼/帳號，就當作潛在名字
-          if (!detectedName.trim()) {
-            for (const key in profile) {
-              if (typeof profile[key] === 'string' && 
-                  profile[key].trim().length > 0 && 
-                  !['account', 'username', 'password', 'gender', 'birthday'].includes(key.toLowerCase())) {
-                detectedName = profile[key];
-                break; 
-              }
+        // 🟢 1. 優先嘗試所有可能的標準名字欄位 key 
+        detectedName = profile.name || profile.username || profile.nickname || profile.displayName || '';
+        console.log('✅ 從 user_profile 讀到名字:', detectedName);
+        
+        // 🟢 2. 【大絕招防禦】如果還是空的，掃描物件內所有屬性，只要是字串且不是密碼/帳號，就當作潛在名字
+        if (!detectedName.trim()) {
+          for (const key in profile) {
+            if (typeof profile[key] === 'string' && 
+                profile[key].trim().length > 0 && 
+                !['account', 'username', 'password', 'gender', 'birthday'].includes(key.toLowerCase())) {
+              detectedName = profile[key];
+              break; 
             }
           }
-        } 
-        
-        // 如果 profile 沒撈到，試試看 user 物件
-        if (!detectedName.trim() && savedUserStr) {
-          const user = JSON.parse(savedUserStr);
-          avatarFromProfile = avatarFromProfile || user.avatarUrl || user.avatar || user.image || null;
-          detectedName = user.name || user.username || user.nickname || user.displayName || '';
         }
-
-        // 4. 🟢 去除空白並精準提取最後一個字
-        const cleanedName = detectedName.trim();
-        let finalLastChar = '用'; // 最終後備
-
-        if (cleanedName.length > 0) {
-          finalLastChar = cleanedName.charAt(cleanedName.length - 1); 
-        }
-
-        // 優先將所有管道撈出來的圖片網址融合，圖片絕對優先
-        const finalAvatarUri = savedUri || savedAvatar || avatarFromProfile;
-        
-        setGlobalAvatar(finalAvatarUri);
-        setFallbackText(finalLastChar);
-
-      } catch (e) {
-        console.log('全域 Layout 撈取大頭貼/名字失敗：', e);
+      } 
+      
+      // 如果都沒撈到，試試看 user 物件
+      if (!detectedName.trim() && savedUserStr) {
+        const user = JSON.parse(savedUserStr);
+        avatarFromProfile = avatarFromProfile || user.avatarUrl || user.avatar || user.image || null;
+        detectedName = user.name || user.username || user.nickname || user.displayName || '';
+        console.log('✅ 從 user 讀到名字:', detectedName);
       }
-    };
 
+      // 4. 🟢 去除空白並精準提取最後一個字
+      const cleanedName = detectedName.trim();
+      let finalLastChar = '用'; // 最終後備
+
+      if (cleanedName.length > 0) {
+        finalLastChar = cleanedName.charAt(cleanedName.length - 1); 
+      }
+
+      console.log('🎯 最終結果 - 名字:', cleanedName, '最後一字:', finalLastChar);
+
+      // 優先將所有管道撈出來的圖片網址融合，圖片絕對優先
+      const finalAvatarUri = savedUri || savedAvatar || avatarFromProfile;
+      
+      console.log('🖼️ 頭像 URI (前50字):', finalAvatarUri ? finalAvatarUri.substring(0, 50) : 'null');
+      
+      // 🔴 新增防呆：檢查 blob: URL（無效）或無有效格式的 URI，清除它們
+      let safeAvatarUri = finalAvatarUri;
+      if (safeAvatarUri && safeAvatarUri.startsWith('blob:')) {
+        console.log('⚠️ 檢測到無效的 blob URL，清除');
+        safeAvatarUri = null;
+        // 同時清除存儲
+        await AsyncStorage.removeItem('user_avatar');
+        await AsyncStorage.removeItem('user_avatar_uri');
+      }
+      // 🟢 有效的格式：data:image（Base64）或 http/https 或 file://
+      else if (safeAvatarUri && !safeAvatarUri.match(/^(data:image|https?:\/\/|file:\/\/)/)) {
+        console.log('⚠️ 檢測到無效的 URI 格式，清除:', safeAvatarUri.substring(0, 50));
+        safeAvatarUri = null;
+        await AsyncStorage.removeItem('user_avatar');
+      }
+      
+      console.log('💾 設置 state - avatar:', safeAvatarUri ? '有效' : 'null', 'fallbackText:', finalLastChar);
+      
+      setGlobalAvatar(safeAvatarUri || null);
+      setFallbackText(finalLastChar);
+
+    } catch (e) {
+      console.log('全域 Layout 撈取大頭貼/名字失敗：', e);
+    }
+  }, []);
+
+  useEffect(() => {
     loadUserAvatarAndData();
-  }, [pathname]); // 🎯 只要路由一改變，立刻重新讀取最新名字與大頭貼
+  }, []); // 🎯 組件掛載時執行一次
+
+  useEffect(() => {
+    loadUserAvatarAndData();
+  }, [pathname]); // 🎯 路由改變時重新讀取
 
   // 判定是否為登入/註冊頁
   const isAuthPage = pathname === '/' || pathname === '/register';
@@ -92,6 +134,9 @@ export default function RootLayout() {
       // 清除登入狀態快取（可根據需要增加要清除的欄位）
       await AsyncStorage.removeItem('user');
       await AsyncStorage.removeItem('account');
+      // 🔴 新增：登出時也清除無效的頭像
+      await AsyncStorage.removeItem('user_avatar');
+      await AsyncStorage.removeItem('user_avatar_uri');
       // 切換回登入頁面
       router.replace('/');
     } catch (e) {
