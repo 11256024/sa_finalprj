@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react'; // 引入 useRef
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 // 1. 全頁面配置物件
@@ -51,7 +51,9 @@ const pageLanguageConfig = {
   labelCalorie: '熱 量（ 大 卡 ）',
   modalConfirm: '確 認',
   modalCancel: '取 消',
-  caloriePlaceholder: '限輸入數字'
+  namePlaceholder: '例如：御飯糰',
+  caloriePlaceholder: '限輸入數字',
+  amountPlaceholder: '限輸入數字'
 };
 
 // 2. 初始商品數據
@@ -72,11 +74,12 @@ export default function ProductsScreen() {
   // 新增自訂商品彈窗控制
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newProductName, setNewProductName] = useState('');
-  const [newProductUnit, setNewProductUnit] = useState('');
+  const [newProductAmount, setNewProductAmount] = useState('');
+  const [unitType, setUnitType] = useState<'g' | 'ml'>('g');
   const [newProductCalorie, setNewProductCalorie] = useState('');
 
   // 宣告控制輸入框焦點的 Refs
-  const unitInputRef = useRef<TextInput>(null);
+  const amountInputRef = useRef<TextInput>(null);
   const calorieInputRef = useRef<TextInput>(null);
 
   // 🔍 核心機制：載入持久化商品資料
@@ -86,7 +89,6 @@ export default function ProductsScreen() {
       const storedProductsRaw = await AsyncStorage.getItem(`${savedUserId}_custom_products`);
       if (storedProductsRaw) {
         const customList = JSON.parse(storedProductsRaw);
-        // 合併初始內建數據與使用者自訂數據
         setProducts([...customList, ...initialProducts]);
       } else {
         setProducts(initialProducts);
@@ -108,7 +110,13 @@ export default function ProductsScreen() {
     }, [])
   );
 
-  // 處理熱量輸入，只允許數字
+  // 處理份量輸入，限制只允許數字
+  const handleAmountChange = (text: string) => {
+    const cleanNumber = text.replace(/[^0-9]/g, '');
+    setNewProductAmount(cleanNumber);
+  };
+
+  // 處理熱量輸入，限制只允許數字
   const handleCalorieChange = (text: string) => {
     const cleanNumber = text.replace(/[^0-9]/g, '');
     setNewProductCalorie(cleanNumber);
@@ -142,30 +150,40 @@ export default function ProductsScreen() {
   // 開啟新增彈窗
   const openAddModal = () => {
     setNewProductName('');
-    setNewProductUnit('');
+    setNewProductAmount('');
+    setUnitType('g'); 
     setNewProductCalorie('');
     setIsModalVisible(true);
   };
 
   // 雙重取消處理
   const handleCancelAdd = () => {
-    showCustomAlert(
-      txt.cancelAddAlertTitle, 
-      '',
-      () => {
-        setIsModalVisible(false);
-        setNewProductName('');
-        setNewProductUnit('');
-        setNewProductCalorie('');
-      },
-      txt.btnNo,
-      txt.btnYes
-    );
+    const isFormEmpty = !newProductName.trim() && !newProductAmount.trim() && !newProductCalorie.trim();
+
+    if (isFormEmpty) {
+      setIsModalVisible(false);
+      setNewProductName('');
+      setNewProductAmount('');
+      setNewProductCalorie('');
+    } else {
+      showCustomAlert(
+        txt.cancelAddAlertTitle, 
+        '',
+        () => {
+          setIsModalVisible(false);
+          setNewProductName('');
+          setNewProductAmount('');
+          setNewProductCalorie('');
+        },
+        txt.btnNo,
+        txt.btnYes
+      );
+    }
   };
 
   // 確認送出商品
   const handleConfirmAdd = async () => {
-    if (!newProductName.trim() || !newProductUnit.trim() || !newProductCalorie.trim()) {
+    if (!newProductName.trim() || !newProductAmount.trim() || !newProductCalorie.trim()) {
       showCustomAlert(txt.alertWarningTitle, txt.alertMissingFields, () => {}, '', txt.btnConfirm);
       return;
     }
@@ -176,7 +194,8 @@ export default function ProductsScreen() {
       return;
     }
 
-    const combinedName = `${newProductName.trim()} / ${newProductUnit.trim()}`;
+    const formattedUnit = `${newProductAmount}${unitType === 'g' ? '克' : 'ml'}`;
+    const combinedName = `${newProductName.trim()} / ${formattedUnit}`;
 
     const pendingProductItem = {
       id: `pending_${Date.now()}`, 
@@ -185,12 +204,10 @@ export default function ProductsScreen() {
       status: 'pending' 
     };
 
-    // 1. 先更新當前畫面狀態
     const updatedProducts = [pendingProductItem, ...products];
     setProducts(updatedProducts);
     setIsModalVisible(false);
 
-    // 2. 存入儲存空間（過濾掉初始資料，只存自訂的）
     try {
       const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
       const onlyCustomItems = updatedProducts.filter(item => item.id.startsWith('pending_'));
@@ -219,7 +236,6 @@ export default function ProductsScreen() {
         const filteredList = products.filter(item => item.id !== id);
         setProducts(filteredList);
 
-        // 同步自訂清單變更至持久化空間
         try {
           const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
           const onlyCustomItems = filteredList.filter(item => item.id.startsWith('pending_'));
@@ -319,44 +335,73 @@ export default function ProductsScreen() {
             
             <Text style={styles.orangeModalTitle}>{txt.modalTitle}</Text>
             
+            {/* 商品名稱輸入 */}
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>{txt.labelName}</Text>
               <TextInput
                 style={styles.underlineInput}
                 value={newProductName}
                 onChangeText={setNewProductName}
+                placeholder={txt.namePlaceholder}
+                placeholderTextColor="#A9A9A9"
                 autoFocus={true}
                 returnKeyType="next"
                 blurOnSubmit={false}
-                onSubmitEditing={() => unitInputRef.current?.focus()} // 按 Enter 跳到單位
+                onSubmitEditing={() => amountInputRef.current?.focus()} 
               />
             </View>
 
+            {/* 單位與份量區塊 */}
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>{txt.labelUnit}</Text>
-              <TextInput
-                ref={unitInputRef} // 綁定單位 Ref
-                style={styles.underlineInput}
-                value={newProductUnit}
-                onChangeText={setNewProductUnit}
-                returnKeyType="next"
-                blurOnSubmit={false}
-                onSubmitEditing={() => calorieInputRef.current?.focus()} // 按 Enter 跳到熱量
-              />
+              <View style={styles.unitRowFlexContainer}>
+                {/* 份量數字輸入框 */}
+                <TextInput
+                  ref={amountInputRef}
+                  style={[styles.underlineInput, styles.amountInputInput]}
+                  value={newProductAmount}
+                  onChangeText={handleAmountChange}
+                  keyboardType="numeric"
+                  placeholder={txt.amountPlaceholder}
+                  placeholderTextColor="#A9A9A9"
+                  returnKeyType="next"
+                  blurOnSubmit={false}
+                  onSubmitEditing={() => calorieInputRef.current?.focus()} 
+                />
+                
+                {/* 克 / ml 切換膠囊按鈕 */}
+                <View style={styles.capsuleToggleGroup}>
+                  <TouchableOpacity 
+                    activeOpacity={0.8}
+                    style={[styles.capsuleItem, unitType === 'g' && styles.capsuleItemActive]} 
+                    onPress={() => setUnitType('g')}
+                  >
+                    <Text style={[styles.capsuleText, unitType === 'g' && styles.capsuleTextActive]}>克</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    activeOpacity={0.8}
+                    style={[styles.capsuleItem, unitType === 'ml' && styles.capsuleItemActive]} 
+                    onPress={() => setUnitType('ml')}
+                  >
+                    <Text style={[styles.capsuleText, unitType === 'ml' && styles.capsuleTextActive]}>ml</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
 
+            {/* 熱量輸入 */}
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>{txt.labelCalorie}</Text>
               <TextInput
-                ref={calorieInputRef} // 綁定熱量 Ref
+                ref={calorieInputRef}
                 style={styles.underlineInput}
                 value={newProductCalorie}
                 onChangeText={handleCalorieChange}
                 keyboardType="numeric"
                 placeholder={txt.caloriePlaceholder}
-                placeholderTextColor="#999"
+                placeholderTextColor="#A9A9A9"
                 returnKeyType="done"
-                onSubmitEditing={handleConfirmAdd} // 熱量按 Enter 直接觸發送出確認
+                onSubmitEditing={handleConfirmAdd} 
               />
             </View>
 
@@ -461,8 +506,49 @@ const styles = StyleSheet.create({
     borderBottomColor: '#666', 
     fontSize: 15, 
     color: '#333', 
-    paddingVertical: 4,
-    paddingHorizontal: 2
+    height: 35,          
+    paddingVertical: 0,  
+    paddingHorizontal: 2,
+    width: '100%'
+  },
+  
+  // 🛠️ 修正跑版的核心：改回 flexDirection 確保組件正常橫向排列
+  unitRowFlexContainer: {
+    flexDirection: 'row',       // 👈 修正此處的拼寫錯誤
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%'
+  },
+  amountInputInput: {
+    flex: 1,
+    marginRight: 25
+  },
+  capsuleToggleGroup: {
+    flexDirection: 'row',
+    borderWidth: 1.5,
+    borderColor: '#9EBAA4',
+    borderRadius: 8,
+    overflow: 'hidden',
+    height: 34,
+    width: 105,
+    backgroundColor: '#FFF'
+  },
+  capsuleItem: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFF'
+  },
+  capsuleItemActive: {
+    backgroundColor: '#95B09B'
+  },
+  capsuleText: {
+    fontSize: 14,
+    color: '#95B09B',
+    fontWeight: '700'
+  },
+  capsuleTextActive: {
+    color: '#FFF'
   },
   orangeRowButtonGroup: { 
     flexDirection: 'row', 
@@ -473,6 +559,8 @@ const styles = StyleSheet.create({
   },
   orangeCancelBtn: {
     backgroundColor: '#EAEAEA', 
+    borderWidth: 1.5,      // 👈 加上與右邊按鈕對稱的細外框線
+    borderColor: '#000',
     width: '45%', 
     height: 44, 
     borderRadius: 22, 
@@ -484,9 +572,11 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 2
   },
-  orangeCancelBtnText: { color: '#555', fontSize: 18, fontWeight: 'bold', letterSpacing: 2 },
+  orangeCancelBtnText: { color: '#000', fontSize: 18, fontWeight: 'bold', letterSpacing: 2 },
   orangeConfirmBtn: { 
     backgroundColor: '#FFAA77', 
+    borderWidth: 1.5,      
+    borderColor: '#000',
     width: '45%', 
     height: 44, 
     borderRadius: 22, 
@@ -498,7 +588,7 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 3
   },
-  orangeConfirmBtnText: { color: '#FFF', fontSize: 18, fontWeight: 'bold', letterSpacing: 2 },
+  orangeConfirmBtnText: { color: '#000', fontSize: 18, fontWeight: 'bold', letterSpacing: 2 },
   alertContent: { backgroundColor: '#FFF', width: 380, padding: 25, borderRadius: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 10, elevation: 10 },
   alertTitle: { fontSize: 19, fontWeight: 'bold', color: '#333', marginBottom: 12, textAlign: 'center' },
   alertMessage: { fontSize: 14, color: '#666', lineHeight: 20, marginBottom: 20, textAlign: 'center' },

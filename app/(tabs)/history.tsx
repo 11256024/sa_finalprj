@@ -295,7 +295,7 @@ export default function HistoryScreen() {
                   {/* 早餐 */}
                   <View style={styles.mealSectionCard}>
                     <View style={styles.mealHeaderRow}>
-                      <Text style={styles.mealTitle}>🌅 早餐紀錄</Text>
+                      <Text style={styles.mealTitle}>早餐紀錄</Text>
                       <Text style={styles.mealCalorieSum}>
                         小計：{calculateMealSectionCalories(currentRecord.mealBlocks.早餐)} kcal
                       </Text>
@@ -315,7 +315,7 @@ export default function HistoryScreen() {
                   {/* 午餐 */}
                   <View style={styles.mealSectionCard}>
                     <View style={styles.mealHeaderRow}>
-                      <Text style={styles.mealTitle}>☀️ 午餐紀錄</Text>
+                      <Text style={styles.mealTitle}>午餐紀錄</Text>
                       <Text style={styles.mealCalorieSum}>
                         小計：{calculateMealSectionCalories(currentRecord.mealBlocks.午餐)} kcal
                       </Text>
@@ -335,7 +335,7 @@ export default function HistoryScreen() {
                   {/* 晚餐 */}
                   <View style={styles.mealSectionCard}>
                     <View style={styles.mealHeaderRow}>
-                      <Text style={styles.mealTitle}>🌙 晚餐紀錄</Text>
+                      <Text style={styles.mealTitle}>晚餐紀錄</Text>
                       <Text style={styles.mealCalorieSum}>
                         小計：{calculateMealSectionCalories(currentRecord.mealBlocks.晚餐)} kcal
                       </Text>
