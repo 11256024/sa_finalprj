@@ -40,7 +40,7 @@ export default function ProfileScreen() {
   const [tempData, setTempData] = useState<ProfileType>({ ...profileData });
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
-  // 獲取今天日期 YYYY-MM-DD 格式，用在生日選擇器 max
+  // 獲取今天日期 YYYY-MM-DD 格式
   const getTodayDateString = () => {
     const today = new Date();
     const yyyy = today.getFullYear();
@@ -48,7 +48,6 @@ export default function ProfileScreen() {
     const dd = String(today.getDate()).padStart(2, '0');
     return `${yyyy}-${mm}-${dd}`;
   };
-
 
   useEffect(() => {
     loadProfileData();
@@ -58,22 +57,35 @@ export default function ProfileScreen() {
     try {
       // 1. 取得當前使用者 ID（對齊每日紀錄頁面）
       const savedUserId =
-        await AsyncStorage.getItem('current_user_id') ||
-        await AsyncStorage.getItem('member_id') ||
-        'guest';
+  await AsyncStorage.getItem('current_user_id') ||
+  await AsyncStorage.getItem('member_id') ||
+  'guest';
 
-      const userStr = await AsyncStorage.getItem('user');
-      const currentUser = userStr ? JSON.parse(userStr) : null;
+const userStr = await AsyncStorage.getItem('user');
+const currentUser = userStr ? JSON.parse(userStr) : null;
 
-      const singleAccount = currentUser?.username || '';
-      const singlePassword = await AsyncStorage.getItem('password') || '';
+// 帳號密碼只作為顯示用：優先讀目前登入者資料，再讀登入時保存的 account/password
+const savedAccount = await AsyncStorage.getItem('account');
+const savedUsername = await AsyncStorage.getItem('username');
+const savedPassword = await AsyncStorage.getItem('password');
 
-      // 只讀目前使用者自己的會員資料，不讀每日紀錄，也不讀共用 userProfile / user_profile
-      let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
+const singleAccount =
+  currentUser?.username ||
+  currentUser?.account ||
+  savedAccount ||
+  savedUsername ||
+  '';
+
+const singlePassword = savedPassword || '';
+
+// 只讀目前使用者自己的資料，不再讀 userProfile / user_profile 這種共用資料
+let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
       let parsedProfile: any = {};
       if (localData) {
         try { parsedProfile = JSON.parse(localData); } catch (e) {}
       }
+
+      const isSameAccount = parsedProfile.account && singleAccount && (parsedProfile.account === singleAccount);
 
       let rawName = parsedProfile.name || '';
       let rawBirthday = parsedProfile.birthday || '';
@@ -104,15 +116,18 @@ export default function ProfileScreen() {
         height: cleanHeight,
         weight: cleanWeight,
         gender: cleanGender,
-        account: singleAccount,
-        password: singlePassword,
+        account: singleAccount || parsedProfile.account || '',
+        password: singlePassword || parsedProfile.password || '',
         age: singleAge || parsedProfile.age || ''
       };
 
       setProfileData(safeData);
       setTempData(safeData);
 
-      const savedAvatar = await AsyncStorage.getItem('user_avatar');
+      const savedAvatar =
+        await AsyncStorage.getItem(`${savedUserId}_user_avatar`) ||
+        await AsyncStorage.getItem('user_avatar');
+
       if (savedAvatar) {
         setAvatarUri(savedAvatar);
       } else {
@@ -168,6 +183,11 @@ export default function ProfileScreen() {
           const base64Data = reader.result as string;
           // 保存 Base64 編碼的圖片
           await AsyncStorage.setItem('user_avatar', base64Data);
+          const currentUserId =
+            await AsyncStorage.getItem('current_user_id') ||
+            await AsyncStorage.getItem('member_id') ||
+            'guest';
+          await AsyncStorage.setItem(`${currentUserId}_user_avatar`, base64Data);
           console.log('✅ 圖片已保存為 Base64');
         };
         reader.readAsDataURL(blob);
@@ -175,6 +195,11 @@ export default function ProfileScreen() {
         console.log('⚠️ Base64 轉換失敗，使用原始 URI:', e);
         // 降級方案：直接保存 URI
         await AsyncStorage.setItem('user_avatar', imageUri);
+        const currentUserId =
+          await AsyncStorage.getItem('current_user_id') ||
+          await AsyncStorage.getItem('member_id') ||
+          'guest';
+        await AsyncStorage.setItem(`${currentUserId}_user_avatar`, imageUri);
       }
     }
   };
@@ -203,26 +228,33 @@ export default function ProfileScreen() {
     setSaveModalVisible(false);
     try {
       const savedUserId =
-        await AsyncStorage.getItem('current_user_id') ||
-        await AsyncStorage.getItem('member_id') ||
-        'guest';
+  await AsyncStorage.getItem('current_user_id') ||
+  await AsyncStorage.getItem('member_id') ||
+  'guest';
       const calculatedAgeStr = getPureAgeValue(tempData.birthday);
-      const updatedData = { ...tempData, age: calculatedAgeStr };
+      const updatedData = {
+        ...tempData,
+        account: profileData.account,
+        password: profileData.password,
+        age: calculatedAgeStr,
+      };
 
       setProfileData(updatedData);
       setIsEditing(false);
 
       const stringifiedData = JSON.stringify(updatedData);
       
-      // 只存目前登入使用者自己的會員資料，不寫入每日紀錄，也不寫入共用 key
-      await AsyncStorage.setItem(`${savedUserId}_user_profile`, stringifiedData);
-      await AsyncStorage.setItem(`${savedUserId}_user_name_key`, updatedData.name.trim());
-      await AsyncStorage.setItem(`${savedUserId}_user_height`, updatedData.height);
-      await AsyncStorage.setItem(`${savedUserId}_user_weight`, updatedData.weight);
+      // 全域與分開欄位同步寫入
+      // 只存目前登入使用者自己的資料，不再寫入共用 key
+await AsyncStorage.setItem(`${savedUserId}_user_profile`, stringifiedData);
+await AsyncStorage.setItem(`${savedUserId}_user_name_key`, updatedData.name.trim());
+await AsyncStorage.setItem(`${savedUserId}_user_height`, updatedData.height);
+await AsyncStorage.setItem(`${savedUserId}_user_weight`, updatedData.weight);
 
-      if (updatedData.age) {
-        await AsyncStorage.setItem(`${savedUserId}_user_age`, updatedData.age);
-      }
+if (updatedData.age) {
+  await AsyncStorage.setItem(`${savedUserId}_user_age`, updatedData.age);
+}
+      // 不寫入每日紀錄，避免會員中心體重影響每日紀錄。
 
       if (Platform.OS === 'web') window.alert("個人資料已成功更新！");
       else Alert.alert("成功", "個人資料已成功更新！");

@@ -29,37 +29,55 @@ export default function RootLayout() {
     }
 
     try {
-      // 2. 撈取使用者頭像與名字資料
-      const savedUri = await AsyncStorage.getItem('user_avatar_uri');
-      const savedAvatar = await AsyncStorage.getItem('user_avatar');
-      const savedProfileStr = await AsyncStorage.getItem('user_profile');
+      // 2. 取得目前登入使用者 ID
+      const savedUserId =
+        await AsyncStorage.getItem('current_user_id') ||
+        await AsyncStorage.getItem('member_id') ||
+        'guest';
+
+      // 3. 撈取目前使用者自己的頭像與名字資料
+      // 優先使用「有使用者 ID 的 key」，避免不同帳號互相殘留。
+      const savedUri =
+        await AsyncStorage.getItem(`${savedUserId}_user_avatar_uri`) ||
+        await AsyncStorage.getItem('user_avatar_uri');
+
+      const savedAvatar =
+        await AsyncStorage.getItem(`${savedUserId}_user_avatar`) ||
+        await AsyncStorage.getItem('user_avatar');
+
+      const savedProfileStr = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
       const savedUserStr = await AsyncStorage.getItem('user');
-      const savedNameKey = await AsyncStorage.getItem('user_name_key');
+      const savedNameKey = await AsyncStorage.getItem(`${savedUserId}_user_name_key`);
 
       let avatarFromProfile = null;
       let detectedName = '';
 
+      // 最高優先權：會員中心儲存的姓名
       if (savedNameKey && savedNameKey.trim().length > 0) {
         detectedName = savedNameKey.trim();
       }
-      
+
+      // 第二順位：目前使用者自己的 profile
       if (!detectedName.trim() && savedProfileStr) {
         const profile = JSON.parse(savedProfileStr);
         avatarFromProfile = profile.avatarUrl || profile.avatar || profile.avatarUri || profile.image || profile.uri || null;
         detectedName = profile.name || profile.username || profile.nickname || profile.displayName || '';
-        
+
         if (!detectedName.trim()) {
           for (const key in profile) {
-            if (typeof profile[key] === 'string' && 
-                profile[key].trim().length > 0 && 
-                !['account', 'username', 'password', 'gender', 'birthday'].includes(key.toLowerCase())) {
+            if (
+              typeof profile[key] === 'string' &&
+              profile[key].trim().length > 0 &&
+              !['account', 'username', 'password', 'gender', 'birthday', 'height', 'weight', 'age'].includes(key.toLowerCase())
+            ) {
               detectedName = profile[key];
-              break; 
+              break;
             }
           }
         }
-      } 
-      
+      }
+
+      // 第三順位：登入時存入的 user 物件
       if (!detectedName.trim() && savedUserStr) {
         const user = JSON.parse(savedUserStr);
         avatarFromProfile = avatarFromProfile || user.avatarUrl || user.avatar || user.image || null;
@@ -68,27 +86,34 @@ export default function RootLayout() {
 
       const cleanedName = detectedName.trim();
       let finalLastChar = '用';
+
+      // 使用 Array.from，中文、英文都能安全取最後一個字元
       if (cleanedName.length > 0) {
-        finalLastChar = cleanedName.charAt(cleanedName.length - 1); 
+        const nameChars = Array.from(cleanedName);
+        finalLastChar = nameChars[nameChars.length - 1];
       }
 
       const finalAvatarUri = savedUri || savedAvatar || avatarFromProfile;
       let safeAvatarUri = finalAvatarUri;
+
       if (safeAvatarUri && safeAvatarUri.startsWith('blob:')) {
         safeAvatarUri = null;
         await AsyncStorage.removeItem('user_avatar');
         await AsyncStorage.removeItem('user_avatar_uri');
-      }
-      else if (safeAvatarUri && !safeAvatarUri.match(/^(data:image|https?:\/\/|file:\/\/)/)) {
+        await AsyncStorage.removeItem(`${savedUserId}_user_avatar`);
+        await AsyncStorage.removeItem(`${savedUserId}_user_avatar_uri`);
+      } else if (safeAvatarUri && !safeAvatarUri.match(/^(data:image|https?:\/\/|file:\/\/)/)) {
         safeAvatarUri = null;
         await AsyncStorage.removeItem('user_avatar');
+        await AsyncStorage.removeItem(`${savedUserId}_user_avatar`);
       }
-      
+
       setGlobalAvatar(safeAvatarUri || null);
       setFallbackText(finalLastChar);
-
     } catch (e) {
       console.log('全域 Layout 讀取失敗：', e);
+      setGlobalAvatar(null);
+      setFallbackText('用');
     }
   }, []);
 
@@ -120,6 +145,8 @@ export default function RootLayout() {
 
       'user_avatar',
       'user_avatar_uri',
+      'guest_user_avatar',
+      'guest_user_avatar_uri',
 
       'userProfile',
       'user_profile',
