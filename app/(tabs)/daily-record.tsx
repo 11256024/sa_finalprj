@@ -31,7 +31,7 @@ export default function DailyRecordScreen() {
   const [weight, setWeight] = useState('');
   const [bmi, setBmi] = useState('—');
   const [bmiStatus, setBmiStatus] = useState(''); 
-  const [userHeight, setUserHeight] = useState<number | null>(175); 
+  const [userHeight, setUserHeight] = useState<number | null>(null); 
 
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [alertModalVisible, setAlertModalVisible] = useState(false);
@@ -76,15 +76,8 @@ export default function DailyRecordScreen() {
         const todayStr = getTaiwanDateString();
         setCurrentDate(todayStr);
 
-        const possibleHeightKeys = [`${finalId}_user_height`, `${finalId}_height`];
-        for (const key of possibleHeightKeys) {
-          const val = await AsyncStorage.getItem(key);
-          if (val && parseFloat(val) > 0) {
-            setUserHeight(parseFloat(val));
-            break;
-          }
-        }
-        await loadDataByDate(todayStr, finalId);
+        const memberHeight = await loadMemberHeight(finalId);
+        await loadDataByDate(todayStr, finalId, memberHeight);
       } catch (e) {
         console.error('初始化失敗', e);
         const todayStr = getTaiwanDateString();
@@ -94,7 +87,7 @@ export default function DailyRecordScreen() {
     initUserAndLoad();
   }, [pathname]);
 
-  const loadDataByDate = async (dateStr: string, currentUid: string = userId) => {
+  const loadDataByDate = async (dateStr: string, currentUid: string = userId, heightForBmi: number | null = userHeight) => {
   try {
     const savedDataStr = await AsyncStorage.getItem(`${currentUid}_food_record_${dateStr}`);
 
@@ -102,9 +95,20 @@ export default function DailyRecordScreen() {
       const parsed = JSON.parse(savedDataStr);
 
       if (parsed.hasDailyWeight === true) {
-        setWeight(parsed.weight || '');
-        setBmi(parsed.bmi || '—');
-        setBmiStatus(parsed.bmiStatus || '');
+        const savedWeight = parsed.weight || '';
+        const bmiResult = calculateBmiByHeight(savedWeight, heightForBmi);
+
+        setWeight(savedWeight);
+        setBmi(bmiResult.calculatedBmi);
+        setBmiStatus(bmiResult.calculatedStatus);
+
+        // 用會員中心最新身高重新產生 BMI，不回寫會員體重。
+        await saveDataToStorage(
+          savedWeight,
+          bmiResult.calculatedBmi,
+          bmiResult.calculatedStatus,
+          parsed.mealBlocks || { 早餐: [], 午餐: [], 晚餐: [] }
+        );
       } else {
         setWeight('');
         setBmi('—');
@@ -161,30 +165,77 @@ export default function DailyRecordScreen() {
     return status === '健康體重' ? '#2ECC71' : status === '體重過輕' ? '#F1C40F' : '#E74C3C';
   };
 
+  const loadMemberHeight = async (currentUid: string) => {
+    try {
+      let heightValue = '';
+
+      const profileRaw = await AsyncStorage.getItem(`${currentUid}_user_profile`);
+      if (profileRaw) {
+        const profile = JSON.parse(profileRaw);
+        if (profile?.height) {
+          heightValue = profile.height.toString();
+        }
+      }
+
+      if (!heightValue) {
+        heightValue =
+          (await AsyncStorage.getItem(`${currentUid}_user_height`)) ||
+          (await AsyncStorage.getItem(`${currentUid}_height`)) ||
+          '';
+      }
+
+      const parsedHeight = parseFloat(heightValue);
+
+      if (!isNaN(parsedHeight) && parsedHeight > 0) {
+        setUserHeight(parsedHeight);
+        return parsedHeight;
+      }
+
+      setUserHeight(null);
+      return null;
+    } catch (e) {
+      console.error('讀取會員中心身高失敗', e);
+      setUserHeight(null);
+      return null;
+    }
+  };
+
+  const calculateBmiByHeight = (inputWeight: string, heightForBmi: number | null) => {
+    let calculatedBmi = '—';
+    let calculatedStatus = '';
+
+    const w = parseFloat(inputWeight);
+
+    if (!isNaN(w) && w > 0 && heightForBmi && heightForBmi > 0) {
+      const hInMeters = heightForBmi / 100;
+      calculatedBmi = (w / (hInMeters * hInMeters)).toFixed(1);
+      calculatedStatus = getBmiStatusLabel(parseFloat(calculatedBmi));
+    }
+
+    return { calculatedBmi, calculatedStatus };
+  };
+
   const handleWeightChange = (text: string) => {
     let cleanedText = text.replace(/[^0-9.]/g, '');
     const parts = cleanedText.split('.');
     if (parts.length > 2) cleanedText = `${parts[0]}.${parts.slice(1).join('')}`;
     setWeight(cleanedText);
 
-    let calculatedBmi = '—';
-    let calculatedStatus = '';
-    const w = parseFloat(cleanedText);
-    if (!isNaN(w) && w > 0 && userHeight && userHeight > 0) {
-      const hInMeters = userHeight / 100;
-      calculatedBmi = (w / (hInMeters * hInMeters)).toFixed(1);
-      calculatedStatus = getBmiStatusLabel(parseFloat(calculatedBmi));
-      setBmi(calculatedBmi);
-      setBmiStatus(calculatedStatus);
-    } else {
-      setBmi('—');
-      setBmiStatus('');
-    }
+    const { calculatedBmi, calculatedStatus } = calculateBmiByHeight(cleanedText, userHeight);
+
+    setBmi(calculatedBmi);
+    setBmiStatus(calculatedStatus);
     saveDataToStorage(cleanedText, calculatedBmi, calculatedStatus, mealBlocks);
   };
 
   const handleWeightBlur = () => {
-    if (weight.trim() === '') return; 
+    if (weight.trim() === '') {
+      setWeight('');
+      setBmi('—');
+      setBmiStatus('');
+      saveDataToStorage('', '—', '', mealBlocks);
+      return;
+    }
     const w = parseFloat(weight);
     let finalWeight = weight;
 
@@ -203,16 +254,11 @@ export default function DailyRecordScreen() {
       showAlert('⚠️ 體重輸入限制範圍為 30 ~ 200 KG\n已自動修正為：200 KG');
     }
 
-    let calculatedBmi = '—';
-    let calculatedStatus = '';
-    const finalWNum = parseFloat(finalWeight);
-    if (!isNaN(finalWNum) && finalWNum > 0 && userHeight && userHeight > 0) {
-      const hInMeters = userHeight / 100;
-      calculatedBmi = (finalWNum / (hInMeters * hInMeters)).toFixed(1);
-      calculatedStatus = getBmiStatusLabel(parseFloat(calculatedBmi));
-      setBmi(calculatedBmi);
-      setBmiStatus(calculatedStatus);
-    }
+    const { calculatedBmi, calculatedStatus } = calculateBmiByHeight(finalWeight, userHeight);
+
+    setBmi(calculatedBmi);
+    setBmiStatus(calculatedStatus);
+
     saveDataToStorage(finalWeight, calculatedBmi, calculatedStatus, mealBlocks);
   };
 
