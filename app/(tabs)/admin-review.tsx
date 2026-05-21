@@ -1,5 +1,4 @@
-import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 interface Product {
@@ -7,141 +6,169 @@ interface Product {
   name: string;
   unit: string;
   calories: number;
-  status: 'approved' | 'pending';
+  status: 'approved' | 'pending' | 'rejected'; 
+  creatorId?: string; // 儲存登入的帳號 ID
 }
 
 export default function AdminReviewScreen() {
-  const router = useRouter();
   
-  // 預設改為空陣列，完全交由動態載入
+  // 🌟 模擬目前登入的管理者帳號 ID (實務上通常從 Auth Context 或 Redux/Zustand 取得)
+  const currentUserId = 'admin_jack123'; 
+
+  // 主分頁狀態：'list' (商品列表) | 'user_pending' (待審核) | 'audit' (審核紀錄)
+  const [activeTab, setActiveTab] = useState<'list' | 'user_pending' | 'audit'>('user_pending'); 
+  
+  // 審核紀錄子分頁：'admin_add' (後台新增) | 'approved' (已通過) | 'rejected' (未通過)
+  const [auditSubTab, setAuditSubTab] = useState<'admin_add' | 'approved' | 'rejected'>('admin_add');
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   
-  // 審核彈窗狀態
+  // 彈窗狀態控制
   const [confirmModalVisible, setConfirmModalVisible] = useState(false);
   const [selectedItem, setSelectedItem] = useState<{ id: string; name: string; action: 'approve' | 'reject' } | null>(null);
-
-  // 新增商品彈窗狀態
-  const [addModalVisible, setAddModalVisible] = useState(false);
-  const [newProdName, setNewProdName] = useState('');
-  const [newProdUnit, setNewProdUnit] = useState('');
-  const [newProdCalories, setNewProdCalories] = useState('');
-
-  // 刪除商品防呆彈窗狀態
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
   const [deleteItem, setDeleteItem] = useState<{ id: string; name: string } | null>(null);
 
-  // 點擊取消新增時的防呆彈窗狀態
-  const [cancelAddModalVisible, setCancelAddModalVisible] = useState(false);
+  // 新增商品彈窗狀態與欄位
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [newProdName, setNewProdName] = useState('');
+  const [newProdUnitValue, setNewProdUnitValue] = useState(''); 
+  const [unitType, setUnitType] = useState<'g' | 'ml'>('g');     
+  const [newProdCalories, setNewProdCalories] = useState('');
 
-  // 🎯 獨立出來的純撈取資料函式
+  // 🔴 欄位防呆錯誤狀態
+  const [errors, setErrors] = useState({ name: '', unit: '', calories: '' });
+
+  // ⌨️ 用於 Enter 切換焦點的 Ref 指標
+  const unitInputRef = useRef<TextInput>(null);
+  const caloriesInputRef = useRef<TextInput>(null);
+
+  // 撈取資料
   const fetchGlobalProducts = () => {
     if (Platform.OS === 'web') {
       const storedProducts = localStorage.getItem('global_products');
       if (storedProducts) {
         setAllProducts(JSON.parse(storedProducts));
       } else {
-        setAllProducts([]);
+        // 初始測試資料：將原本寫死的官方管理員改成動態的管理者帳號 ID
+        const dummy: Product[] = [
+          { id: '1', name: '雞胸肉沙拉', unit: '200克', calories: 180, status: 'pending', creatorId: 'user_marry55' },
+          { id: '2', name: '御飯糰', unit: '100克', calories: 210, status: 'approved', creatorId: currentUserId }
+        ];
+        localStorage.setItem('global_products', JSON.stringify(dummy));
+        setAllProducts(dummy);
       }
     }
-  };
-
-  // 載入時檢查登入權限與動態撈取使用者送審的商品
-  const checkAuthAndLoadProducts = () => {
-    if (Platform.OS === 'web') {
-      // 🔒 安全檢查：防偷跑
-      const loginStatus = localStorage.getItem('admin_logged_in');
-      if (loginStatus !== 'true') {
-        window.alert('⚠️ 您尚未登入管理員帳號！');
-        router.replace('/'); 
-        return false;
-      }
-      
-      fetchGlobalProducts();
-      return true;
-    }
-    return false;
   };
 
   useEffect(() => {
-    const isAuthed = checkAuthAndLoadProducts();
-    if (!isAuthed) return;
-
     if (Platform.OS === 'web') {
-      // 🔥 核心雙向同步機制 A：監聽跨分頁的 localStorage 變動
-      // 當使用者在另一個分頁/視窗按了「送出審核」，這裡會「秒速」被通知，免整理跳出待審核商品
-      const handleStorageChange = (e: StorageEvent) => {
-        if (e.key === 'global_products') {
-          fetchGlobalProducts();
-        }
-      };
-
-      // 🔥 核心雙向同步機制 B：監聽當前瀏覽器分頁被聚焦（Focus）
-      // 當測試時在同一個分頁的不同路由（網址）切換回來時，強迫重新整理抓取最新快取
-      const handleWindowFocus = () => {
-        fetchGlobalProducts();
-      };
-
-      window.addEventListener('storage', handleStorageChange);
-      window.addEventListener('focus', handleWindowFocus);
-
-      // 卸載時移除監聽釋放記憶體
-      return () => {
-        window.removeEventListener('storage', handleStorageChange);
-        window.removeEventListener('focus', handleWindowFocus);
-      };
+      fetchGlobalProducts();
     }
   }, []);
 
-  // 觸發審核彈窗
-  const triggerConfirm = (id: string, name: string, action: 'approve' | 'reject') => {
-    setSelectedItem({ id, name, action });
-    setConfirmModalVisible(true);
-  };
+  // 🌟 修正過濾邏輯：全面改用動態的 currentUserId 進行判定
+  const getFilteredProducts = () => {
+    const reversedProducts = [...allProducts].reverse();
 
-  // 觸發刪除防呆彈窗
-  const triggerDeleteConfirm = (id: string, name: string) => {
-    setDeleteItem({ id, name });
-    setDeleteModalVisible(true);
-  };
+    if (activeTab === 'list') {
+      return reversedProducts.filter(p => p.status === 'approved');
+    } 
+    
+    if (activeTab === 'user_pending') {
+      // 待審核：狀態為 pending，且建立者「不是」當前登入的管理者
+      return reversedProducts.filter(p => p.status === 'pending' && p.creatorId !== currentUserId);
+    }
 
-  // 觸發「取消新增」的防呆檢查
-  const handleCancelAddClick = () => {
-    if (!newProdName.trim() && !newProdUnit.trim() && !newProdCalories.trim()) {
-      setAddModalVisible(false);
+    // 審核紀錄主分頁下的子分類
+    if (auditSubTab === 'admin_add') {
+      // 後台新增：建立者「是」當前登入的管理者
+      return reversedProducts.filter(p => p.creatorId === currentUserId);
+    } else if (auditSubTab === 'approved') {
+      // 已通過審核：已被核准上架，且原本是「其他使用者」提交的商品
+      return reversedProducts.filter(p => p.status === 'approved' && p.creatorId !== currentUserId);
     } else {
-      setCancelAddModalVisible(true);
+      // 未通過審核：被退件拒絕的商品
+      return reversedProducts.filter(p => p.status === 'rejected');
     }
   };
 
-  // 確認要放棄新增商品
-  const handleConfirmAbandonAdd = () => {
+  // 處理單位與熱量的數字輸入限制
+  const handleNumberChange = (text: string, setter: (val: string) => void, field: 'unit' | 'calories') => {
+    const cleanText = text.replace(/[^0-9]/g, '');
+    setter(cleanText);
+    if (cleanText) {
+      setErrors(prev => ({ ...prev, [field]: '' }));
+    }
+  };
+
+  // 關閉新增彈窗並重置
+  const closeAddModal = () => {
     setNewProdName('');
-    setNewProdUnit('');
+    setNewProdUnitValue('');
     setNewProdCalories('');
-    setCancelAddModalVisible(false);
+    setErrors({ name: '', unit: '', calories: '' });
     setAddModalVisible(false);
   };
 
-  // 執行審核動作（核准上架 / 拒絕退件）
+  // 送出新增官方商品
+  const handleAddProduct = () => {
+    let hasError = false;
+    const newErrors = { name: '', unit: '', calories: '' };
+
+    if (!newProdName.trim()) {
+      newErrors.name = '請輸入商品名稱';
+      hasError = true;
+    }
+    if (!newProdUnitValue.trim()) {
+      newErrors.unit = '請輸入單位數量';
+      hasError = true;
+    }
+    if (!newProdCalories.trim()) {
+      newErrors.calories = '請輸入熱量';
+      hasError = true;
+    }
+
+    if (hasError) {
+      setErrors(newErrors);
+      return;
+    }
+
+    const unitLabel = unitType === 'g' ? '克' : 'ml';
+    const finalUnitString = `${newProdUnitValue.trim()}${unitLabel}`;
+
+    if (Platform.OS === 'web') {
+      const storedProducts = localStorage.getItem('global_products');
+      let products: Product[] = storedProducts ? JSON.parse(storedProducts) : [];
+
+      // 🌟 新增商品時，將 creatorId 綁定為當前登入的帳號 ID (currentUserId)
+      const newProduct: Product = {
+        id: `admin_add_${Date.now()}`,
+        name: newProdName.trim(),
+        unit: finalUnitString,
+        calories: parseInt(newProdCalories, 10) || 0,
+        status: 'approved', 
+        creatorId: currentUserId 
+      };
+
+      products.push(newProduct);
+      localStorage.setItem('global_products', JSON.stringify(products));
+      setAllProducts(products);
+    }
+
+    closeAddModal();
+    // 管理者新增完後，自動導向審核紀錄中的「後台新增」標籤查看
+    setActiveTab('audit');
+    setAuditSubTab('admin_add');
+  };
+
   const handleExecuteAction = () => {
     if (!selectedItem) return;
     const { id, action } = selectedItem;
-
     if (Platform.OS === 'web') {
       const storedProducts = localStorage.getItem('global_products');
       if (storedProducts) {
         let products: Product[] = JSON.parse(storedProducts);
-        
-        if (action === 'reject') {
-          // 拒絕退件：直接從全局資料庫中拔除該筆使用者申請
-          products = products.filter(p => p.id !== id);
-        } else {
-          // 核准入庫：將 status 從 'pending' 翻轉為 'approved'
-          // 🌟 這時因為改變了 status，使用者端那邊會立刻偵測到並在搜尋列表中「產生新商品」！
-          products = products.map(p => p.id === id ? { ...p, status: 'approved' } : p);
-        }
-        
-        // 回寫快取，同步更新管理員畫面上的狀態
+        products = products.map(p => p.id === id ? { ...p, status: action === 'approve' ? 'approved' : 'rejected' } : p);
         localStorage.setItem('global_products', JSON.stringify(products));
         setAllProducts(products);
       }
@@ -150,11 +177,9 @@ export default function AdminReviewScreen() {
     setSelectedItem(null);
   };
 
-  // 執行刪除商品
   const handleExecuteDelete = () => {
     if (!deleteItem) return;
-    const { id, name } = deleteItem;
-
+    const { id } = deleteItem;
     if (Platform.OS === 'web') {
       const storedProducts = localStorage.getItem('global_products');
       if (storedProducts) {
@@ -162,95 +187,118 @@ export default function AdminReviewScreen() {
         products = products.filter(p => p.id !== id);
         localStorage.setItem('global_products', JSON.stringify(products));
         setAllProducts(products);
-        window.alert(`商品「${name}」已成功刪除！`);
       }
     }
     setDeleteModalVisible(false);
     setDeleteItem(null);
   };
 
-  // 管理員直接新增官方商品（預設直接 status: 'approved' 免審核）
-  const handleAddProduct = () => {
-    if (!newProdName.trim() || !newProdUnit.trim() || !newProdCalories.trim()) {
-      if (Platform.OS === 'web') window.alert("請完整填寫所有商品欄位！");
-      return;
-    }
-
-    const caloriesNum = parseInt(newProdCalories, 10);
-    if (isNaN(caloriesNum)) {
-      if (Platform.OS === 'web') window.alert("熱量請輸入有效的數字！");
-      return;
-    }
-
-    if (Platform.OS === 'web') {
-      const storedProducts = localStorage.getItem('global_products');
-      let products: Product[] = storedProducts ? JSON.parse(storedProducts) : [];
-
-      const newProduct: Product = {
-        id: `admin_add_${Date.now()}`,
-        name: newProdName.trim(),
-        unit: newProdUnit.trim(),
-        calories: caloriesNum,
-        status: 'approved' // 🌟 管理員直接新增商品，狀態直接設為 approved，使用者那裏就能立刻看見
-      };
-
-      products.push(newProduct);
-      localStorage.setItem('global_products', JSON.stringify(products));
-      setAllProducts(products);
-      window.alert(`成功新增官方商品：「${newProdName}」！`);
-    }
-
-    setNewProdName('');
-    setNewProdUnit('');
-    setNewProdCalories('');
-    setAddModalVisible(false);
-  };
+  const displayedList = getFilteredProducts();
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.mainCard}>
+          
+          {/* 頂部主列 */}
           <View style={styles.titleSectionRow}>
-            <Text style={styles.pageTitle}>商 品 管 理 與 審 核</Text>
+            <View style={styles.mainTabGroupRow}>
+              <Text style={styles.pageTitle}>商 品 管 理 系 統</Text>
+              
+              <TouchableOpacity style={[styles.mainTabButton, activeTab === 'list' && styles.mainTabButtonActive]} onPress={() => setActiveTab('list')}>
+                <Text style={[styles.mainTabLabel, activeTab === 'list' && styles.mainTabLabelActive]}>商品列表</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={[styles.mainTabButton, activeTab === 'user_pending' && styles.mainTabButtonActive]} onPress={() => setActiveTab('user_pending')}>
+                <Text style={[styles.mainTabLabel, activeTab === 'user_pending' && styles.mainTabLabelActive]}>待審核</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={[styles.mainTabButton, activeTab === 'audit' && styles.mainTabButtonActive]} onPress={() => setActiveTab('audit')}>
+                <Text style={[styles.mainTabLabel, activeTab === 'audit' && styles.mainTabLabelActive]}>審核紀錄</Text>
+              </TouchableOpacity>
+            </View>
+
             <TouchableOpacity style={styles.addProductBtn} onPress={() => setAddModalVisible(true)}>
-              <Text style={styles.addProductBtnText}>➕ 新增官方商品</Text>
+              <Text style={styles.addProductBtnText}>＋ 新增官方商品</Text>
             </TouchableOpacity>
           </View>
           
+          {/* 審核紀錄子分頁 */}
+          {activeTab === 'audit' && (
+            <View style={styles.subTabRowWrapper}>
+              <View style={styles.subTabLeftGroup}>
+                <TouchableOpacity 
+                  style={[styles.subTabItem, auditSubTab === 'admin_add' && styles.subTabItemActive]} 
+                  onPress={() => setAuditSubTab('admin_add')}
+                >
+                  <Text style={[styles.subTabText, auditSubTab === 'admin_add' && styles.subTabTextActive]}>
+                    後台新增
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={[styles.subTabItem, auditSubTab === 'approved' && styles.subTabItemActive]} 
+                  onPress={() => setAuditSubTab('approved')}
+                >
+                  <Text style={[styles.subTabText, auditSubTab === 'approved' && styles.subTabTextActive]}>
+                    已通過審核
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={[styles.subTabItem, auditSubTab === 'rejected' && styles.subTabItemActive]} 
+                  onPress={() => setAuditSubTab('rejected')}
+                >
+                  <Text style={[styles.subTabText, auditSubTab === 'rejected' && styles.subTabTextActive]}>
+                    未通過審核
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
           <View style={styles.titleDivider} />
           
-          {allProducts.length === 0 ? (
+          {/* 列表渲染 */}
+          {displayedList.length === 0 ? (
             <View style={styles.emptyBox}>
-              <Text style={styles.emptyText}>🎉 目前沒有任何商品資料唷！</Text>
-              <Text style={styles.emptySubText}>當使用者提交新商品，或管理員手動新增時，資料將會即時顯示在此處。</Text>
+              <Text style={styles.emptyText}>🔍 沒有找到任何相關的商品資料</Text>
             </View>
           ) : (
-            allProducts.map((item) => (
+            displayedList.map((item) => (
               <View key={item.id} style={styles.reviewRow}>
                 <View style={styles.infoGroup}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                    <Text style={styles.prodName}>{item.name} / {item.unit}</Text>
-                    <View style={[styles.statusBadge, item.status === 'approved' ? styles.badgeApproved : styles.badgePending]}>
-                      <Text style={styles.statusBadgeText}>{item.status === 'approved' ? '已上架' : '待審核'}</Text>
+                    <Text style={styles.prodName}>{item.name}</Text>
+                    <View style={[styles.statusBadge, item.status === 'approved' && styles.badgeApproved, item.status === 'pending' && styles.badgePending, item.status === 'rejected' && styles.badgeRejected]}>
+                      <Text style={styles.statusBadgeText}>
+                        {item.status === 'approved' && '已上架'}
+                        {item.status === 'pending' && '待審核'}
+                        {item.status === 'rejected' && '未通過'}
+                      </Text>
                     </View>
                   </View>
                   <Text style={styles.prodCal}>熱量：{item.calories} 大卡</Text>
-                  <Text style={styles.contributorText}>商品 ID: {item.id}</Text>
+                  
+                  {/* 🌟 修正商品來源：如果是目前登入的管理者，顯示目前的 id (管理者)；其餘則顯示對應帳號 (使用者) */}
+                  <Text style={styles.contributorText}>
+                    商品來源：{item.creatorId === currentUserId ? `${item.creatorId} (管理者)` : `${item.creatorId || '未知帳號'} (使用者)`}
+                  </Text>
                 </View>
 
                 <View style={styles.btnGroup}>
                   {item.status === 'pending' ? (
                     <>
-                      <TouchableOpacity style={[styles.actionBtn, styles.rejectBtn]} onPress={() => triggerConfirm(item.id, item.name, 'reject')}>
+                      <TouchableOpacity style={[styles.actionBtn, styles.rejectBtn]} onPress={() => { setSelectedItem({ id: item.id, name: item.name, action: 'reject' }); setConfirmModalVisible(true); }}>
                         <Text style={styles.rejectBtnText}>拒絕退件</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={[styles.actionBtn, styles.approveBtn]} onPress={() => triggerConfirm(item.id, item.name, 'approve')}>
+                      <TouchableOpacity style={[styles.actionBtn, styles.approveBtn]} onPress={() => { setSelectedItem({ id: item.id, name: item.name, action: 'approve' }); setConfirmModalVisible(true); }}>
                         <Text style={styles.approveBtnText}>核准入庫</Text>
                       </TouchableOpacity>
                     </>
                   ) : (
-                    <TouchableOpacity style={[styles.actionBtn, styles.deleteBtn]} onPress={() => triggerDeleteConfirm(item.id, item.name)}>
-                      <Text style={styles.deleteBtnText}>🗑️ 刪除商品</Text>
+                    <TouchableOpacity style={[styles.actionBtn, styles.deleteBtn]} onPress={() => { setDeleteItem({ id: item.id, name: item.name }); setDeleteModalVisible(true); }}>
+                      <Text style={styles.deleteBtnText}>- 刪除</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -260,99 +308,110 @@ export default function AdminReviewScreen() {
         </View>
       </ScrollView>
 
-      {/* 新增官方商品彈窗 (Modal) */}
-      <Modal animationType="fade" transparent={true} visible={addModalVisible} onRequestClose={handleCancelAddClick}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.addAlertContent}>
-            <Text style={styles.addAlertTitle}>新增官方入庫商品</Text>
-            <View style={styles.modalInputBlock}>
-              <Text style={styles.modalInputLabel}>商品名稱</Text>
-              <TextInput style={styles.modalInputField} value={newProdName} onChangeText={setNewProdName} placeholder="例如：鮮肉燕餃" />
+      {/* 新增官方商品彈窗 */}
+      <Modal animationType="fade" transparent={true} visible={addModalVisible} onRequestClose={closeAddModal}>
+        <View style={styles.whiteModalOverlay}>
+          <View style={styles.whiteModalContent}>
+            <Text style={styles.whiteModalTitle}>新 增 商 品</Text>
+            
+            {/* 1. 商品名稱 */}
+            <View style={styles.whiteInputBlock}>
+              <Text style={styles.whiteInputLabel}>商品名稱</Text>
+              <TextInput 
+                style={[styles.whiteBoxInput, !!errors.name && styles.inputErrorBorder]} 
+                value={newProdName} 
+                onChangeText={(text) => { setNewProdName(text); if(text) setErrors(p => ({ ...p, name: '' })); }} 
+                placeholder="例如：御飯糰" 
+                placeholderTextColor="#94A3B8"
+                returnKeyType="next"
+                onSubmitEditing={() => unitInputRef.current?.focus()}
+                blurOnSubmit={false}
+              />
+              {!!errors.name && <Text style={styles.errorText}>{errors.name}</Text>}
             </View>
-            <View style={styles.modalInputBlock}>
-              <Text style={styles.modalInputLabel}>單位 (如：一包、100g)</Text>
-              <TextInput style={styles.modalInputField} value={newProdUnit} onChangeText={setNewProdUnit} placeholder="例如：一盒" />
+            
+            {/* 2. 單位 */}
+            <View style={styles.whiteInputBlock}>
+              <Text style={styles.whiteInputLabel}>單位</Text>
+              <View style={styles.whiteUnitRow}>
+                <TextInput 
+                  ref={unitInputRef}
+                  style={[styles.whiteUnderlineInput, !!errors.unit && styles.inputErrorUnderline]} 
+                  value={newProdUnitValue} 
+                  onChangeText={(text) => handleNumberChange(text, setNewProdUnitValue, 'unit')} 
+                  placeholder="限輸入數字" 
+                  placeholderTextColor="#94A3B8" 
+                  keyboardType="numeric"
+                  returnKeyType="next"
+                  onSubmitEditing={() => caloriesInputRef.current?.focus()}
+                  blurOnSubmit={false}
+                />
+                <View style={styles.capsuleToggleContainer}>
+                  <TouchableOpacity style={[styles.capsuleTab, unitType === 'g' && styles.capsuleTabActive]} onPress={() => setUnitType('g')}>
+                    <Text style={[styles.capsuleTabText, unitType === 'g' && styles.capsuleTabTextActive]}>克</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.capsuleTab, unitType === 'ml' && styles.capsuleTabActive]} onPress={() => setUnitType('ml')}>
+                    <Text style={[styles.capsuleTabText, unitType === 'ml' && styles.capsuleTabTextActive]}>ml</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+              {!!errors.unit && <Text style={styles.errorText}>{errors.unit}</Text>}
             </View>
-            <View style={styles.modalInputBlock}>
-              <Text style={styles.modalInputLabel}>卡路里熱量 (大卡)</Text>
-              <TextInput style={styles.modalInputField} value={newProdCalories} onChangeText={setNewProdCalories} keyboardType="numeric" placeholder="例如：240" />
+            
+            {/* 3. 熱量 */}
+            <View style={styles.whiteInputBlock}>
+              <Text style={styles.whiteInputLabel}>熱量 (大卡)</Text>
+              <TextInput 
+                ref={caloriesInputRef}
+                style={[styles.whiteUnderlineInput, !!errors.calories && styles.inputErrorUnderline]} 
+                value={newProdCalories} 
+                onChangeText={(text) => handleNumberChange(text, setNewProdCalories, 'calories')} 
+                placeholder="限輸入數字" 
+                placeholderTextColor="#94A3B8" 
+                keyboardType="numeric"
+                returnKeyType="done"
+                onSubmitEditing={handleAddProduct}
+              />
+              {!!errors.calories && <Text style={styles.errorText}>{errors.calories}</Text>}
             </View>
-            <View style={[styles.modalButtonGroup, { marginTop: 15 }]}>
-              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnCancel]} onPress={handleCancelAddClick}>
-                <Text style={styles.modalBtnCancelText}>取消</Text>
+            
+            <View style={styles.whiteModalActionGroup}>
+              <TouchableOpacity style={[styles.whiteRoundBtn, styles.whiteBtnCancel]} onPress={closeAddModal}>
+                <Text style={styles.whiteBtnCancelText}>取 消</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#00C853' }]} onPress={handleAddProduct}>
-                <Text style={styles.modalBtnConfirmText}>確認新增</Text>
+              <TouchableOpacity style={[styles.whiteRoundBtn, styles.whiteBtnConfirm]} onPress={handleAddProduct}>
+                <Text style={styles.whiteBtnConfirmText}>確 認</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
-      {/* 取消填寫商品時的「防呆確認彈窗」 */}
-      <Modal animationType="fade" transparent={true} visible={cancelAddModalVisible} onRequestClose={() => setCancelAddModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.alertContent}>
-            <Text style={[styles.alertTitle, { color: '#F39C12' }]}>⚠️ 確定取消新增？</Text>
-            <View style={styles.messageContainer}>
-              <Text style={styles.alertMessage}>您目前填寫的商品資訊尚未儲存，</Text>
-              <Text style={styles.alertMessage}>離開後輸入的內容將會<Text style={{ fontWeight: 'bold', color: '#E74C3C' }}>全部清空</Text>。</Text>
-            </View>
-            <View style={styles.modalButtonGroup}>
-              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => setCancelAddModalVisible(false)}>
-                <Text style={styles.modalBtnCancelText}>繼續填寫</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#F39C12' }]} onPress={handleConfirmAbandonAdd}>
-                <Text style={styles.modalBtnConfirmText}>放棄並離開</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 刪除商品防呆確認彈窗 (Modal) */}
-      <Modal animationType="fade" transparent={true} visible={deleteModalVisible} onRequestClose={() => setDeleteModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.alertContent}>
-            <Text style={[styles.alertTitle, { color: '#E74C3C' }]}>⚠️ 確定刪除此商品？</Text>
-            <View style={styles.messageContainer}>
-              <Text style={styles.alertMessage}>您即將從系統中永久刪除商品：</Text>
-              <Text style={[styles.productHighlight, { color: '#E74C3C' }]}>「{deleteItem?.name}」</Text>
-              <Text style={styles.alertSubMessage}>注意：刪除後資料將無法復原，使用者也將無法再搜尋到此商品。</Text>
-            </View>
-            <View style={styles.modalButtonGroup}>
-              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => setDeleteModalVisible(false)}>
-                <Text style={styles.modalBtnCancelText}>取消</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#E74C3C' }]} onPress={handleExecuteDelete}>
-                <Text style={styles.modalBtnConfirmText}>確認刪除</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* 審核防呆彈窗 (Modal) */}
+      {/* 審核確認視窗 */}
       <Modal animationType="fade" transparent={true} visible={confirmModalVisible} onRequestClose={() => setConfirmModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
-            <Text style={[styles.alertTitle, selectedItem?.action === 'approve' ? { color: '#00C853' } : { color: '#F39C12' }]}>
-              {selectedItem?.action === 'reject' ? '⚠️ 確認要拒絕退件嗎？' : '💡 確認要核准入庫嗎？'}
+            <Text style={[styles.alertTitle, selectedItem?.action === 'approve' ? { color: '#10B981' } : { color: '#E11D48' }]}>
+              {selectedItem?.action === 'approve' ? '核准入庫確認' : '拒絕退件確認'}
             </Text>
-            <View style={styles.messageContainer}>
-              <Text style={styles.alertMessage}>您即將{selectedItem?.action === 'reject' ? '「拒絕並刪除」' : '「核准並上架」'}商品：</Text>
-              <Text style={styles.productHighlight}>「{selectedItem?.name}」</Text>
-              <Text style={styles.alertSubMessage}>
-                {selectedItem?.action === 'reject' ? '退件後，該商品資料將會從審核隊列中永久移除。' : '通過後，該商品將正式進入官方資料庫，所有使用者皆可查詢。'}
-              </Text>
-            </View>
+            <Text style={{ fontSize: 16, marginVertical: 15 }}>確定要處理使用者送出的「{selectedItem?.name}」嗎？</Text>
             <View style={styles.modalButtonGroup}>
-              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => setConfirmModalVisible(false)}>
-                <Text style={styles.modalBtnCancelText}>取消</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalBtn, selectedItem?.action === 'reject' ? styles.modalBtnRejectConfirm : styles.modalBtnApproveConfirm]} onPress={handleExecuteAction}>
-                <Text style={styles.modalBtnConfirmText}>確定執行</Text>
-              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => setConfirmModalVisible(false)}><Text style={styles.modalBtnCancelText}>取消</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: selectedItem?.action === 'approve' ? '#10B981' : '#E11D48' }]} onPress={handleExecuteAction}><Text style={{ color: '#FFF', fontWeight: 'bold' }}>確定</Text></TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 刪除確認視窗 */}
+      <Modal animationType="fade" transparent={true} visible={deleteModalVisible} onRequestClose={() => setDeleteModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.alertContent}>
+            <Text style={[styles.alertTitle, { color: '#F43F5E' }]}>警告</Text>
+            <Text style={{ fontSize: 16, marginVertical: 15 }}>確定要從資料庫刪除「{deleteItem?.name}」的紀錄嗎？</Text>
+            <View style={styles.modalButtonGroup}>
+              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => setDeleteModalVisible(false)}><Text style={styles.modalBtnCancelText}>取消</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#F43F5E' }]} onPress={handleExecuteDelete}><Text style={{ color: '#FFF', fontWeight: 'bold' }}>確定刪除</Text></TouchableOpacity>
             </View>
           </View>
         </View>
@@ -363,51 +422,76 @@ export default function AdminReviewScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#EFF2F5' },
-  scrollContent: { paddingVertical: 40, alignItems: 'center' },
-  mainCard: { backgroundColor: 'white', width: '90%', minHeight: 600, borderRadius: 16, padding: 40, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 10, elevation: 5 },
-  titleSectionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  pageTitle: { fontSize: 22, fontWeight: 'bold', color: '#2C3E50', letterSpacing: 2 },
-  addProductBtn: { backgroundColor: '#3498DB', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 8 },
+  container: { flex: 1, backgroundColor: '#F1F5F9' },
+  scrollContent: { paddingVertical: 30, alignItems: 'center' },
+  mainCard: { backgroundColor: 'white', width: '95%', minHeight: 600, borderRadius: 16, padding: 30, shadowColor: '#000', shadowOpacity: 0.02, shadowRadius: 10 },
+  titleSectionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
+  mainTabGroupRow: { flexDirection: 'row', alignItems: 'center' },
+  pageTitle: { fontSize: 22, fontWeight: 'bold', color: '#0F172A', marginRight: 30 },
+  mainTabButton: { paddingVertical: 6, paddingHorizontal: 16, borderRadius: 20, marginRight: 8 },
+  mainTabButtonActive: { backgroundColor: '#1E293B' },
+  mainTabLabel: { fontSize: 15, color: '#64748B', fontWeight: '600' },
+  mainTabLabelActive: { color: 'white' },
+  subTabRowWrapper: { flexDirection: 'row', marginTop: 10, borderBottomWidth: 1, borderBottomColor: '#E2E8F0', paddingBottom: 5 },
+  subTabLeftGroup: { flexDirection: 'row' },
+  subTabItem: { paddingVertical: 8, paddingHorizontal: 14, marginRight: 10, borderBottomWidth: 3, borderBottomColor: 'transparent' },
+  subTabItemActive: { borderBottomColor: '#FF6B35' },
+  subTabText: { fontSize: 14, color: '#64748B', fontWeight: '500' },
+  subTabTextActive: { color: '#FF6B35', fontWeight: 'bold' },
+  addProductBtn: { backgroundColor: '#0284C7', paddingVertical: 8, paddingHorizontal: 16, borderRadius: 6 },
   addProductBtnText: { color: 'white', fontSize: 14, fontWeight: 'bold' },
-  titleDivider: { height: 1, backgroundColor: '#E0E0E0', marginTop: 15, marginBottom: 30 },
-  emptyBox: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 80, paddingHorizontal: 20 },
-  emptyText: { fontSize: 18, fontWeight: 'bold', color: '#7F8C8D', marginBottom: 8 },
-  emptySubText: { fontSize: 14, color: '#95A5A6', textAlign: 'center', lineHeight: 20 },
-  reviewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 20, borderBottomWidth: 1, borderBottomColor: '#F2F2F2' },
+  titleDivider: { height: 1, backgroundColor: '#F1F5F9', marginBottom: 15 },
+  emptyBox: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 80 },
+  emptyText: { fontSize: 15, color: '#94A3B8' },
+  reviewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
   infoGroup: { flex: 1 },
-  prodName: { fontSize: 18, fontWeight: 'bold', color: '#333' },
-  prodCal: { fontSize: 14, color: '#666', marginBottom: 4 },
-  contributorText: { fontSize: 12, color: '#BDC3C7' },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, marginLeft: 10 },
-  badgePending: { backgroundColor: '#FFEAA7' },
-  badgeApproved: { backgroundColor: '#D4EDDA' },
-  statusBadgeText: { fontSize: 12, fontWeight: 'bold', color: '#333' },
+  prodName: { fontSize: 16, fontWeight: 'bold', color: '#1E293B' },
+  prodCal: { fontSize: 14, color: '#475569', marginTop: 2 },
+  contributorText: { fontSize: 13, color: '#64748B', marginTop: 4 },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12, marginLeft: 10, backgroundColor: '#F1F5F9' },
+  badgePending: { backgroundColor: '#FEF3C7' },
+  badgeApproved: { backgroundColor: '#DCFCE7' },
+  badgeRejected: { backgroundColor: '#FEE2E2' },
+  statusBadgeText: { fontSize: 11, fontWeight: '700', color: '#334155' },
   btnGroup: { flexDirection: 'row', alignItems: 'center' },
-  actionBtn: { paddingVertical: 8, paddingHorizontal: 20, borderRadius: 20, marginLeft: 12 },
-  rejectBtn: { backgroundColor: 'white', borderWidth: 1, borderColor: '#E74C3C' },
-  rejectBtnText: { color: '#E74C3C', fontSize: 14, fontWeight: 'bold' },
-  approveBtn: { backgroundColor: '#00C853' },
-  approveBtnText: { color: 'white', fontSize: 14, fontWeight: 'bold' },
-  deleteBtn: { backgroundColor: '#FFF0F0', borderWidth: 1, borderColor: '#E74C3C' },
-  deleteBtnText: { color: '#E74C3C', fontSize: 14, fontWeight: 'bold' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
-  alertContent: { backgroundColor: '#FFF', width: 450, padding: 35, borderRadius: 28, alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 15, elevation: 10 },
-  alertTitle: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
-  addAlertContent: { backgroundColor: '#FFF', width: 450, padding: 30, borderRadius: 24, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 12, elevation: 10 },
-  addAlertTitle: { fontSize: 22, fontWeight: 'bold', color: '#2C3E50', marginBottom: 25, textAlign: 'center', letterSpacing: 1 },
-  modalInputBlock: { width: '100%', marginBottom: 16 },
-  modalInputLabel: { fontSize: 14, fontWeight: '600', color: '#555', marginBottom: 6 },
-  modalInputField: { width: '100%', fontSize: 16, color: '#333', backgroundColor: '#F9F9F9', borderWidth: 1, borderColor: '#EEE', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10 },
-  messageContainer: { alignItems: 'center', width: '100%', marginBottom: 30 },
-  alertMessage: { fontSize: 16, color: '#555', textAlign: 'center', marginBottom: 6 },
-  productHighlight: { fontSize: 18, fontWeight: 'bold', color: '#000', textAlign: 'center', marginBottom: 12 },
-  alertSubMessage: { fontSize: 14, color: '#7F8C8D', textAlign: 'center', lineHeight: 22 },
-  modalButtonGroup: { flexDirection: 'row', justifyContent: 'center', width: '100%' },
-  modalBtn: { width: 160, height: 48, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginHorizontal: 10 },
-  modalBtnCancel: { backgroundColor: '#F0F0F0' },
-  modalBtnCancelText: { color: '#666', fontSize: 16, fontWeight: 'bold' },
-  modalBtnRejectConfirm: { backgroundColor: '#FF4D4D' },
-  modalBtnApproveConfirm: { backgroundColor: '#00C853' },
-  modalBtnConfirmText: { color: '#FFF', fontSize: 16, fontWeight: 'bold' }
+  actionBtn: { paddingVertical: 6, paddingHorizontal: 14, borderRadius: 20, marginLeft: 10 },
+  rejectBtn: { backgroundColor: 'white', borderWidth: 1, borderColor: '#E11D48' },
+  rejectBtnText: { color: '#E11D48', fontSize: 13, fontWeight: 'bold' },
+  approveBtn: { backgroundColor: '#10B981' },
+  approveBtnText: { color: 'white', fontSize: 13, fontWeight: 'bold' },
+  deleteBtn: { backgroundColor: '#FFF1F2' },
+  deleteBtnText: { color: '#F43F5E', fontSize: 12, fontWeight: '600' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.2)', justifyContent: 'center', alignItems: 'center' },
+  alertContent: { backgroundColor: '#FFF', width: 380, padding: 25, borderRadius: 16, alignItems: 'center' },
+  alertTitle: { fontSize: 18, fontWeight: 'bold' },
+  modalButtonGroup: { flexDirection: 'row', marginTop: 15 },
+  modalBtn: { paddingVertical: 8, paddingHorizontal: 20, borderRadius: 6, marginHorizontal: 5 },
+  modalBtnCancel: { backgroundColor: '#E2E8F0' },
+  modalBtnCancelText: { color: '#475569' },
+
+  // 純白風格視窗樣式
+  whiteModalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.2)', justifyContent: 'center', alignItems: 'center' },
+  whiteModalContent: { backgroundColor: '#FFFFFF', width: 440, padding: 35, borderRadius: 20, borderWidth: 1, borderColor: '#E2E8F0' },
+  whiteModalTitle: { fontSize: 24, fontWeight: 'bold', color: '#0F172A', textAlign: 'center', marginBottom: 25, letterSpacing: 2 },
+  whiteInputBlock: { width: '100%', marginBottom: 15 },
+  whiteInputLabel: { fontSize: 16, fontWeight: '700', color: '#0F172A', marginBottom: 8 },
+  whiteBoxInput: { width: '100%', fontSize: 15, color: '#334155', borderWidth: 2, borderColor: '#000000', borderRadius: 4, paddingHorizontal: 12, paddingVertical: 8 },
+  whiteUnitRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  whiteUnderlineInput: { flex: 1, fontSize: 15, color: '#334155', borderBottomWidth: 1, borderBottomColor: '#94A3B8', paddingVertical: 4, marginRight: 15 },
+  capsuleToggleContainer: { flexDirection: 'row', width: 120, height: 32, borderWidth: 1, borderColor: '#94A3B8', borderRadius: 8, overflow: 'hidden' },
+  capsuleTab: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FFFFFF' },
+  capsuleTabActive: { backgroundColor: '#94A3B8' },
+  capsuleTabText: { fontSize: 13, fontWeight: '700', color: '#94A3B8' },
+  capsuleTabTextActive: { color: '#FFFFFF' },
+  whiteModalActionGroup: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 25 },
+  whiteRoundBtn: { flex: 1, height: 44, borderRadius: 30, justifyContent: 'center', alignItems: 'center', borderWidth: 1 },
+  whiteBtnCancel: { borderColor: '#000000', backgroundColor: '#FFFFFF', marginRight: 10 },
+  whiteBtnCancelText: { color: '#000000', fontSize: 16, fontWeight: 'bold' },
+  whiteBtnConfirm: { borderColor: '#0284C7', backgroundColor: '#0284C7', marginLeft: 10 },
+  whiteBtnConfirmText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' },
+  
+  // 防呆提示專用樣式
+  errorText: { color: '#E11D48', fontSize: 13, marginTop: 5, fontWeight: '500' },
+  inputErrorBorder: { borderColor: '#E11D48' },
+  inputErrorUnderline: { borderBottomColor: '#E11D48' }
 });
