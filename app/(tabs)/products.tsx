@@ -14,7 +14,7 @@ const pageLanguageConfig = {
   addButtonText: '+ 新 增',
   searchPlaceholder: '🔍   輸 入 商 品 名 稱',
   searchCancel: '取 消',
-  recentSearchLabel: '近 期 資 料', // 🌟 已修正：近期查詢 -> 近期資料
+  recentSearchLabel: '近 期 資 料', 
   calorieLabelPrefix: '熱量（',
   calorieLabelSuffix: ' 大卡）',
   deleteButtonText: '- 刪除',
@@ -55,9 +55,9 @@ const pageLanguageConfig = {
 };
 
 const initialProducts = [
-  { id: '1', name: '光泉 無糖豆漿 / 一瓶', calories: 120, status: 'approved' }, 
-  { id: '2', name: '統一 低脂鮮乳 / 一盒', calories: 150, status: 'approved' }, 
-  { id: '3', name: '茶葉蛋 / 一顆', calories: 75, status: 'approved' },  
+  { id: '1', name: '光泉 無糖豆漿', unit: '一瓶', calories: 120, status: 'approved' }, 
+  { id: '2', name: '統一 低脂鮮乳', unit: '一盒', calories: 150, status: 'approved' }, 
+  { id: '3', name: '茶葉蛋', unit: '一顆', calories: 75, status: 'approved' },  
 ];
 
 export default function ProductsScreen() {
@@ -79,6 +79,33 @@ export default function ProductsScreen() {
 
   const amountInputRef = useRef<TextInput>(null);
   const calorieInputRef = useRef<TextInput>(null);
+
+  // 🌟【核心防重複邏輯】：自動格式化並串接前台顯示的「品名與單位」
+  const formatDisplayInfo = (name: string, unit: string) => {
+    let cleanName = name ? name.trim() : '';
+    let cleanUnit = unit ? unit.trim() : '';
+
+    // 1. 如果名稱欄位裡已經包含了單位（例如：名稱叫 "火腿 / 20克" 或是 "大便 / 500克"）
+    if (cleanName.includes('/') || (cleanUnit && cleanName.includes(cleanUnit))) {
+      const parts = cleanName.split('/');
+      if (parts.length > 1) {
+        cleanName = parts[0].trim();
+      } else if (cleanUnit && cleanName.endsWith(cleanUnit)) {
+        cleanName = cleanName.substring(0, cleanName.length - cleanUnit.length).trim();
+      }
+    }
+
+    // 2. 針對單位欄位本身做去重
+    if (cleanUnit.includes('/')) {
+      const unitParts = cleanUnit.split('/');
+      if (unitParts[0].trim() === unitParts[1].trim()) {
+        cleanUnit = unitParts[0].trim();
+      }
+    }
+
+    // 3. 組合出完美的顯示外觀：如果有單位就加上斜線，沒有就只顯示品名
+    return cleanUnit ? `${cleanName} / ${cleanUnit}` : cleanName;
+  };
 
   // 載入與拉取快取資料
   const loadSavedProducts = async () => {
@@ -162,7 +189,7 @@ export default function ProductsScreen() {
         // 您的已通過商品
         baseList = products.filter(item => item.creatorId === currentUserId && item.status === 'approved');
       } else {
-        // 您的未通過商品（管理者按下拒絕，狀態改為 rejected 的資料會完美顯示在這裡）
+        // 您的未通過商品
         baseList = products.filter(item => item.creatorId === currentUserId && item.status === 'rejected');
       }
     }
@@ -258,39 +285,6 @@ export default function ProductsScreen() {
     } , 400);
   };
 
-  const handleDeleteProduct = (id: string, name: string, isRejected: boolean) => {
-    const alertTitle = isRejected ? txt.clearRejectedAlertTitle : txt.deleteAlertTitle;
-    
-    showCustomAlert(
-      alertTitle,
-      `商品：${name}`,
-      async () => {
-        try {
-          let currentGlobalProducts = [];
-          if (Platform.OS === 'web') {
-            const stored = localStorage.getItem('global_products');
-            currentGlobalProducts = stored ? JSON.parse(stored) : [];
-          } else {
-            const stored = await AsyncStorage.getItem('global_products');
-            currentGlobalProducts = stored ? JSON.parse(stored) : [];
-          }
-
-          const filteredGlobal = currentGlobalProducts.filter(item => item.id !== id);
-
-          if (Platform.OS === 'web') {
-            localStorage.setItem('global_products', JSON.stringify(filteredGlobal));
-          } else {
-            await AsyncStorage.setItem('global_products', JSON.stringify(filteredGlobal));
-          }
-
-          loadSavedProducts();
-        } catch (e) {
-          console.error('刪除商品失敗:', e);
-        }
-      }
-    );
-  };
-
   const displayProducts = getFilteredDisplayProducts();
 
   return (
@@ -325,7 +319,7 @@ export default function ProductsScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* 🌟 已修正：只有在 activeTab === 'list' 時才顯示新增功能，審核紀錄時不顯示 */}
+            {/* 只有在 activeTab === 'list' 時才顯示新增功能 */}
             {activeTab === 'list' && (
               <TouchableOpacity onPress={openAddModal}>
                 <Text style={styles.addText}>{txt.addButtonText}</Text>
@@ -374,7 +368,6 @@ export default function ProductsScreen() {
             )}
           </View>
 
-          {/* 🌟 文字已套用 txt.recentSearchLabel ("近期資料") */}
           <Text style={styles.recentText}>{txt.recentSearchLabel}</Text>
 
           {/* 📦 資料列表 */}
@@ -382,14 +375,14 @@ export default function ProductsScreen() {
             <ScrollView showsVerticalScrollIndicator={true} contentContainerStyle={styles.scrollListContent}>
               {displayProducts.map((item) => {
                 const isMyOwnProduct = item.creatorId === currentUserId;
-                const isRejected = item.status === 'rejected';
 
                 return (
                   <View key={item.id} style={styles.productRow}>
                     
                     <View style={styles.nameAndStatusWrapper}>
                       <Text style={styles.productName} numberOfLines={1}>
-                        {item.name}
+                        {/* 🌟 修正問題 2：調用智慧過濾，完美結合「商品名稱 / 單位」，並阻絕重複現象 */}
+                        {formatDisplayInfo(item.name, item.unit)}
                         {activeTab === 'list' && isMyOwnProduct && item.status === 'pending' && (
                           <Text style={styles.pendingStatusTag}>{txt.statusPending}</Text>
                         )}
@@ -400,12 +393,7 @@ export default function ProductsScreen() {
                       {txt.calorieLabelPrefix}{item.calories}{txt.calorieLabelSuffix}
                     </Text>
                     
-                    {/* 按鈕樣式在未通過分頁自動替換為紅色確認 */}
-                    <TouchableOpacity onPress={() => handleDeleteProduct(item.id, item.name, isRejected)}>
-                      <Text style={isRejected ? styles.confirmDeleteText : styles.deleteText}>
-                        {isRejected ? txt.confirmDeleteButtonText : txt.deleteButtonText}
-                      </Text>
-                    </TouchableOpacity>
+                    {/* 🌟 修正問題 1：此處原本的「- 刪除 / 確認並刪除」按鈕元件已完全移除，杜絕使用者刪除商品的權限 */}
                   </View>
                 );
               })}
@@ -538,10 +526,7 @@ const styles = StyleSheet.create({
   productName: { fontSize: 16, color: '#333', fontWeight: '500' },
   pendingStatusTag: { fontSize: 14, color: '#E67E22', fontWeight: '500' }, 
 
-  productCalorie: { flex: 1.5, fontSize: 15, color: '#888', textAlign: 'center' },
-  
-  deleteText: { flex: 0.5, fontSize: 15, color: '#4A90E2', fontWeight: 'bold', textAlign: 'right' },
-  confirmDeleteText: { flex: 0.9, fontSize: 14, color: '#C0392B', fontWeight: 'bold', textAlign: 'right' }, 
+  productCalorie: { flex: 1.5, fontSize: 15, color: '#888', textAlign: 'right', paddingRight: 10 },
 
   emptyText: { textAlign: 'center', color: '#999', marginTop: 30, fontSize: 15 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
