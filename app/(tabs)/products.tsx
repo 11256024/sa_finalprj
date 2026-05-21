@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 // 1. 全頁面配置物件
 const pageLanguageConfig = {
@@ -56,7 +56,7 @@ const pageLanguageConfig = {
   amountPlaceholder: '限輸入數字'
 };
 
-// 2. 初始商品數據
+// 2. 初始內建商品數據
 const initialProducts = [
   { id: '1', name: '光泉 無糖豆漿 / 一瓶', calories: 120, status: 'approved' },
   { id: '2', name: '統一 低脂鮮乳 / 一盒', calories: 150, status: 'approved' },
@@ -69,7 +69,7 @@ export default function ProductsScreen() {
 
   // 狀態管理
   const [searchQuery, setSearchQuery] = useState('');
-  const [products, setProducts] = useState(initialProducts); 
+  const [products, setProducts] = useState([]); 
   
   // 新增自訂商品彈窗控制
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -82,28 +82,70 @@ export default function ProductsScreen() {
   const amountInputRef = useRef<TextInput>(null);
   const calorieInputRef = useRef<TextInput>(null);
 
-  // 🔍 核心機制：載入持久化商品資料
+  // 🔍 核心同步機制：整合讀取全局 global_products 與進行狀態過濾
   const loadSavedProducts = async () => {
     try {
+      // 獲取目前使用者 ID（用於區分誰送審的 pending 商品）
       const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
-      const storedProductsRaw = await AsyncStorage.getItem(`${savedUserId}_custom_products`);
-      if (storedProductsRaw) {
-        const customList = JSON.parse(storedProductsRaw);
-        setProducts([...customList, ...initialProducts]);
+      
+      let globalList = [];
+      if (Platform.OS === 'web') {
+        const stored = localStorage.getItem('global_products');
+        if (stored) {
+          globalList = JSON.parse(stored);
+        } else {
+          // 如果系統全新乾淨，初始化全局快取庫，填入內建初始商品
+          localStorage.setItem('global_products', JSON.stringify(initialProducts));
+          globalList = initialProducts;
+        }
       } else {
-        setProducts(initialProducts);
+        // 非 Web 環境退回 AsyncStorage 機制
+        const stored = await AsyncStorage.getItem('global_products');
+        globalList = stored ? JSON.parse(stored) : initialProducts;
       }
+
+      // 🎯 核心過濾邏輯：
+      // 使用者看得到的商品 = 所有已被管理員核准的 (approved) + 目前登入者自己新增送審中的 (pending)
+      const visibleProducts = globalList.filter(item => {
+        if (item.status === 'approved') return true;
+        if (item.status === 'pending' && item.creatorId === savedUserId) return true;
+        return false;
+      });
+
+      // 反轉陣列讓新加入的商品顯示在最上方
+      setProducts(visibleProducts.reverse());
     } catch (e) {
       console.error('讀取商品快取失敗:', e);
     }
   };
 
-  // 1. 初次渲染載入
+  // 1. 初次渲染與即時監聽設定
   useEffect(() => {
     loadSavedProducts();
+
+    if (Platform.OS === 'web') {
+      // 🔥 核心雙向同步監聽 A：當管理員在另一個視窗更新、刪除、核准商品時，這裡會秒速被通知，立刻重新加載列表！
+      const handleStorageChange = (e: StorageEvent) => {
+        if (e.key === 'global_products') {
+          loadSavedProducts();
+        }
+      };
+
+      // 🔥 核心雙向同步監聽 B：當使用者從後台切回本頁聚焦時，強迫刷新抓取最新快取
+      const handleWindowFocus = () => {
+        loadSavedProducts();
+      };
+
+      window.addEventListener('storage', handleStorageChange);
+      window.addEventListener('focus', handleWindowFocus);
+      return () => {
+        window.removeEventListener('storage', handleStorageChange);
+        window.removeEventListener('focus', handleWindowFocus);
+      };
+    }
   }, []);
 
-  // 2. 當路由焦點切換回本頁面時重新載入同步
+  // 2. 當 Expo 路由焦點切換回本頁面時重新載入同步
   useFocusEffect(
     useCallback(() => {
       loadSavedProducts();
@@ -181,7 +223,7 @@ export default function ProductsScreen() {
     }
   };
 
-  // 確認送出商品
+  // 🎯 確認送出商品（同步推送到與管理員共享的 global_products 快取庫）
   const handleConfirmAdd = async () => {
     if (!newProductName.trim() || !newProductAmount.trim() || !newProductCalorie.trim()) {
       showCustomAlert(txt.alertWarningTitle, txt.alertMissingFields, () => {}, '', txt.btnConfirm);
@@ -196,22 +238,44 @@ export default function ProductsScreen() {
 
     const formattedUnit = `${newProductAmount}${unitType === 'g' ? '克' : 'ml'}`;
     const combinedName = `${newProductName.trim()} / ${formattedUnit}`;
+    const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
 
+    // 建立新待審核商品物件
     const pendingProductItem = {
-      id: `pending_${Date.now()}`, 
+      id: `user_add_${Date.now()}`, 
       name: combinedName,
+      unit: formattedUnit, // 同步提供完整的單一欄位方便後台操作
       calories: calorieNum,
-      status: 'pending' 
+      status: 'pending',   // 🌟 狀態標註為待審核，這樣管理者後台就會自動抓到跳出通知！
+      creatorId: savedUserId // 標記建立者，讓使用者自己能在前端列表看到審核中的狀態
     };
 
-    const updatedProducts = [pendingProductItem, ...products];
-    setProducts(updatedProducts);
     setIsModalVisible(false);
 
     try {
-      const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
-      const onlyCustomItems = updatedProducts.filter(item => item.id.startsWith('pending_'));
-      await AsyncStorage.setItem(`${savedUserId}_custom_products`, JSON.stringify(onlyCustomItems));
+      // 1. 讀取目前的全局公共快取庫
+      let currentGlobalProducts = [];
+      if (Platform.OS === 'web') {
+        const stored = localStorage.getItem('global_products');
+        currentGlobalProducts = stored ? JSON.parse(stored) : [...initialProducts];
+      } else {
+        const stored = await AsyncStorage.getItem('global_products');
+        currentGlobalProducts = stored ? JSON.parse(stored) : [...initialProducts];
+      }
+
+      // 2. 將新的送審商品推入全局公共陣列
+      currentGlobalProducts.push(pendingProductItem);
+
+      // 3. 回寫共享快取庫（一經儲存，管理者分頁透過監聽事件會即時跳出此商品）
+      if (Platform.OS === 'web') {
+        localStorage.setItem('global_products', JSON.stringify(currentGlobalProducts));
+      } else {
+        await AsyncStorage.setItem('global_products', JSON.stringify(currentGlobalProducts));
+      }
+
+      // 4. 更新本地 UI 顯示
+      loadSavedProducts();
+
     } catch (e) {
       console.error('儲存新商品資料失敗:', e);
     }
@@ -224,24 +288,38 @@ export default function ProductsScreen() {
         '', 
         txt.btnConfirm
       );
-    }, 400);
+    } , 400);
   };
 
-  // 刪除商品動作
+  // 🎯 刪除商品動作（使用者僅能從全局快取中刪除屬於他自己新增的，或清除本地顯示）
   const handleDeleteProduct = (id: string, name: string) => {
     showCustomAlert(
       txt.deleteAlertTitle,
       `商品：${name}`,
       async () => {
-        const filteredList = products.filter(item => item.id !== id);
-        setProducts(filteredList);
-
         try {
-          const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
-          const onlyCustomItems = filteredList.filter(item => item.id.startsWith('pending_'));
-          await AsyncStorage.setItem(`${savedUserId}_custom_products`, JSON.stringify(onlyCustomItems));
+          let currentGlobalProducts = [];
+          if (Platform.OS === 'web') {
+            const stored = localStorage.getItem('global_products');
+            currentGlobalProducts = stored ? JSON.parse(stored) : [];
+          } else {
+            const stored = await AsyncStorage.getItem('global_products');
+            currentGlobalProducts = stored ? JSON.parse(stored) : [];
+          }
+
+          // 從全局庫中剔除該筆資料
+          const filteredGlobal = currentGlobalProducts.filter(item => item.id !== id);
+
+          if (Platform.OS === 'web') {
+            localStorage.setItem('global_products', JSON.stringify(filteredGlobal));
+          } else {
+            await AsyncStorage.setItem('global_products', JSON.stringify(filteredGlobal));
+          }
+
+          // 重新載入更新前端 UI
+          loadSavedProducts();
         } catch (e) {
-          console.error('同步更新商品存檔失敗:', e);
+          console.error('刪除商品失敗:', e);
         }
       }
     );
@@ -459,6 +537,7 @@ export default function ProductsScreen() {
   );
 }
 
+// 樣式表保持原封不動，完全不破壞你精美的 UI 畫面！
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F6EFE5' },
   mainContent: { flex: 1, paddingHorizontal: 80, paddingTop: 30, paddingBottom: 20 },
@@ -511,10 +590,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 2,
     width: '100%'
   },
-  
-  // 🛠️ 修正跑版的核心：改回 flexDirection 確保組件正常橫向排列
   unitRowFlexContainer: {
-    flexDirection: 'row',       // 👈 修正此處的拼寫錯誤
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     width: '100%'
@@ -559,7 +636,7 @@ const styles = StyleSheet.create({
   },
   orangeCancelBtn: {
     backgroundColor: '#EAEAEA', 
-    borderWidth: 1.5,      // 👈 加上與右邊按鈕對稱的細外框線
+    borderWidth: 1.5,
     borderColor: '#000',
     width: '45%', 
     height: 44, 

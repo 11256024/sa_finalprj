@@ -51,17 +51,26 @@ export default function LoginScreen() {
     setShowError(false);
     
     try {
+      // 🔓 🎯 核心修改：判斷是否為管理員帳密 (admin / Admin123)
+      if (username.trim() === 'admin' && password === 'Admin123') {
+        if (Platform.OS === 'web') {
+          // 寫入管理員登入狀態快取，供後台頁面做安全權限檢查
+          localStorage.setItem('admin_logged_in', 'true');
+        }
+        setIsLoggedIn(true);
+        // 導向你的管理者審核後台路徑
+        router.replace('/admin-review'); 
+        return;
+      }
+
+      // --- 以下為一般會員的登入處理邏輯 ---
       // 登入成功時，將最新的帳號與密碼寫入快取，讓 Profile 頁面讀取
       await AsyncStorage.setItem('account', username.trim());
       await AsyncStorage.setItem('password', password);
       
       setIsLoggedIn(true);
-
-      if (username.trim() === 'admin' && password === 'Admin123!') {
-        router.replace('/admin-review'); 
-      } else {
-        router.replace('/profile'); 
-      }
+      router.replace('/profile'); 
+      
     } catch (e) {
       console.error('儲存登入帳密快取失敗', e);
     }
@@ -72,6 +81,9 @@ export default function LoginScreen() {
     setIsLoggedIn(false);         
     setUsername('');              
     setPassword('');
+    if (Platform.OS === 'web') {
+      localStorage.removeItem('admin_logged_in');
+    }
     setLogoutModalVisible(false); 
   };
 
