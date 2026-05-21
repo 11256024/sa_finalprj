@@ -20,7 +20,7 @@ export default function BodyMetricsScreen() {
   // 用來記錄同步進來的有效值（比對顏色用）
   const [initialProfile, setInitialProfile] = useState<{gender?: string, age?: string, height?: string, weight?: string} | null>(null);
 
-  // 🛠️ 客製化美化彈窗控制狀態（這裡保持原結構不變，確保不破壞原功能）
+  // 🛠️ 客製化美化彈窗控制狀態
   const [customAlert, setCustomAlert] = useState<{
     visible: boolean;
     title: string;
@@ -49,16 +49,15 @@ export default function BodyMetricsScreen() {
     return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   };
 
-  // 🛠️ 核心修正：將原本傳進來的訊息，直接指派給 title，將 message 留空
   const showAlert = (message: string) => {
     setCustomAlert({
       visible: true,
-      title: message, // 讓內容文字直接以標題的大字呈現
-      message: ''     // 原本的內文區塊留空
+      title: message, 
+      message: ''     
     });
   };
 
-  // 🔄 核心清洗與解析函式（體重嚴格鎖定每日紀錄檔）
+  // 🔄 核心清洗與解析函式
   const parseAndCleanProfile = (
     userProfileRaw: string | null, 
     todayFoodWeight: string, 
@@ -69,19 +68,16 @@ export default function BodyMetricsScreen() {
       try { savedProfile = JSON.parse(userProfileRaw); } catch (e) {}
     }
 
-    // 1. 身高抓取
     let rawHeight = scannedHeight || savedProfile?.height || '';
     let cleanHeight = (rawHeight === '請選擇身高' || !rawHeight || rawHeight.toString().includes('請選擇')) 
       ? '' 
       : rawHeight.toString().replace(/[^0-9.]/g, '').trim();
 
-    // 2. 體重抓取
     let rawWeight = todayFoodWeight; 
     let cleanWeight = (rawWeight === '請選擇體重' || !rawWeight || rawWeight.toString().includes('請選擇')) 
       ? '' 
       : rawWeight.toString().replace(/[^0-9.]/g, '').trim(); 
 
-    // 安全攔截機制門檻同步調整為 30 ~ 200 kg
     const parsedWeight = parseFloat(cleanWeight);
     if (cleanWeight.includes('{') || isNaN(parsedWeight) || parsedWeight > 200 || parsedWeight < 30) {
       cleanWeight = ''; 
@@ -89,11 +85,9 @@ export default function BodyMetricsScreen() {
       cleanWeight = Math.round(parsedWeight).toString();
     }
 
-    // 3. 性別解析
     let rawGender = savedProfile?.gender || '';
     let cleanGender = (rawGender === '請選擇性別' || !rawGender || rawGender.toString().includes('請選擇')) ? '' : rawGender.trim();
 
-    // 4. 年齡解析
     let finalAge = '';
     let isZeroAge = false;
 
@@ -129,7 +123,6 @@ export default function BodyMetricsScreen() {
         try {
           const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
 
-          // 身高搜查
           let scannedHeight = '';
           const possibleHeightKeys = [
             `${savedUserId}_user_height`,
@@ -147,7 +140,6 @@ export default function BodyMetricsScreen() {
             }
           }
 
-          // 撈取當天紀錄檔體重
           let todayWeight = '';
           const todayFoodKey = `${savedUserId}_food_record_${getTodayDateString()}`;
           const backupFoodKey = `food_record_${getTodayDateString()}`;
@@ -174,6 +166,7 @@ export default function BodyMetricsScreen() {
               age: finalAge,
               height: cleanHeight,
               weight: cleanWeight,
+              isCalculated: false // 自動載入時維持未計算熱量狀態
             }));
           }
 
@@ -249,6 +242,7 @@ export default function BodyMetricsScreen() {
           age: '', 
           height: cleanHeight,
           weight: cleanWeight,
+          isCalculated: false
         }));
         return; 
       }
@@ -260,6 +254,7 @@ export default function BodyMetricsScreen() {
         age: finalAge,
         height: cleanHeight,
         weight: cleanWeight,
+        isCalculated: false // 同步成功後重置為未計算熱量狀態，促使使用者點擊計算
       }));
 
       showAlert('✨ 指數與會員資料同步成功！');
@@ -269,9 +264,9 @@ export default function BodyMetricsScreen() {
     }
   };
 
-  // 📊 自動計算監聽器
+  // 📊 【即時更新】僅自動計算與監聽 BMI
   useEffect(() => {
-    const { gender, age, height, weight } = metricsData;
+    const { height, weight } = metricsData;
 
     let currentBmi = '---';
     let currentBmiStatus = '';
@@ -286,32 +281,17 @@ export default function BodyMetricsScreen() {
       currentBmiStatus = getBmiStatusText(parseFloat(bmiCalc));
     }
 
-    const ageNum = parseInt(age);
-    if (!gender || !age || isNaN(heightNum) || heightNum <= 0 || isNaN(weightNum) || weightNum <= 0 || isNaN(ageNum) || ageNum <= 0) {
-      setMetricsData(prev => ({
-        ...prev,
-        bmi: currentBmi,
-        bmiStatus: currentBmiStatus,
-        bmrValue: 0,
-        isCalculated: false
-      }));
-      return;
-    }
-
-    let bmr = 10 * weightNum + 6.25 * heightNum - 5 * ageNum;
-    if (gender === '男') bmr += 5;
-    else if (gender === '女') bmr -= 161;
-
+    // 只要有任何資料改動，BMR 與 TDEE 就重置為「未計算狀態」
     setMetricsData(prev => ({
       ...prev,
       bmi: currentBmi,
       bmiStatus: currentBmiStatus,
-      bmrValue: Math.round(bmr),
-      isCalculated: true
+      isCalculated: false
     }));
 
   }, [metricsData.gender, metricsData.age, metricsData.height, metricsData.weight]);
 
+  // 🎯 手動觸發熱量計算邏輯（點擊重新計算熱量時觸發）
   const handleManualCalculate = () => {
     const { gender, age, height, weight } = metricsData;
     
@@ -324,11 +304,28 @@ export default function BodyMetricsScreen() {
       showAlert('請至少填寫身高與體重以計算 BMI！');
       return;
     }
-    if (!gender || !age) {
+
+    const heightNum = parseFloat(height);
+    const weightNum = parseFloat(weight);
+    const ageNum = parseInt(age);
+
+    if (!gender || !age || isNaN(heightNum) || heightNum <= 0 || isNaN(weightNum) || weightNum <= 0 || isNaN(ageNum) || ageNum <= 0) {
       showAlert('✨ BMI 指數已即時更新！\n(填寫完整的性別與年齡可進一步計算 BMR 與 TDEE)');
       return;
     }
-    showAlert('✨ 熱量已即時更新至最新狀態！');
+
+    // 執行 BMR 的實質公式計算
+    let bmr = 10 * weightNum + 6.25 * heightNum - 5 * ageNum;
+    if (gender === '男') bmr += 5;
+    else if (gender === '女') bmr -= 161;
+
+    setMetricsData(prev => ({
+      ...prev,
+      bmrValue: Math.round(bmr),
+      isCalculated: true
+    }));
+
+    showAlert('✨ 熱量已更新至最新狀態！');
   };
 
   const tdeeItems = [
@@ -402,7 +399,7 @@ export default function BodyMetricsScreen() {
 
                 {/* 年齡 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>年       齡</Text>
+                  <Text style={styles.bmrLabel}>年       齡</Text>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.age}
@@ -444,7 +441,7 @@ export default function BodyMetricsScreen() {
 
                 {/* 身高 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>身       高</Text>
+                  <Text style={styles.bmrLabel}>身       高</Text>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.height}
@@ -471,7 +468,7 @@ export default function BodyMetricsScreen() {
 
                 {/* 體重 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>體       重</Text>
+                  <Text style={styles.bmrLabel}>體       重</Text>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.weight}
@@ -498,7 +495,7 @@ export default function BodyMetricsScreen() {
 
                 {/* BMI */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>B  M  I</Text>
+                  <Text style={styles.bmrLabel}>B  M  I</Text>
                   <Text style={[styles.bmrValueText, hasBmiDisplay && styles.darkValueText]}>
                     {hasBmiDisplay ? metricsData.bmi : '---'} {(metricsData.bmiStatus && hasBmiDisplay) ? `(${metricsData.bmiStatus})` : ''}
                   </Text>
@@ -546,7 +543,7 @@ export default function BodyMetricsScreen() {
                     <Text style={styles.activityTitle}>{item.title}</Text>
                     <Text style={styles.activitySub}>{item.sub}</Text>
                     <Text style={styles.formulaText}>
-                      {item.label} = {isCalculated && <Text style={styles.orangeHighlight}>{finalTdeeValue}</Text>}
+                      {item.label} = {isCalculated ? <Text style={styles.orangeHighlight}>{finalTdeeValue}</Text> : ''}
                     </Text>
                   </View>
                 );
@@ -557,7 +554,7 @@ export default function BodyMetricsScreen() {
         </View>
       </View>
 
-      {/* 💡 🛠️ 全新客製化美化提示彈窗 */}
+      {/* 客製化美化提示彈窗 */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -566,16 +563,10 @@ export default function BodyMetricsScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.alertContentBox}>
-            
-            {/* 標題區：現在這裡直接顯示提示訊息的大字，看起來大方且直覺 */}
             <Text style={styles.alertTitleText}>{customAlert.title}</Text>
-            
-            {/* 提示內文訊息區：若為空字串，則不渲染此組件與 margin 空間，避免畫面突兀 */}
             {customAlert.message !== '' && (
               <Text style={styles.alertMessageText}>{customAlert.message}</Text>
             )}
-            
-            {/* 下方「確認」操作按鈕區 */}
             <View style={styles.modalSingleButtonWrapper}>
               <TouchableOpacity 
                 activeOpacity={0.8}
@@ -585,7 +576,6 @@ export default function BodyMetricsScreen() {
                 <Text style={styles.alertConfirmActionBtnText}>確定</Text>
               </TouchableOpacity>
             </View>
-
           </View>
         </View>
       </Modal>
@@ -629,10 +619,6 @@ const styles = StyleSheet.create({
   formulaText: { fontSize: 24, color: '#333', textAlign: 'center' },
   grayHighlight: { color: '#DCDCDC', fontWeight: '500' }, 
   orangeHighlight: { color: '#F3B07E', fontWeight: 'bold' },
-
-  // ==========================================
-  // 🛠️ 專屬全新客製化美化提示彈窗樣式系統
-  // ==========================================
   modalOverlay: { 
     flex: 1, 
     backgroundColor: 'rgba(0,0,0,0.4)',  
@@ -641,9 +627,9 @@ const styles = StyleSheet.create({
   },
   alertContentBox: { 
     backgroundColor: '#FFF',              
-    width: 360,                           
+    width: 360,                                           
     paddingHorizontal: 25,
-    paddingTop: 35, // 稍微拉大上方間距，讓單行文字更具置中感
+    paddingTop: 35, 
     paddingBottom: 25,
     borderRadius: 24,                     
     alignItems: 'center',
@@ -654,10 +640,10 @@ const styles = StyleSheet.create({
     elevation: 8 
   },
   alertTitleText: { 
-    fontSize: 18, // 稍微調小 2 級，讓長訊息當標題時不容易折行，更顯精緻
+    fontSize: 18, 
     fontWeight: 'bold', 
     color: '#333', 
-    marginBottom: 26, // 由於沒有內文了，直接拉大標題與按鈕的間距
+    marginBottom: 26, 
     textAlign: 'center',
     letterSpacing: 0.5,
     lineHeight: 26
@@ -679,7 +665,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFAA77',           
     borderWidth: 1.5,                     
     borderColor: '#000',
-    width: '80%',                         
+    width: '80%',                                         
     height: 44, 
     borderRadius: 22,                     
     justifyContent: 'center', 
