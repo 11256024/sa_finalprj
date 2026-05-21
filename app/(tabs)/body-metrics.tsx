@@ -1,7 +1,19 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
-import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
+} from 'react-native';
 
 export default function BodyMetricsScreen() {
 
@@ -30,6 +42,12 @@ export default function BodyMetricsScreen() {
     title: '',
     message: ''
   });
+
+  // 📜 右側 TDEE 模擬捲動軸狀態管理
+  const scrollRef = useRef<ScrollView>(null);
+  const [contentHeight, setContentHeight] = useState(1);
+  const [containerHeight, setContainerHeight] = useState(1);
+  const [scrollY, setScrollY] = useState(0);
 
   // 下拉選單項目定義
   const genderOptions = ['', '男', '女'];
@@ -361,6 +379,25 @@ export default function BodyMetricsScreen() {
   const hasBmiDisplay = metricsData.height !== '' && metricsData.weight !== '';
   const hasFullDisplay = metricsData.gender !== '' && metricsData.age !== '' && metricsData.height !== '' && metricsData.weight !== '';
 
+  // 🧮 計算客製化捲動滑塊的位置與高度
+  const scrollbarTrackHeight = containerHeight - 40; // 扣除上下箭頭高度的軌道總長
+  const scrollableHeight = contentHeight - containerHeight;
+  
+  // 避免分母為 0
+  const thumbHeight = Math.max(
+    30, 
+    scrollableHeight > 0 ? (containerHeight / contentHeight) * scrollbarTrackHeight : scrollbarTrackHeight
+  );
+  
+  const thumbTop = scrollableHeight > 0 
+    ? (scrollY / scrollableHeight) * (scrollbarTrackHeight - thumbHeight) 
+    : 0;
+
+  // 監聽實際捲動事件
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    setScrollY(event.nativeEvent.contentOffset.y);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
@@ -399,7 +436,7 @@ export default function BodyMetricsScreen() {
 
                 {/* 年齡 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>年       齡</Text>
+                  <Text style={styles.bmrLabel}>年       齡</Text>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.age}
@@ -441,7 +478,7 @@ export default function BodyMetricsScreen() {
 
                 {/* 身高 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>身       高</Text>
+                  <Text style={styles.bmrLabel}>身       高</Text>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.height}
@@ -468,7 +505,7 @@ export default function BodyMetricsScreen() {
 
                 {/* 體重 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>體       重</Text>
+                  <Text style={styles.bmrLabel}>體       重</Text>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.weight}
@@ -495,7 +532,7 @@ export default function BodyMetricsScreen() {
 
                 {/* BMI */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>B  M  I</Text>
+                  <Text style={styles.bmrLabel}>B  M  I</Text>
                   <Text style={[styles.bmrValueText, hasBmiDisplay && styles.darkValueText]}>
                     {hasBmiDisplay ? metricsData.bmi : '---'} {(metricsData.bmiStatus && hasBmiDisplay) ? `(${metricsData.bmiStatus})` : ''}
                   </Text>
@@ -511,7 +548,7 @@ export default function BodyMetricsScreen() {
 
               <View style={styles.buttonContainer}>
                 <TouchableOpacity style={styles.calculateButton} onPress={handleManualCalculate}>
-                  <Text style={styles.calculateButtonText}>重新計算熱量</Text>
+                  <Text style={styles.calculateButtonText}>計算熱量</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={[styles.calculateButton, { backgroundColor: '#1A91DA' }]} onPress={loadSyncProfileData}>
@@ -531,24 +568,71 @@ export default function BodyMetricsScreen() {
               <Text style={styles.tdeeDesc}>人體一整天下來消耗的總熱量</Text>
             </View>
 
-            <ScrollView style={styles.tdeeScrollArea} contentContainerStyle={styles.tdeeItemsContainer} showsVerticalScrollIndicator={false}>
-              {tdeeItems.map((item) => {
-                const isCalculated = metricsData.isCalculated && hasFullDisplay;
-                const finalTdeeValue = isCalculated 
-                  ? `${Math.round(metricsData.bmrValue * item.multiplier)} kcal`
-                  : '';
+            {/* 外層包覆：提供側邊客製化滾動軸擺放的排版空間 */}
+            <View 
+              style={styles.scrollWrapper}
+              onLayout={(e) => setContainerHeight(e.nativeEvent.layout.height)}
+            >
+              <ScrollView 
+                ref={scrollRef}
+                style={styles.tdeeScrollArea} 
+                contentContainerStyle={styles.tdeeItemsContainer} 
+                showsVerticalScrollIndicator={false}
+                scrollEventThrottle={16}
+                onScroll={handleScroll}
+                onContentSizeChange={(_, height) => setContentHeight(height)}
+              >
+                {tdeeItems.map((item) => {
+                  const isCalculated = metricsData.isCalculated && hasFullDisplay;
+                  const finalTdeeValue = isCalculated 
+                    ? `${Math.round(metricsData.bmrValue * item.multiplier)} kcal`
+                    : '';
 
-                return (
-                  <View key={item.id} style={styles.tdeeItemBox}>
-                    <Text style={styles.activityTitle}>{item.title}</Text>
-                    <Text style={styles.activitySub}>{item.sub}</Text>
-                    <Text style={styles.formulaText}>
-                      {item.label} = {isCalculated ? <Text style={styles.orangeHighlight}>{finalTdeeValue}</Text> : ''}
-                    </Text>
-                  </View>
-                );
-              })}
-            </ScrollView>
+                  return (
+                    <View key={item.id} style={styles.tdeeItemBox}>
+                      <Text style={styles.activityTitle}>{item.title}</Text>
+                      <Text style={styles.activitySub}>{item.sub}</Text>
+                      <Text style={styles.formulaText}>
+                        {item.label} = {isCalculated ? <Text style={styles.orangeHighlight}>{finalTdeeValue}</Text> : ''}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+
+              {/* 🛠️ 客製化側邊滾動條元組 (依據截圖樣式繪製) */}
+              <View style={styles.customScrollbarContainer}>
+                {/* 上箭頭 */}
+                <TouchableOpacity 
+                  onPress={() => scrollRef.current?.scrollTo({ y: Math.max(0, scrollY - 80), animated: true })}
+                  style={styles.arrowButton}
+                >
+                  <Text style={styles.arrowText}>▲</Text>
+                </TouchableOpacity>
+
+                {/* 中間滾動軌道與滑塊 */}
+                <View style={styles.scrollbarTrack}>
+                  <View 
+                    style={[
+                      styles.scrollbarThumb, 
+                      { 
+                        height: thumbHeight, 
+                        transform: [{ translateY: thumbTop }] 
+                      }
+                    ]} 
+                  />
+                </View>
+
+                {/* 下箭頭 */}
+                <TouchableOpacity 
+                  onPress={() => scrollRef.current?.scrollTo({ y: Math.min(contentHeight - containerHeight, scrollY + 80), animated: true })}
+                  style={styles.arrowButton}
+                >
+                  <Text style={styles.arrowText}>▼</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
           </View>
 
         </View>
@@ -605,13 +689,18 @@ const styles = StyleSheet.create({
   buttonContainer: { gap: 8 },
   calculateButton: { backgroundColor: '#E28743', borderRadius: 20, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
   calculateButtonText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
+  
+  // TDEE 區排版
   tdeeSection: { flex: 1, marginLeft: 25, display: 'flex', flexDirection: 'column' },
   tdeeTitleBox: { backgroundColor: 'white', borderRadius: 30, paddingHorizontal: 35, paddingVertical: 25, marginBottom: 16 },
   tdeeMainHeader: { flexDirection: 'row', alignItems: 'baseline', marginBottom: 10 },
   tdeeTitle: { fontSize: 42, fontWeight: 'bold', color: '#333', marginRight: 10 },
   tdeeSubTitle: { fontSize: 22, fontWeight: 'bold', color: '#333' },
   tdeeDesc: { fontSize: 18, color: '#F3B07E', fontWeight: '500' },
-  tdeeScrollArea: { flex: 1, width: '100%' },
+  
+  // 捲動區域容器
+  scrollWrapper: { flex: 1, flexDirection: 'row', position: 'relative' },
+  tdeeScrollArea: { flex: 1, marginRight: 24 }, // 右邊留白給捲動軸
   tdeeItemsContainer: { paddingBottom: 10 },
   tdeeItemBox: { backgroundColor: 'white', borderRadius: 30, paddingHorizontal: 35, paddingVertical: 22, marginBottom: 16 },
   activityTitle: { fontSize: 22, fontWeight: 'bold', color: '#333', textAlign: 'center', marginBottom: 6 },
@@ -619,6 +708,48 @@ const styles = StyleSheet.create({
   formulaText: { fontSize: 24, color: '#333', textAlign: 'center' },
   grayHighlight: { color: '#DCDCDC', fontWeight: '500' }, 
   orangeHighlight: { color: '#F3B07E', fontWeight: 'bold' },
+
+  // 🛠️ 客製化捲動軸 UI 樣式系統
+  customScrollbarContainer: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 16,
+    backgroundColor: '#F5F5F5', // 淺灰底色滑道
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: '#EAEAEA'
+  },
+  arrowButton: {
+    width: 14,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  arrowText: {
+    fontSize: 9,
+    color: '#8E8E93',
+    fontWeight: 'bold'
+  },
+  scrollbarTrack: {
+    flex: 1,
+    width: '100%',
+    position: 'relative',
+    marginVertical: 2,
+  },
+  scrollbarThumb: {
+    position: 'absolute',
+    width: 10,
+    left: 2,
+    backgroundColor: '#8E8E93', // 灰色的長條形滑塊
+    borderRadius: 5,
+  },
+
+  // 彈窗樣式
   modalOverlay: { 
     flex: 1, 
     backgroundColor: 'rgba(0,0,0,0.4)',  
@@ -627,7 +758,7 @@ const styles = StyleSheet.create({
   },
   alertContentBox: { 
     backgroundColor: '#FFF',              
-    width: 360,                                           
+    width: 360,                                                                   
     paddingHorizontal: 25,
     paddingTop: 35, 
     paddingBottom: 25,
@@ -665,7 +796,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFAA77',           
     borderWidth: 1.5,                     
     borderColor: '#000',
-    width: '80%',                                         
+    width: '80%',                                                                
     height: 44, 
     borderRadius: 22,                     
     justifyContent: 'center', 
