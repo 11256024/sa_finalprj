@@ -76,57 +76,85 @@ export default function BodyMetricsScreen() {
   };
 
   // 🔄 核心清洗與解析函式
+  // 規則：性別、年齡、身高一律用會員中心；體重每日紀錄優先，沒有才用會員中心
   const parseAndCleanProfile = (
-    userProfileRaw: string | null, 
-    todayFoodWeight: string, 
-    scannedHeight: string
+    userProfileRaw: string | null,
+    dailyRecordWeight: string,
+    scannedHeight: string,
+    scannedWeight: string
   ) => {
     let savedProfile: any = null;
+
     if (userProfileRaw) {
-      try { savedProfile = JSON.parse(userProfileRaw); } catch (e) {}
+      try {
+        savedProfile = JSON.parse(userProfileRaw);
+      } catch (e) {}
     }
 
-    let rawHeight = scannedHeight || savedProfile?.height || '';
-    let cleanHeight = (rawHeight === '請選擇身高' || !rawHeight || rawHeight.toString().includes('請選擇')) 
-      ? '' 
-      : rawHeight.toString().replace(/[^0-9.]/g, '').trim();
+    const cleanNumberString = (value: any) => {
+      if (value === undefined || value === null) return '';
+      const raw = value.toString().trim();
+      if (!raw || raw.includes('請選擇')) return '';
+      return raw.replace(/[^0-9.]/g, '').trim();
+    };
 
-    let rawWeight = todayFoodWeight; 
-    let cleanWeight = (rawWeight === '請選擇體重' || !rawWeight || rawWeight.toString().includes('請選擇')) 
-      ? '' 
-      : rawWeight.toString().replace(/[^0-9.]/g, '').trim(); 
+    const cleanHeightValue = (value: any) => {
+      const cleaned = cleanNumberString(value);
+      const heightNum = parseFloat(cleaned);
+      if (!cleaned || isNaN(heightNum) || heightNum < 100 || heightNum > 250) return '';
+      return Math.round(heightNum).toString();
+    };
 
-    const parsedWeight = parseFloat(cleanWeight);
-    if (cleanWeight.includes('{') || isNaN(parsedWeight) || parsedWeight > 200 || parsedWeight < 30) {
-      cleanWeight = ''; 
-    } else {
-      cleanWeight = Math.round(parsedWeight).toString();
-    }
+    const cleanWeightValue = (value: any) => {
+      const cleaned = cleanNumberString(value);
+      const weightNum = parseFloat(cleaned);
+      if (!cleaned || isNaN(weightNum) || weightNum < 30 || weightNum > 200) return '';
+      return Math.round(weightNum).toString();
+    };
 
+    // 身高：一律優先使用會員中心資料，沒有才用目前使用者自己的身高快取
+    const cleanHeight =
+      cleanHeightValue(savedProfile?.height) ||
+      cleanHeightValue(scannedHeight);
+
+    // 體重：今日每日紀錄有輸入就優先用；沒有才用會員中心資料
+    const cleanWeight =
+      cleanWeightValue(dailyRecordWeight) ||
+      cleanWeightValue(savedProfile?.weight) ||
+      cleanWeightValue(scannedWeight);
+
+    // 性別：一律用會員中心資料
     let rawGender = savedProfile?.gender || '';
-    let cleanGender = (rawGender === '請選擇性別' || !rawGender || rawGender.toString().includes('請選擇')) ? '' : rawGender.trim();
+    let cleanGender =
+      rawGender === '請選擇性別' || !rawGender || rawGender.toString().includes('請選擇')
+        ? ''
+        : rawGender.toString().trim();
 
+    // 年齡：一律用會員中心 birthday / age
     let finalAge = '';
     let isZeroAge = false;
 
-    if (savedProfile && savedProfile.age !== undefined && savedProfile.age !== null && savedProfile.age !== '') {
-      finalAge = savedProfile.age.toString().replace(/[^0-9]/g, '').trim(); 
-    } else if (savedProfile?.birthday && !savedProfile.birthday.includes('請選擇')) {
-      const birthdayStr = savedProfile.birthday.toString();
-      const yearMatch = birthdayStr.match(/\d{4}/);
-      
-      if (yearMatch) {
-        const birthYear = parseInt(yearMatch[0], 10);
-        const currentYear = new Date().getFullYear();
-        if (!isNaN(birthYear) && birthYear > 1900 && birthYear <= currentYear) {
-          finalAge = (currentYear - birthYear).toString();
+    if (savedProfile?.age !== undefined && savedProfile?.age !== null && savedProfile?.age !== '') {
+      finalAge = savedProfile.age.toString().replace(/[^0-9]/g, '').trim();
+    } else if (savedProfile?.birthday && !savedProfile.birthday.toString().includes('請選擇')) {
+      const birthDate = new Date(savedProfile.birthday);
+
+      if (!isNaN(birthDate.getTime())) {
+        const today = new Date();
+        let age = today.getFullYear() - birthDate.getFullYear();
+        const monthDiff = today.getMonth() - birthDate.getMonth();
+
+        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+          age--;
         }
+
+        finalAge = age >= 0 ? age.toString() : '';
       }
     }
-    
+
     if (finalAge === '0') {
       isZeroAge = true;
-      finalAge = ''; 
+      finalAge = '';
     }
 
     return { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge };
@@ -134,115 +162,68 @@ export default function BodyMetricsScreen() {
 
   // 💥【自動化載入】焦點監聽
   useFocusEffect(
-    useCallback(() => {
-      let isMounted = true;
+  useCallback(() => {
+    // 進入身體指數查詢頁時，預設全部清空
+    setInitialProfile(null);
 
-      const autoLoadOrReset = async () => {
-        try {
-          const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
+    setMetricsData({
+      gender: '',
+      age: '',
+      height: '',
+      weight: '',
+      bmi: '---',
+      bmiStatus: '',
+      bmrValue: 0,
+      isCalculated: false,
+    });
 
-          let scannedHeight = '';
-          const possibleHeightKeys = [
-            `${savedUserId}_user_height`,
-            `${savedUserId}_height`,
-            'user_height_key',
-            'user_height',
-            'height',
-            'member_height'
-          ];
-          for (const key of possibleHeightKeys) {
-            const val = await AsyncStorage.getItem(key);
-            if (val && val.trim() !== '') {
-              scannedHeight = val;
-              break;
-            }
-          }
-
-          let todayWeight = '';
-          const todayFoodKey = `${savedUserId}_food_record_${getTodayDateString()}`;
-          const backupFoodKey = `food_record_${getTodayDateString()}`;
-          const dailyFoodRecordRaw = await AsyncStorage.getItem(todayFoodKey) || await AsyncStorage.getItem(backupFoodKey);
-          
-          if (dailyFoodRecordRaw) {
-            try {
-              const parsedFood = JSON.parse(dailyFoodRecordRaw);
-              if (parsedFood.weight !== undefined && parsedFood.weight !== null) {
-                todayWeight = parsedFood.weight.toString().trim();
-              }
-            } catch (e) {}
-          }
-
-          const localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`) || await AsyncStorage.getItem('userProfile') || await AsyncStorage.getItem('user_profile');
-
-          const { cleanGender, finalAge, cleanHeight, cleanWeight } = parseAndCleanProfile(localData, todayWeight, scannedHeight);
-
-          if (isMounted) {
-            setInitialProfile({ gender: cleanGender, age: finalAge, height: cleanHeight, weight: cleanWeight });
-            setMetricsData(prev => ({
-              ...prev,
-              gender: cleanGender,
-              age: finalAge,
-              height: cleanHeight,
-              weight: cleanWeight,
-              isCalculated: false // 自動載入時維持未計算熱量狀態
-            }));
-          }
-
-        } catch (e) {
-          console.error("背景自動同步失敗：", e);
-        }
-      };
-
-      autoLoadOrReset();
-
-      return () => {
-        isMounted = false;
-      };
-    }, [])
-  );
+    // 捲動條也重置
+    setScrollY(0);
+  }, [])
+);
 
   // 🔄 手動點擊「同步會員資料」按鈕邏輯
   const loadSyncProfileData = async () => {
     try {
-      const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
-      
-      let scannedHeight = '';
-      const possibleHeightKeys = [
-        `${savedUserId}_user_height`,
-        `${savedUserId}_height`,
-        'user_height_key',
-        'user_height',
-        'height',
-        'member_height'
-      ];
-      for (const key of possibleHeightKeys) {
-        const val = await AsyncStorage.getItem(key);
-        if (val && val.trim() !== '') {
-          scannedHeight = val;
-          break;
-        }
-      }
+      const savedUserId =
+        await AsyncStorage.getItem('current_user_id') ||
+        await AsyncStorage.getItem('member_id') ||
+        'guest';
 
+      // 只讀目前登入者自己的會員中心身高資料
+      const scannedHeight =
+        await AsyncStorage.getItem(`${savedUserId}_user_height`) ||
+        await AsyncStorage.getItem(`${savedUserId}_height`) ||
+        '';
+
+      // 今日每日紀錄體重：有輸入才優先使用；沒有就回到會員中心體重
       let todayWeight = '';
       const todayFoodKey = `${savedUserId}_food_record_${getTodayDateString()}`;
-      const backupFoodKey = `food_record_${getTodayDateString()}`;
-      const dailyFoodRecordRaw = await AsyncStorage.getItem(todayFoodKey) || await AsyncStorage.getItem(backupFoodKey);
-      
+      const dailyFoodRecordRaw = await AsyncStorage.getItem(todayFoodKey);
+
       if (dailyFoodRecordRaw) {
         try {
           const parsedFood = JSON.parse(dailyFoodRecordRaw);
-          if (parsedFood.weight !== undefined && parsedFood.weight !== null) {
+          if (
+            parsedFood.hasDailyWeight === true &&
+            parsedFood.weight !== undefined &&
+            parsedFood.weight !== null &&
+            parsedFood.weight.toString().trim() !== ''
+          ) {
             todayWeight = parsedFood.weight.toString().trim();
           }
         } catch (e) {}
       }
 
-      const localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`) || await AsyncStorage.getItem('userProfile') || await AsyncStorage.getItem('user_profile');
+      // 只讀目前登入者自己的會員中心資料，不再讀 userProfile / user_profile 共用 key
+      const localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
+      const scannedWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`) || '';
 
-      const { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge } = parseAndCleanProfile(localData, todayWeight, scannedHeight);
+      const { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge } =
+        parseAndCleanProfile(localData, todayWeight, scannedHeight, scannedWeight);
 
       if (!cleanWeight || cleanWeight.trim() === '' || parseFloat(cleanWeight) === 0) {
-        showAlert('請先到今日飲食紀錄填寫當天 30 ~ 200 kg 的體重數據');
+        showAlert('⚠️ 請先至會員中心或每日紀錄填寫體重資料');
         return;
       }
 
@@ -314,7 +295,7 @@ export default function BodyMetricsScreen() {
     const { gender, age, height, weight } = metricsData;
     
     if (!weight || weight.trim() === '' || parseFloat(weight) === 0) {
-      showAlert('請先到今日飲食紀錄填寫當天 30 ~ 200 kg 的體重數據');
+      showAlert('⚠️ 請先至會員中心或每日紀錄填寫體重資料');
       return;
     }
 

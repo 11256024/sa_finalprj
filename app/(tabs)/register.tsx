@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-
+const API_URL = 'http://127.0.0.1:8000';
 export default function RegisterScreen() {
   const router = useRouter();
   const [username, setUsername] = useState('');
@@ -33,30 +33,59 @@ export default function RegisterScreen() {
     return () => clearTimeout(timer);
   }, []);
 
-  const handleRegister = () => {
-    // 密碼強度驗證：長度至少 6 位，且必須包含至少一個大寫英文字母
-    const hasUpperCase = /[A-Z]/.test(password);
-    const isLengthValid = password.length >= 6;
+  const handleRegister = async () => {
+  // 帳號不可空白
+  if (!username.trim()) {
+    alert('請輸入帳號');
+    return;
+  }
 
-    if (!hasUpperCase || !isLengthValid) {
-      setFormatError(true);
-      setMatchError(false);
-      return;
-    }
+  // 密碼強度驗證：長度至少 6 位，且必須包含至少一個大寫英文字母
+  const hasUpperCase = /[A-Z]/.test(password);
+  const isLengthValid = password.length >= 6;
 
-    if (password !== confirmPassword) {
-      setMatchError(true);
-      setFormatError(false);
-      return;
-    }
-
-    // 驗證成功，重置錯誤狀態
-    setFormatError(false);
+  if (!hasUpperCase || !isLengthValid) {
+    setFormatError(true);
     setMatchError(false);
-    
-    // 🎯 修正處：不直接進 /profile，而是開啟「註冊成功」的提示框
-    setSuccessModalVisible(true);
-  };
+    return;
+  }
+
+  if (password !== confirmPassword) {
+    setMatchError(true);
+    setFormatError(false);
+    return;
+  }
+
+  // 驗證成功，重置錯誤狀態
+  setFormatError(false);
+  setMatchError(false);
+
+  try {
+    const response = await fetch(`${API_URL}/register/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: username,
+        password: password,
+      }),
+    });
+
+    const data = await response.json();
+    console.log('註冊結果:', data);
+
+    if (data.success) {
+      // 保留你原本的成功提示框設計
+      setSuccessModalVisible(true);
+    } else {
+      alert(data.message || '註冊失敗');
+    }
+  } catch (error) {
+    console.log('註冊錯誤:', error);
+    alert('無法連接後端');
+  }
+};
 
   // 🎯 新增：點選提示框的確定按鈕後，導向登入頁面
   const handleGoToLogin = () => {

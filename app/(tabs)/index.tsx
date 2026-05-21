@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-
+const API_URL = 'http://127.0.0.1:8000';
 export default function LoginScreen() {
   const router = useRouter(); 
   const [username, setUsername] = useState('');
@@ -32,49 +32,88 @@ export default function LoginScreen() {
   }, []);
 
   // 登入驗證與跳轉邏輯
-  const handleLogin = async () => {
-    if (!username.trim() || !password) {
-      setErrorMsg('⚠️ 請輸入帳號與密碼！');
+ const handleLogin = async () => {
+  if (!username.trim() || !password) {
+    setErrorMsg('⚠️ 請輸入帳號與密碼！');
+    setShowError(true);
+    return;
+  }
+
+  const hasUpperCase = /[A-Z]/.test(password);
+  const isLengthValid = password.length >= 6;
+
+  if (!hasUpperCase || !isLengthValid) {
+    setErrorMsg('⚠️ 密碼請輸入一個大寫字母，且長度需大於或等於 6 位數！');
+    setShowError(true);
+    return;
+  }
+
+  setShowError(false);
+
+  try {
+    const response = await fetch(`${API_URL}/login/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        username: username.trim(),
+        password: password,
+      }),
+    });
+
+    const data = await response.json();
+    console.log('登入結果:', data);
+
+    if (!data.success) {
+      setErrorMsg(data.message || '⚠️ 帳號或密碼錯誤！');
       setShowError(true);
       return;
     }
 
-    const hasUpperCase = /[A-Z]/.test(password);
-    const isLengthValid = password.length >= 6;
-    
-    if (!hasUpperCase || !isLengthValid) {
-      setErrorMsg('⚠️ 密碼請輸入一個大寫字母，且長度需大於或等於 6 位數！');
-      setShowError(true);
-      return; 
-    }
-    
-    setShowError(false);
-    
-    try {
-      // 🔓 🎯 核心修改：判斷是否為管理員帳密 (admin / Admin123)
-      if (username.trim() === 'admin' && password === 'Admin123') {
-        if (Platform.OS === 'web') {
-          // 寫入管理員登入狀態快取，供後台頁面做安全權限檢查
-          localStorage.setItem('admin_logged_in', 'true');
-        }
-        setIsLoggedIn(true);
-        // 導向你的管理者審核後台路徑
-        router.replace('/admin-review'); 
-        return;
-      }
+    // 先清掉上一位使用者留下來的共用快取
+await AsyncStorage.multiRemove([
+  'userProfile',
+  'user_profile',
+  'user_name_key',
+  'user_height_key',
+  'height',
+  'user_weight_key',
+  'weight',
+  'age',
+  'account',
+  'password',
+]);
 
-      // --- 以下為一般會員的登入處理邏輯 ---
-      // 登入成功時，將最新的帳號與密碼寫入快取，讓 Profile 頁面讀取
-      await AsyncStorage.setItem('account', username.trim());
-      await AsyncStorage.setItem('password', password);
-      
-      setIsLoggedIn(true);
-      router.replace('/profile'); 
-      
-    } catch (e) {
-      console.error('儲存登入帳密快取失敗', e);
-    }
-  };
+// 再寫入目前登入者資料
+await AsyncStorage.setItem('user', JSON.stringify(data.member));
+await AsyncStorage.setItem('member_id', String(data.member.id));
+await AsyncStorage.setItem('current_user_id', String(data.member.id));
+await AsyncStorage.setItem('account', data.member.username);
+await AsyncStorage.setItem('password', password);
+
+    setIsLoggedIn(true);
+
+    if (data.member.role === 'admin') {
+  if (Platform.OS === 'web') {
+    localStorage.setItem('admin_logged_in', 'true');
+  }
+
+  router.replace('/admin-review');
+} else {
+  if (Platform.OS === 'web') {
+    localStorage.removeItem('admin_logged_in');
+  }
+
+  // 一般使用者登入後先進會員中心
+  router.replace('/profile');
+}
+  } catch (e) {
+    console.error('登入失敗:', e);
+    setErrorMsg('⚠️ 無法連接後端，請確認 Django 是否已啟動！');
+    setShowError(true);
+  }
+};
 
   // 確認登出動作
   const handleConfirmLogout = () => {

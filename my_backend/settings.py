@@ -66,11 +66,15 @@ WSGI_APPLICATION = 'my_backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'food_app',      # 務必確認 phpMyAdmin 裡的資料庫名稱
-        'USER': 'root',          # XAMPP 預設帳號
-        'PASSWORD': '',          # XAMPP 預設密碼為空
+        'NAME': 'food-app',
+        'USER': 'root',
+        'PASSWORD': '',
         'HOST': '127.0.0.1',
         'PORT': '3306',
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        },
     }
 }
 

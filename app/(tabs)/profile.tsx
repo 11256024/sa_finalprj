@@ -40,7 +40,7 @@ export default function ProfileScreen() {
   const [tempData, setTempData] = useState<ProfileType>({ ...profileData });
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
-  // 獲取今天日期 YYYY-MM-DD 格式
+  // 獲取今天日期 YYYY-MM-DD 格式，用在生日選擇器 max
   const getTodayDateString = () => {
     const today = new Date();
     const yyyy = today.getFullYear();
@@ -49,6 +49,7 @@ export default function ProfileScreen() {
     return `${yyyy}-${mm}-${dd}`;
   };
 
+
   useEffect(() => {
     loadProfileData();
   }, []);
@@ -56,18 +57,23 @@ export default function ProfileScreen() {
   const loadProfileData = async () => {
     try {
       // 1. 取得當前使用者 ID（對齊每日紀錄頁面）
-      const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
+      const savedUserId =
+        await AsyncStorage.getItem('current_user_id') ||
+        await AsyncStorage.getItem('member_id') ||
+        'guest';
 
-      const singleAccount = await AsyncStorage.getItem('account') || await AsyncStorage.getItem('username') || '';
+      const userStr = await AsyncStorage.getItem('user');
+      const currentUser = userStr ? JSON.parse(userStr) : null;
+
+      const singleAccount = currentUser?.username || '';
       const singlePassword = await AsyncStorage.getItem('password') || '';
 
-      let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`) || await AsyncStorage.getItem('userProfile') || await AsyncStorage.getItem('user_profile');
+      // 只讀目前使用者自己的會員資料，不讀每日紀錄，也不讀共用 userProfile / user_profile
+      let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
       let parsedProfile: any = {};
       if (localData) {
         try { parsedProfile = JSON.parse(localData); } catch (e) {}
       }
-
-      const isSameAccount = parsedProfile.account && singleAccount && (parsedProfile.account === singleAccount);
 
       let rawName = parsedProfile.name || '';
       let rawBirthday = parsedProfile.birthday || '';
@@ -75,28 +81,13 @@ export default function ProfileScreen() {
       let rawWeight = parsedProfile.weight || '';
       let rawGender = parsedProfile.gender || '';
 
-      const singleName = await AsyncStorage.getItem('user_name_key');
-      const singleHeight = await AsyncStorage.getItem(`${savedUserId}_user_height`) || await AsyncStorage.getItem('user_height_key') || await AsyncStorage.getItem('height');
-      
-      // 🌟 最高優先權：直接抓取每日資料專用的通用體重鑰匙
-      const singleWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`) || await AsyncStorage.getItem('user_weight_key') || await AsyncStorage.getItem('weight');
+      const singleName = await AsyncStorage.getItem(`${savedUserId}_user_name_key`);
+      const singleHeight = await AsyncStorage.getItem(`${savedUserId}_user_height`);
+      const singleWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`);
 
       if (singleName) rawName = singleName;
       if (singleHeight) rawHeight = singleHeight;
       if (singleWeight) rawWeight = singleWeight;
-
-      // 🌟 加強防線：精準讀取含有使用者隔離標記的每日飲食快取中的體重
-      const todayKey = `${savedUserId}_food_record_${getTodayDateString()}`;
-      const dailyFoodRecordRaw = await AsyncStorage.getItem(todayKey);
-      if (dailyFoodRecordRaw) {
-        try {
-          const parsedFood = JSON.parse(dailyFoodRecordRaw);
-          if (parsedFood.weight && parsedFood.weight.trim() !== '') rawWeight = parsedFood.weight.toString();
-          if (parsedFood.height && parsedFood.height.trim() !== '') rawHeight = parsedFood.height.toString();
-        } catch (e) {
-          console.log("解析今日飲食紀錄失敗:", e);
-        }
-      }
 
       // 💡 防呆過濾機制
       const cleanName = (rawName === '請輸入姓名' || rawName === '王小' || rawName === '王小明' || rawName === '你好' || rawName === 'xx') ? '' : rawName;
@@ -105,7 +96,7 @@ export default function ProfileScreen() {
       const cleanWeight = (rawWeight === '請選擇體重' || !rawWeight) ? '' : rawWeight.toString().trim();
       const cleanGender = (rawGender === '請選擇性別') ? '' : rawGender;
 
-      const singleAge = await AsyncStorage.getItem('age');
+      const singleAge = await AsyncStorage.getItem(`${savedUserId}_user_age`);
 
       const safeData = {
         name: cleanName,
@@ -211,7 +202,10 @@ export default function ProfileScreen() {
   const handleConfirmSave = async () => {
     setSaveModalVisible(false);
     try {
-      const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
+      const savedUserId =
+        await AsyncStorage.getItem('current_user_id') ||
+        await AsyncStorage.getItem('member_id') ||
+        'guest';
       const calculatedAgeStr = getPureAgeValue(tempData.birthday);
       const updatedData = { ...tempData, age: calculatedAgeStr };
 
@@ -220,45 +214,15 @@ export default function ProfileScreen() {
 
       const stringifiedData = JSON.stringify(updatedData);
       
-      // 全域與分開欄位同步寫入
+      // 只存目前登入使用者自己的會員資料，不寫入每日紀錄，也不寫入共用 key
       await AsyncStorage.setItem(`${savedUserId}_user_profile`, stringifiedData);
-      await AsyncStorage.setItem('userProfile', stringifiedData);
-      await AsyncStorage.setItem('user_profile', stringifiedData);
-      await AsyncStorage.setItem('user_name_key', updatedData.name.trim());
+      await AsyncStorage.setItem(`${savedUserId}_user_name_key`, updatedData.name.trim());
       await AsyncStorage.setItem(`${savedUserId}_user_height`, updatedData.height);
-      await AsyncStorage.setItem('user_height_key', updatedData.height);
-      await AsyncStorage.setItem('height', updatedData.height);
-      
-      // 同步寫入體重到首頁能對齊的唯一鑰匙
       await AsyncStorage.setItem(`${savedUserId}_user_weight`, updatedData.weight);
-      await AsyncStorage.setItem('user_weight_key', updatedData.weight);
-      await AsyncStorage.setItem('weight', updatedData.weight);
+
       if (updatedData.age) {
-        await AsyncStorage.setItem('age', updatedData.age);
+        await AsyncStorage.setItem(`${savedUserId}_user_age`, updatedData.age);
       }
-
-      // 寫入到每日紀錄飲食組合包
-      const todayKey = `${savedUserId}_food_record_${getTodayDateString()}`;
-      const dailyFoodRecordRaw = await AsyncStorage.getItem(todayKey);
-      
-      let parsedFood: any = { mealBlocks: { 早餐: [], 午餐: [], 晚餐: [] } };
-      if (dailyFoodRecordRaw) {
-        try { parsedFood = JSON.parse(dailyFoodRecordRaw); } catch (e) {}
-      }
-
-      parsedFood.weight = updatedData.weight;
-      parsedFood.height = updatedData.height;
-
-      const hMeter = parseFloat(updatedData.height) / 100;
-      const wKg = parseFloat(updatedData.weight);
-      if (hMeter > 0 && wKg > 0) {
-        parsedFood.bmi = (wKg / (hMeter * hMeter)).toFixed(1);
-        if (parseFloat(parsedFood.bmi) < 18.5) parsedFood.bmiStatus = "體重過輕";
-        else if (parseFloat(parsedFood.bmi) >= 18.5 && parseFloat(parsedFood.bmi) < 24) parsedFood.bmiStatus = "正常範圍";
-        else parsedFood.bmiStatus = "肥胖";
-      }
-
-      await AsyncStorage.setItem(todayKey, JSON.stringify(parsedFood));
 
       if (Platform.OS === 'web') window.alert("個人資料已成功更新！");
       else Alert.alert("成功", "個人資料已成功更新！");

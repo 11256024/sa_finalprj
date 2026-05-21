@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Slot, usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-
+const API_URL = 'http://127.0.0.1:8000';
 export default function RootLayout() {
   const router = useRouter();
   const pathname = usePathname();
@@ -110,30 +110,55 @@ export default function RootLayout() {
 
   // 使用者登出
   const handleUserLogout = async () => {
-    try {
-      await AsyncStorage.removeItem('user');
-      await AsyncStorage.removeItem('account');
-      await AsyncStorage.removeItem('user_avatar');
-      await AsyncStorage.removeItem('user_avatar_uri');
-      router.replace('/');
-    } catch (e) {
-      console.log('使用者登出失敗：', e);
+  try {
+    await AsyncStorage.multiRemove([
+      'user',
+      'member_id',
+      'current_user_id',
+      'account',
+      'password',
+
+      'user_avatar',
+      'user_avatar_uri',
+
+      'userProfile',
+      'user_profile',
+      'user_name_key',
+
+      'user_height_key',
+      'height',
+
+      'user_weight_key',
+      'weight',
+
+      'age',
+    ]);
+
+    if (Platform.OS === 'web') {
+      localStorage.removeItem('admin_logged_in');
     }
-  };
+
+    setGlobalAvatar(null);
+    setFallbackText('用');
+    setIsAdminLoggedIn(false);
+
+    router.replace('/');
+  } catch (e) {
+    console.log('使用者登出失敗：', e);
+  }
+};
 
   // 管理者登出
   const handleAdminLogout = () => {
-    if (Platform.OS === 'web') {
-      const confirmLogout = window.confirm("確定要登出管理員系統，返回首頁嗎？");
-      if (confirmLogout) {
-        localStorage.removeItem('admin_logged_in');
-        setIsAdminLoggedIn(false);
-        router.replace('/');
-      }
-    } else {
-      router.replace('/');
+  if (Platform.OS === 'web') {
+    const confirmLogout = window.confirm("確定要登出管理員系統，返回首頁嗎？");
+    if (confirmLogout) {
+      handleUserLogout();
     }
-  };
+  } else {
+    handleUserLogout();
+  }
+};
 
   return (
     <SafeAreaView style={styles.container}>

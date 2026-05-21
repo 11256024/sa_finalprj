@@ -65,14 +65,18 @@ export default function DailyRecordScreen() {
   useEffect(() => {
     const initUserAndLoad = async () => {
       try {
-        const savedUserId = await AsyncStorage.getItem('current_user_id'); 
-        const finalId = savedUserId || 'guest';
+        const savedUserId =
+        await AsyncStorage.getItem('current_user_id') ||
+        await AsyncStorage.getItem('member_id') ||
+        'guest';
+
+        const finalId = savedUserId;
         setUserId(finalId);
         
         const todayStr = getTaiwanDateString();
         setCurrentDate(todayStr);
 
-        const possibleHeightKeys = [`${finalId}_user_height`, `${finalId}_height`, 'user_height'];
+        const possibleHeightKeys = [`${finalId}_user_height`, `${finalId}_height`];
         for (const key of possibleHeightKeys) {
           const val = await AsyncStorage.getItem(key);
           if (val && parseFloat(val) > 0) {
@@ -91,66 +95,60 @@ export default function DailyRecordScreen() {
   }, [pathname]);
 
   const loadDataByDate = async (dateStr: string, currentUid: string = userId) => {
-    try {
-      let savedDataStr = await AsyncStorage.getItem(`${currentUid}_food_record_${dateStr}`);
-      if (!savedDataStr) {
-        savedDataStr = await AsyncStorage.getItem(`food_record_${dateStr}`);
-      }
+  try {
+    const savedDataStr = await AsyncStorage.getItem(`${currentUid}_food_record_${dateStr}`);
 
-      if (savedDataStr) {
-        const parsed = JSON.parse(savedDataStr);
+    if (savedDataStr) {
+      const parsed = JSON.parse(savedDataStr);
+
+      if (parsed.hasDailyWeight === true) {
         setWeight(parsed.weight || '');
         setBmi(parsed.bmi || '—');
         setBmiStatus(parsed.bmiStatus || '');
-        setMealBlocks(parsed.mealBlocks || { 早餐: [], 午餐: [], 晚餐: [] });
       } else {
-        const globalWeight = await AsyncStorage.getItem(`${currentUid}_user_weight`);
-        if (globalWeight && globalWeight.trim() !== '') {
-          setWeight(globalWeight);
-          if (userHeight) {
-            const hInMeters = userHeight / 100;
-            const wVal = parseFloat(globalWeight);
-            if (!isNaN(wVal) && wVal > 0) {
-              const calcBmi = (wVal / (hInMeters * hInMeters)).toFixed(1);
-              setBmi(calcBmi);
-              setBmiStatus(getBmiStatusLabel(parseFloat(calcBmi)));
-            }
-          }
-        } else {
-          setWeight('');
-          setBmi('—');
-          setBmiStatus('');
-        }
-        setMealBlocks({ 早餐: [], 午餐: [], 晚餐: [] });
+        setWeight('');
+        setBmi('—');
+        setBmiStatus('');
       }
-    } catch (e) {
-      console.error('載入失敗', e);
+
+      setMealBlocks(parsed.mealBlocks || { 早餐: [], 午餐: [], 晚餐: [] });
+    } else {
+      setWeight('');
+      setBmi('—');
+      setBmiStatus('');
+      setMealBlocks({ 早餐: [], 午餐: [], 晚餐: [] });
     }
-  };
+  } catch (e) {
+    console.error('載入失敗', e);
+  }
+};
 
   const saveDataToStorage = async (
-    currentWeight: string, 
-    currentBmi: string, 
-    currentBmiStatus: string, 
-    currentMeals: typeof mealBlocks
-  ) => {
-    try {
-      const dataToSave = {
-        weight: currentWeight,
-        bmi: currentBmi,
-        bmiStatus: currentBmiStatus,
-        mealBlocks: currentMeals
-      };
-      
-      await AsyncStorage.setItem(`${userId}_food_record_${currentDate}`, JSON.stringify(dataToSave));
-      await AsyncStorage.setItem(`food_record_${currentDate}`, JSON.stringify(dataToSave));
-      await AsyncStorage.setItem(`${userId}_user_weight`, currentWeight);
-      await AsyncStorage.setItem(`user_weight`, currentWeight); 
+  currentWeight: string, 
+  currentBmi: string, 
+  currentBmiStatus: string, 
+  currentMeals: typeof mealBlocks
+) => {
+  try {
+    const hasDailyWeight = currentWeight.trim() !== '';
 
-    } catch (e) {
-      console.error('同步失敗', e);
-    }
-  };
+    const dataToSave = {
+      weight: currentWeight,
+      bmi: currentBmi,
+      bmiStatus: currentBmiStatus,
+      mealBlocks: currentMeals,
+      hasDailyWeight: hasDailyWeight,
+    };
+
+    await AsyncStorage.setItem(
+      `${userId}_food_record_${currentDate}`,
+      JSON.stringify(dataToSave)
+    );
+
+  } catch (e) {
+    console.error('同步失敗', e);
+  }
+};
 
   const getBmiStatusLabel = (bmiValue: number) => {
     if (bmiValue < 18.5) return '體重過輕';
