@@ -49,6 +49,11 @@ export default function BodyMetricsScreen() {
   const [containerHeight, setContainerHeight] = useState(1);
   const [scrollY, setScrollY] = useState(0);
 
+  // 讓右側自訂捲動條可以用滑鼠拖拉
+  const [isDraggingScrollbar, setIsDraggingScrollbar] = useState(false);
+  const dragStartYRef = useRef(0);
+  const dragStartScrollYRef = useRef(0);
+
   // 下拉選單項目定義
   const genderOptions = ['', '男', '女'];
   const ageOptions = ['', ...Array.from({ length: 100 }, (_, i) => (i + 1).toString())]; 
@@ -63,8 +68,16 @@ export default function BodyMetricsScreen() {
   };
 
   const getTodayDateString = () => {
-    const today = new Date();
-    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('zh-TW', {
+      timeZone: 'Asia/Taipei',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+
+    const parts = formatter.format(now).split('/');
+    return `${parts[0]}-${parts[1]}-${parts[2]}`;
   };
 
   const showAlert = (message: string) => {
@@ -227,9 +240,9 @@ export default function BodyMetricsScreen() {
         return;
       }
 
-      if (!cleanGender && !finalAge && !cleanHeight) {
-        showAlert('⚠️ 請至會員中心填寫詳細資料');
-        return; 
+      if (!cleanGender || !finalAge || !cleanHeight) {
+        showAlert('⚠️ 請至會員中心填寫完整的性別、生日與身高資料');
+        return;
       }
 
       if (isZeroAge) {
@@ -351,18 +364,27 @@ export default function BodyMetricsScreen() {
       textAlign: 'right' as const,
       fontFamily: 'inherit',
       outline: 'none',
-      width: '140px',
+      width: 140,
       fontWeight: '500' as const,
       cursor: 'pointer',
     };
   };
 
-  const hasBmiDisplay = metricsData.height !== '' && metricsData.weight !== '';
-  const hasFullDisplay = metricsData.gender !== '' && metricsData.age !== '' && metricsData.height !== '' && metricsData.weight !== '';
+  const hasBmiDisplay =
+    metricsData.height !== '' &&
+    metricsData.weight !== '' &&
+    metricsData.bmi !== '---';
+
+  const hasFullDisplay =
+    metricsData.gender !== '' &&
+    metricsData.age !== '' &&
+    metricsData.height !== '' &&
+    metricsData.weight !== '' &&
+    metricsData.bmi !== '---';
 
   // 🧮 計算客製化捲動滑塊的位置與高度
-  const scrollbarTrackHeight = containerHeight - 40; // 扣除上下箭頭高度的軌道總長
-  const scrollableHeight = contentHeight - containerHeight;
+  const scrollbarTrackHeight = Math.max(1, containerHeight - 40); // 扣除上下箭頭高度的軌道總長
+  const scrollableHeight = Math.max(0, contentHeight - containerHeight);
   
   // 避免分母為 0
   const thumbHeight = Math.max(
@@ -373,6 +395,84 @@ export default function BodyMetricsScreen() {
   const thumbTop = scrollableHeight > 0 
     ? (scrollY / scrollableHeight) * (scrollbarTrackHeight - thumbHeight) 
     : 0;
+
+  const getMouseY = (event: any) => {
+    return (
+      event?.nativeEvent?.clientY ??
+      event?.clientY ??
+      event?.nativeEvent?.pageY ??
+      event?.pageY ??
+      0
+    );
+  };
+
+  const scrollToByScrollbar = (targetY: number) => {
+    const maxScrollY = Math.max(0, scrollableHeight);
+    const nextY = Math.max(0, Math.min(targetY, maxScrollY));
+
+    scrollRef.current?.scrollTo({ y: nextY, animated: false });
+    setScrollY(nextY);
+  };
+
+  const handleThumbMouseDown = (event: any) => {
+    if (Platform.OS !== 'web') return;
+
+    event?.preventDefault?.();
+    event?.stopPropagation?.();
+
+    dragStartYRef.current = getMouseY(event);
+    dragStartScrollYRef.current = scrollY;
+    setIsDraggingScrollbar(true);
+  };
+
+  const handleTrackMouseDown = (event: any) => {
+    if (Platform.OS !== 'web') return;
+
+    event?.preventDefault?.();
+
+    const mouseY = getMouseY(event);
+    const rect = event?.currentTarget?.getBoundingClientRect?.();
+
+    if (!rect) return;
+
+    const clickY = mouseY - rect.top;
+    const maxThumbTop = Math.max(1, scrollbarTrackHeight - thumbHeight);
+    const targetThumbTop = Math.max(0, Math.min(clickY - thumbHeight / 2, maxThumbTop));
+    const targetScrollY = (targetThumbTop / maxThumbTop) * scrollableHeight;
+
+    scrollToByScrollbar(targetScrollY);
+
+    dragStartYRef.current = mouseY;
+    dragStartScrollYRef.current = targetScrollY;
+    setIsDraggingScrollbar(true);
+  };
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !isDraggingScrollbar) return;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      event.preventDefault();
+
+      const deltaY = event.clientY - dragStartYRef.current;
+      const maxThumbTop = Math.max(1, scrollbarTrackHeight - thumbHeight);
+      const nextScrollY =
+        dragStartScrollYRef.current + (deltaY / maxThumbTop) * scrollableHeight;
+
+      scrollToByScrollbar(nextScrollY);
+    };
+
+    const handleMouseUp = () => {
+      setIsDraggingScrollbar(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDraggingScrollbar, scrollableHeight, scrollbarTrackHeight, thumbHeight]);
 
   // 監聽實際捲動事件
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
@@ -591,22 +691,32 @@ export default function BodyMetricsScreen() {
                   <Text style={styles.arrowText}>▲</Text>
                 </TouchableOpacity>
 
-                {/* 中間滾動軌道與滑塊 */}
-                <View style={styles.scrollbarTrack}>
-                  <View 
+                {/* 中間滾動軌道與滑塊：可用滑鼠拖拉 */}
+                <View
+                  style={[
+                    styles.scrollbarTrack,
+                    Platform.OS === 'web' ? ({ cursor: 'pointer' } as any) : null
+                  ]}
+                  {...(Platform.OS === 'web' ? ({ onMouseDown: handleTrackMouseDown } as any) : {})}
+                >
+                  <View
                     style={[
-                      styles.scrollbarThumb, 
-                      { 
-                        height: thumbHeight, 
-                        transform: [{ translateY: thumbTop }] 
+                      styles.scrollbarThumb,
+                      Platform.OS === 'web'
+                        ? ({ cursor: isDraggingScrollbar ? 'grabbing' : 'grab' } as any)
+                        : null,
+                      {
+                        height: thumbHeight,
+                        transform: [{ translateY: thumbTop }]
                       }
-                    ]} 
+                    ]}
+                    {...(Platform.OS === 'web' ? ({ onMouseDown: handleThumbMouseDown } as any) : {})}
                   />
                 </View>
 
                 {/* 下箭頭 */}
                 <TouchableOpacity 
-                  onPress={() => scrollRef.current?.scrollTo({ y: Math.min(contentHeight - containerHeight, scrollY + 80), animated: true })}
+                  onPress={() => scrollRef.current?.scrollTo({ y: Math.min(Math.max(0, contentHeight - containerHeight), scrollY + 80), animated: true })}
                   style={styles.arrowButton}
                 >
                   <Text style={styles.arrowText}>▼</Text>
@@ -659,8 +769,8 @@ const styles = StyleSheet.create({
   bmrList: { marginBottom: 15 },
   bmrRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
   bmrLabel: { fontSize: 20, fontWeight: '600', color: '#444', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }, 
-  bmrInput: { fontSize: 18, textAlign: 'right', width: '140px', fontWeight: '500', padding: 0 },
-  bmrValueText: { fontSize: 18, color: '#DCDCDC', fontWeight: '500', textAlign: 'right', width: '190px' }, 
+  bmrInput: { fontSize: 18, textAlign: 'right', width: 140, fontWeight: '500', padding: 0 },
+  bmrValueText: { fontSize: 18, color: '#DCDCDC', fontWeight: '500', textAlign: 'right', width: 190 }, 
   lightValueText: { color: '#999999', fontWeight: '600' }, 
   darkValueText: { color: '#333333', fontWeight: '600' },   
   resultRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: 25, marginBottom: 25, justifyContent: 'center' },
