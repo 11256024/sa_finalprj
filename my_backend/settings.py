@@ -62,19 +62,15 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'my_backend.wsgi.application'
 
-# 3. 資料庫設定：連接到你的 XAMPP MySQL
+# 3. 資料庫設定：連接到你的 Aiven 雲端 MySQL
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'food-app',
-        'USER': 'root',
-        'PASSWORD': '',
-        'HOST': '127.0.0.1',
-        'PORT': '3306',
-        'OPTIONS': {
-            'charset': 'utf8mb4',
-            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-        },
+        'NAME': 'defaultdb',
+        'USER': 'avnadmin',
+        'PASSWORD': 'AVNS_jahsbq0dmFPQ7n9P7SX', 
+        'HOST': 'mysql-28e17ff3-kting1116-197f.f.aivencloud.com',
+        'PORT': '27192', 
     }
 }
 
