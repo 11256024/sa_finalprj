@@ -2,7 +2,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-const API_URL = 'http://127.0.0.1:8000';
+const API_URL = 'http://127.0.0.1:8080';
 export default function RegisterScreen() {
   const router = useRouter();
   const [username, setUsername] = useState('');
