@@ -2,12 +2,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Slot, usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+
 const API_URL = 'http://127.0.0.1:8000';
+
 export default function RootLayout() {
   const router = useRouter();
   const pathname = usePathname();
   const [globalAvatar, setGlobalAvatar] = useState<string | null>(null);
-  const [fallbackText, setFallbackText] = useState<string>('用'); // 預設安全字
+  const [fallbackText, setFallbackText] = useState<string>('👤'); // 預設安全符號改為人像
 
   // 控管目前是否為管理者狀態
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
@@ -36,7 +38,6 @@ export default function RootLayout() {
         'guest';
 
       // 3. 撈取目前使用者自己的頭像與名字資料
-      // 優先使用「有使用者 ID 的 key」，避免不同帳號互相殘留。
       const savedUri =
         await AsyncStorage.getItem(`${savedUserId}_user_avatar_uri`) ||
         await AsyncStorage.getItem('user_avatar_uri');
@@ -85,12 +86,15 @@ export default function RootLayout() {
       }
 
       const cleanedName = detectedName.trim();
-      let finalLastChar = '用';
+      let finalFirstChar = '👤';
 
-      // 使用 Array.from，中文、英文都能安全取最後一個字元
+      // 🟢 修正：移除名字內所有的標點符號、空白與特殊符號（只保留中文與英文），並拿第一個字
       if (cleanedName.length > 0) {
-        const nameChars = Array.from(cleanedName);
-        finalLastChar = nameChars[nameChars.length - 1];
+        const cleanText = cleanedName.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
+        if (cleanText.length > 0) {
+          const nameChars = Array.from(cleanText);
+          finalFirstChar = nameChars[0]; // 🚀 改為抓取第一個有效文字
+        }
       }
 
       const finalAvatarUri = savedUri || savedAvatar || avatarFromProfile;
@@ -109,11 +113,11 @@ export default function RootLayout() {
       }
 
       setGlobalAvatar(safeAvatarUri || null);
-      setFallbackText(finalLastChar);
+      setFallbackText(finalFirstChar);
     } catch (e) {
       console.log('全域 Layout 讀取失敗：', e);
       setGlobalAvatar(null);
-      setFallbackText('用');
+      setFallbackText('👤');
     }
   }, []);
 
@@ -135,57 +139,52 @@ export default function RootLayout() {
 
   // 使用者登出
   const handleUserLogout = async () => {
-  try {
-    await AsyncStorage.multiRemove([
-      'user',
-      'member_id',
-      'current_user_id',
-      'account',
-      'password',
+    try {
+      await AsyncStorage.multiRemove([
+        'user',
+        'member_id',
+        'current_user_id',
+        'account',
+        'password',
+        'user_avatar',
+        'user_avatar_uri',
+        'guest_user_avatar',
+        'guest_user_avatar_uri',
+        'userProfile',
+        'user_profile',
+        'user_name_key',
+        'user_height_key',
+        'height',
+        'user_weight_key',
+        'weight',
+        'age',
+      ]);
 
-      'user_avatar',
-      'user_avatar_uri',
-      'guest_user_avatar',
-      'guest_user_avatar_uri',
+      if (Platform.OS === 'web') {
+        localStorage.removeItem('admin_logged_in');
+      }
 
-      'userProfile',
-      'user_profile',
-      'user_name_key',
+      setGlobalAvatar(null);
+      setFallbackText('👤');
+      setIsAdminLoggedIn(false);
 
-      'user_height_key',
-      'height',
-
-      'user_weight_key',
-      'weight',
-
-      'age',
-    ]);
-
-    if (Platform.OS === 'web') {
-      localStorage.removeItem('admin_logged_in');
+      router.replace('/');
+    } catch (e) {
+      console.log('使用者登出失敗：', e);
     }
-
-    setGlobalAvatar(null);
-    setFallbackText('用');
-    setIsAdminLoggedIn(false);
-
-    router.replace('/');
-  } catch (e) {
-    console.log('使用者登出失敗：', e);
-  }
-};
+  };
 
   // 管理者登出
   const handleAdminLogout = () => {
-  if (Platform.OS === 'web') {
-    const confirmLogout = window.confirm("確定要登出管理員系統，返回首頁嗎？");
-    if (confirmLogout) {
+    if (Platform.OS === 'web') {
+      const confirmLogout = window.confirm("確定要登出管理員系統，返回首頁嗎？");
+      if (confirmLogout) {
+        handleUserLogout();
+      }
+    } else {
       handleUserLogout();
     }
-  } else {
-    handleUserLogout();
-  }
-};
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -207,7 +206,6 @@ export default function RootLayout() {
           {/* 左側：標題與功能選單 */}
           <View style={styles.headerLeftGroup}>
             
-            {/* 🎯 核心修改點：在註冊頁（或任何未登入狀態）點擊「食半功倍」標題，一律回登入頁面 */}
             <TouchableOpacity 
               onPress={() => {
                 if (isAuthPage) {

@@ -21,9 +21,13 @@ export default function ProfileScreen() {
   // 狀態控制
   const [isEditing, setIsEditing] = useState(false);
   const [saveModalVisible, setSaveModalVisible] = useState(false);      
-  const [cancelModalVisible, setCancelModalVisible] = useState(false); // 控制取消編輯防呆彈窗
-  // 控制密碼是否顯示明碼
+  const [cancelModalVisible, setCancelModalVisible] = useState(false); 
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+
+  // 控制大頭貼操作選單 Modal（一級防呆）
+  const [avatarMenuVisible, setAvatarMenuVisible] = useState(false);
+  // 控制刪除大頭貼防呆二次確認 Modal（二級防呆）
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
 
   // 初始化個人資料狀態（預設全空）
   const [profileData, setProfileData] = useState<ProfileType>({
@@ -40,7 +44,6 @@ export default function ProfileScreen() {
   const [tempData, setTempData] = useState<ProfileType>({ ...profileData });
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
-  // 獲取今天日期 YYYY-MM-DD 格式
   const getTodayDateString = () => {
     const today = new Date();
     const yyyy = today.getFullYear();
@@ -55,37 +58,32 @@ export default function ProfileScreen() {
 
   const loadProfileData = async () => {
     try {
-      // 1. 取得當前使用者 ID（對齊每日紀錄頁面）
       const savedUserId =
-  await AsyncStorage.getItem('current_user_id') ||
-  await AsyncStorage.getItem('member_id') ||
-  'guest';
+        await AsyncStorage.getItem('current_user_id') ||
+        await AsyncStorage.getItem('member_id') ||
+        'guest';
 
-const userStr = await AsyncStorage.getItem('user');
-const currentUser = userStr ? JSON.parse(userStr) : null;
+      const userStr = await AsyncStorage.getItem('user');
+      const currentUser = userStr ? JSON.parse(userStr) : null;
 
-// 帳號密碼只作為顯示用：優先讀目前登入者資料，再讀登入時保存的 account/password
-const savedAccount = await AsyncStorage.getItem('account');
-const savedUsername = await AsyncStorage.getItem('username');
-const savedPassword = await AsyncStorage.getItem('password');
+      const savedAccount = await AsyncStorage.getItem('account');
+      const savedUsername = await AsyncStorage.getItem('username');
+      const savedPassword = await AsyncStorage.getItem('password');
 
-const singleAccount =
-  currentUser?.username ||
-  currentUser?.account ||
-  savedAccount ||
-  savedUsername ||
-  '';
+      const singleAccount =
+        currentUser?.username ||
+        currentUser?.account ||
+        savedAccount ||
+        savedUsername ||
+        '';
 
-const singlePassword = savedPassword || '';
+      const singlePassword = savedPassword || '';
 
-// 只讀目前使用者自己的資料，不再讀 userProfile / user_profile 這種共用資料
-let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
+      let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
       let parsedProfile: any = {};
       if (localData) {
         try { parsedProfile = JSON.parse(localData); } catch (e) {}
       }
-
-      const isSameAccount = parsedProfile.account && singleAccount && (parsedProfile.account === singleAccount);
 
       let rawName = parsedProfile.name || '';
       let rawBirthday = parsedProfile.birthday || '';
@@ -101,7 +99,6 @@ let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
       if (singleHeight) rawHeight = singleHeight;
       if (singleWeight) rawWeight = singleWeight;
 
-      // 💡 防呆過濾機制
       const cleanName = (rawName === '請輸入姓名' || rawName === '王小' || rawName === '王小明' || rawName === '你好' || rawName === 'xx') ? '' : rawName;
       const cleanBirthday = (rawBirthday === '請選擇生日' || rawBirthday === '1995-01-15') ? '' : rawBirthday;
       const cleanHeight = (rawHeight === '請選擇身高' || !rawHeight) ? '' : rawHeight.toString().trim();
@@ -159,7 +156,9 @@ let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
     return ageNum ? ` (${ageNum} 歲)` : '';
   };
 
-  const pickImage = async () => {
+  // 開啟相簿功能
+  const openImagePicker = async () => {
+    setAvatarMenuVisible(false); // 關閉選單
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') return;
     let result = await ImagePicker.launchImageLibraryAsync({
@@ -172,28 +171,23 @@ let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
       const imageUri = result.assets[0].uri;
       setAvatarUri(imageUri);
       
-      // 🟢 新增：將圖片轉換為 Base64 並保存（而不是保存 blob URL）
       try {
         const response = await fetch(imageUri);
         const blob = await response.blob();
         
-        // 轉換 Blob 為 Base64
         const reader = new FileReader();
         reader.onload = async () => {
           const base64Data = reader.result as string;
-          // 保存 Base64 編碼的圖片
           await AsyncStorage.setItem('user_avatar', base64Data);
           const currentUserId =
             await AsyncStorage.getItem('current_user_id') ||
             await AsyncStorage.getItem('member_id') ||
             'guest';
           await AsyncStorage.setItem(`${currentUserId}_user_avatar`, base64Data);
-          console.log('✅ 圖片已保存為 Base64');
         };
         reader.readAsDataURL(blob);
       } catch (e) {
         console.log('⚠️ Base64 轉換失敗，使用原始 URI:', e);
-        // 降級方案：直接保存 URI
         await AsyncStorage.setItem('user_avatar', imageUri);
         const currentUserId =
           await AsyncStorage.getItem('current_user_id') ||
@@ -204,6 +198,40 @@ let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
     }
   };
 
+  // 確定刪除大頭貼
+  const handleConfirmDeleteImage = async () => {
+    setDeleteConfirmVisible(false);
+    setAvatarUri(null);
+    try {
+      await AsyncStorage.removeItem('user_avatar');
+      const currentUserId =
+        await AsyncStorage.getItem('current_user_id') ||
+        await AsyncStorage.getItem('member_id') ||
+        'guest';
+      await AsyncStorage.removeItem(`${currentUserId}_user_avatar`);
+    } catch (e) {
+      console.error("刪除圖片失敗：", e);
+    }
+  };
+
+  // 每次點擊鉛筆，不論有無圖片，一律彈出選單詢問
+  const handleAvatarPress = () => {
+    setAvatarMenuVisible(true);
+  };
+
+  // 🟢 修正：過濾名字裡面的符號，確保只抓取中文或英文字母作為頭像字元
+  const getFirstCharOfName = () => {
+    const currentName = isEditing ? tempData.name : profileData.name;
+    if (currentName && currentName.trim().length > 0) {
+      // 移除名字內所有的標點符號、空白與特殊符號（只保留中文 4e00-9fa5 與 英文 A-Za-z）
+      const cleanText = currentName.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
+      if (cleanText.length > 0) {
+        return cleanText.charAt(0); // 傳回過濾後的第 1 個有效文字
+      }
+    }
+    return "👤"; // 若整串都是符號或為空，則顯示人像圖示
+  };
+
   const showWarningAlert = (message: string) => {
     if (Platform.OS === 'web') window.alert(`儲存失敗\n\n⚠️ ${message}`);
     else Alert.alert("儲存失敗", `⚠️ ${message}`);
@@ -212,6 +240,11 @@ let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
   const handleEditPress = () => {
     if (isEditing) {
       if (!tempData.name || tempData.name.trim() === '') { showWarningAlert('請輸入正確的姓名！'); return; }
+      
+      // 🟢 儲存防呆：如果名字裡全都是符號，也不給過
+      const cleanText = tempData.name.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
+      if (cleanText.length === 0) { showWarningAlert('姓名不能全為空白或符號！'); return; }
+
       if (!tempData.birthday || tempData.birthday.trim() === '') { showWarningAlert('請選擇生日！'); return; }
       if (!tempData.height || tempData.height.trim() === '') { showWarningAlert('請選擇身高！'); return; }
       if (!tempData.weight || tempData.weight.trim() === '') { showWarningAlert('請選擇體重！'); return; }
@@ -228,9 +261,9 @@ let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
     setSaveModalVisible(false);
     try {
       const savedUserId =
-  await AsyncStorage.getItem('current_user_id') ||
-  await AsyncStorage.getItem('member_id') ||
-  'guest';
+        await AsyncStorage.getItem('current_user_id') ||
+        await AsyncStorage.getItem('member_id') ||
+        'guest';
       const calculatedAgeStr = getPureAgeValue(tempData.birthday);
       const updatedData = {
         ...tempData,
@@ -244,17 +277,14 @@ let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
 
       const stringifiedData = JSON.stringify(updatedData);
       
-      // 全域與分開欄位同步寫入
-      // 只存目前登入使用者自己的資料，不再寫入共用 key
-await AsyncStorage.setItem(`${savedUserId}_user_profile`, stringifiedData);
-await AsyncStorage.setItem(`${savedUserId}_user_name_key`, updatedData.name.trim());
-await AsyncStorage.setItem(`${savedUserId}_user_height`, updatedData.height);
-await AsyncStorage.setItem(`${savedUserId}_user_weight`, updatedData.weight);
+      await AsyncStorage.setItem(`${savedUserId}_user_profile`, stringifiedData);
+      await AsyncStorage.setItem(`${savedUserId}_user_name_key`, updatedData.name.trim());
+      await AsyncStorage.setItem(`${savedUserId}_user_height`, updatedData.height);
+      await AsyncStorage.setItem(`${savedUserId}_user_weight`, updatedData.weight);
 
-if (updatedData.age) {
-  await AsyncStorage.setItem(`${savedUserId}_user_age`, updatedData.age);
-}
-      // 不寫入每日紀錄，避免會員中心體重影響每日紀錄。
+      if (updatedData.age) {
+        await AsyncStorage.setItem(`${savedUserId}_user_age`, updatedData.age);
+      }
 
       if (Platform.OS === 'web') window.alert("個人資料已成功更新！");
       else Alert.alert("成功", "個人資料已成功更新！");
@@ -263,7 +293,6 @@ if (updatedData.age) {
     }
   };
 
-  // 🛠️ 智能取消判斷：比對暫存值與原始資料是否有差異
   const handleCancelPress = () => {
     const isChanged = 
       tempData.name !== profileData.name ||
@@ -273,15 +302,12 @@ if (updatedData.age) {
       tempData.gender !== profileData.gender;
 
     if (isChanged) {
-      // 有更改過欄位內容 ➡️ 跳出確認防呆彈窗
       setCancelModalVisible(true);
     } else {
-      // 什麼都沒改 ➡️ 直接跳出編輯狀態，不顯示彈窗
       setIsEditing(false);
     }
   };
 
-  // 確定要放棄編輯
   const handleConfirmCancel = () => {
     setCancelModalVisible(false);
     setIsEditing(false);
@@ -306,11 +332,13 @@ if (updatedData.age) {
           
           {/* 左側欄位（大頭貼與姓名） */}
           <View style={styles.leftSection}>
-            <TouchableOpacity style={styles.avatarContainer} onPress={pickImage} activeOpacity={0.8}>
+            <TouchableOpacity style={styles.avatarContainer} onPress={handleAvatarPress} activeOpacity={0.8}>
               {avatarUri ? (
                 <Image source={{ uri: avatarUri }} style={styles.avatarImage} />
               ) : (
-                <View style={styles.avatarPlaceholder} />
+                <View style={styles.avatarTextPlaceholder}>
+                  <Text style={styles.avatarTextLabel}>{getFirstCharOfName()}</Text>
+                </View>
               )}
               <View style={styles.editIconBadge}><Text style={styles.editIconText}>✏️</Text></View>
             </TouchableOpacity>
@@ -493,7 +521,6 @@ if (updatedData.age) {
             <View style={styles.btnGroupRow}>
               {isEditing ? (
                 <View style={{ flexDirection: 'row' }}>
-                  {/* 🛠️ 取消按鈕改為呼叫新的智慧判斷函式 handleCancelPress */}
                   <TouchableOpacity style={[styles.editBtn, { backgroundColor: '#ccc', marginRight: 15 }]} onPress={handleCancelPress}>
                     <Text style={styles.editBtnText}>取 消</Text>
                   </TouchableOpacity>
@@ -511,6 +538,52 @@ if (updatedData.age) {
 
         </View>
       </ScrollView>
+
+      {/* 自訂選單 Modal (每次點筆必問) */}
+      <Modal animationType="fade" transparent={true} visible={avatarMenuVisible} onRequestClose={() => setAvatarMenuVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.alertContent}>
+            <Text style={styles.alertTitle}>🖼️ 編輯大頭貼</Text>
+            <Text style={styles.alertMessage}>請選擇您想執行的操作：</Text>
+            
+            <TouchableOpacity style={styles.menuActionButton} onPress={openImagePicker}>
+              <Text style={styles.menuActionTextPrimary}>更換新圖片</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity 
+              style={[styles.menuActionButton, { borderColor: '#E74C3C' }]} 
+              onPress={() => {
+                setAvatarMenuVisible(false);
+                setDeleteConfirmVisible(true); // 關閉選單，開啟二次防呆確認
+              }}
+            >
+              <Text style={styles.menuActionTextDanger}>刪除大頭貼</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.menuActionButton, { borderBottomWidth: 0, marginTop: 10 }]} onPress={() => setAvatarMenuVisible(false)}>
+              <Text style={styles.menuActionTextCancel}>取消</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 刪除圖片時的「二次確認」防呆 Modal */}
+      <Modal animationType="fade" transparent={true} visible={deleteConfirmVisible} onRequestClose={() => setDeleteConfirmVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.alertContent}>
+            <Text style={styles.alertTitle}>⚠️ 確定要刪除圖片嗎？</Text>
+            <Text style={styles.alertMessage}>刪除後大頭貼將恢復為預設的姓名第一個字。</Text>
+            <View style={styles.modalButtonGroup}>
+              <TouchableOpacity style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => setDeleteConfirmVisible(false)}>
+                <Text style={styles.modalBtnCancelText}>取消</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#E74C3C' }]} onPress={handleConfirmDeleteImage}>
+                <Text style={styles.modalBtnConfirmText}>確定刪除</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* 儲存確認彈窗 */}
       <Modal animationType="fade" transparent={true} visible={saveModalVisible} onRequestClose={() => setSaveModalVisible(false)}>
@@ -557,9 +630,10 @@ const styles = StyleSheet.create({
   profileCard: { backgroundColor: 'white', width: '55%', minWidth: 580, flexDirection: 'row', borderRadius: 40, padding: 50, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 10 },
   leftSection: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   avatarContainer: { width: 140, height: 140, marginBottom: 20, position: 'relative' },
-  avatarPlaceholder: { width: 140, height: 140, borderRadius: 70, backgroundColor: '#E0E0E0' },
   avatarImage: { width: 140, height: 140, borderRadius: 70 },
-  editIconBadge: { position: 'absolute', bottom: 5, right: 5, backgroundColor: 'white', width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', elevation: 3 },
+  avatarTextPlaceholder: { width: 140, height: 140, borderRadius: 70, backgroundColor: '#E0E0E0', justifyContent: 'center', alignItems: 'center' },
+  avatarTextLabel: { fontSize: 44, fontWeight: 'bold', color: '#555' },
+  editIconBadge: { position: 'absolute', bottom: 5, right: 5, backgroundColor: 'white', width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center', elevation: 3, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 2 },
   editIconText: { fontSize: 16 },
   memberName: { fontSize: 24, fontWeight: 'bold', color: '#333' },
   placeholderText: { color: '#A9A9A9', fontWeight: 'normal', fontStyle: 'italic' },
@@ -595,5 +669,28 @@ const styles = StyleSheet.create({
   modalBtnCancel: { backgroundColor: '#F5F5F5' },
   modalBtnCancelText: { color: '#666', fontSize: 15, fontWeight: '500' },
   orangeAlertBtn: { backgroundColor: '#F3B07E' },
-  modalBtnConfirmText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' }
+  modalBtnConfirmText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' },
+  
+  menuActionButton: {
+    width: '100%',
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  menuActionTextPrimary: {
+    fontSize: 16,
+    color: '#E67E22',
+    fontWeight: '600',
+  },
+  menuActionTextDanger: {
+    fontSize: 16,
+    color: '#E74C3C',
+    fontWeight: '600',
+  },
+  menuActionTextCancel: {
+    fontSize: 16,
+    color: '#999',
+    fontWeight: '500',
+  }
 });
