@@ -70,7 +70,7 @@ DATABASES = {
         'USER': 'avnadmin',
         'PASSWORD': 'AVNS_jahsbq0dmFPQ7n9P7SX',
         'HOST': 'mysql-28e17ff3-kting1116-197f.f.aivencloud.com',
-        'PORT': '26274',
+        'PORT': '27192',
         'OPTIONS': {
             'ssl': {'ca': None}, 
         },
