@@ -319,11 +319,15 @@ export default function ProfileScreen() {
     cursor: 'pointer'
   };
 
-  // 🔴 修正：網頁端 DatePicker 專用樣式，強制定位於輸入框右下
+  // 🟢 修正：網頁端 DatePicker 專用樣式，加強字距與字型，盡量消除「年」後面的空格
   const webDateInputStyle = {
     ...webSelectStyle,
     width: '100%',
     position: 'relative' as const,
+    letterSpacing: '-2px', // 🔴 負值字距：將瀏覽器預設的 "年 /月/日" 空隙強制縮緊擠壓掉
+    fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    fontVariantNumeric: 'tabular-nums' as const,
+    WebkitAppearance: 'textfield' as const,
   };
 
   return (
@@ -369,7 +373,6 @@ export default function ProfileScreen() {
               <Text style={styles.infoLabel}>生 日</Text>
               {isEditing ? (
                 Platform.OS === 'web' ? (
-                  /* 🟢 修正：增加一個 className 或直接控制容器節點，並加入包含隱含定位的容器 */
                   <div style={{ width: '65%', position: 'relative', display: 'flex', justifyContent: 'flex-end' }}>
                     <input
                       id="web-birthday-picker"
@@ -410,7 +413,7 @@ export default function ProfileScreen() {
               ) : (
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Text style={[styles.infoValue, (!profileData.birthday || profileData.birthday === '') && styles.placeholderText]}>
-                    {!profileData.birthday || profileData.birthday === '' ? '請選擇生日' : profileData.birthday}
+                    {!profileData.birthday||profileData.birthday === '' ? '請選擇生日' : profileData.birthday}
                   </Text>
                   {profileData.birthday ? <Text style={styles.ageHighlightText}>{renderAgeLabel(profileData.birthday)}</Text> : null}
                 </View>
@@ -458,7 +461,7 @@ export default function ProfileScreen() {
                     style={webSelectStyle}
                   >
                     <option value="">請選擇體重</option>
-                    {weightOptions.map(w => <option key={w} value={w}>{w} kg</option>)}
+                    {heightOptions.map(w => <option key={w} value={w}>{w} kg</option>)}
                   </select>
                 ) : (
                   <TextInput
