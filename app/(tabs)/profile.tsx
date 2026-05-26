@@ -279,8 +279,7 @@ export default function ProfileScreen() {
         await AsyncStorage.setItem(`${savedUserId}_user_age`, updatedData.age);
       }
 
-      if (Platform.OS === 'web') window.alert("個人資料已成功更新！");
-      else Alert.alert("成功", "個人資料已成功更新！");
+      // 已移除阻斷式提示，僅以非阻斷方式處理（不顯示 window.alert / Alert.alert）
     } catch (error) {
       console.error(error);
     }
