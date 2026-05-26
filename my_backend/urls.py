@@ -12,6 +12,11 @@ urlpatterns = [
     # 商品相關
     path('products/', views.products, name='products'),
     path('products/add/', views.add_product, name='add_product'),
+    path('products/pending/', views.pending_products, name='pending_products'),
+    path('products/rejected/', views.rejected_products, name='rejected_products'),
+    path('products/<int:product_id>/approve/', views.approve_product, name='approve_product'),
+    path('products/<int:product_id>/reject/', views.reject_product, name='reject_product'),
+    path('products/<int:product_id>/delete/', views.delete_product, name='delete_product'),
 
     # 飲食紀錄相關
     path('diet-records/add/', views.add_diet_record, name='add_diet_record'),

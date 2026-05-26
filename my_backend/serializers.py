@@ -9,9 +9,27 @@ class MemberSerializer(serializers.ModelSerializer):
 
 
 class ProductSerializer(serializers.ModelSerializer):
+    # 額外回傳商品建立者資訊，讓前端可以判斷來源是「管理者」還是「使用者」
+    creator_id = serializers.IntegerField(source='creator.id', read_only=True)
+    creator_username = serializers.CharField(source='creator.username', read_only=True)
+    creator_role = serializers.CharField(source='creator.role', read_only=True)
+
     class Meta:
         model = Products
-        fields = '__all__'
+        fields = [
+            'id',
+            'name',
+            'unit',
+            'calories',
+            'status',
+            'created_at',
+            'creator',
+
+            # 給前端顯示用
+            'creator_id',
+            'creator_username',
+            'creator_role',
+        ]
 
 
 class DietRecordSerializer(serializers.ModelSerializer):

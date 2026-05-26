@@ -184,25 +184,174 @@ def member_profile(request, member_id):
             "member": member_to_dict(member)
         }, status=status.HTTP_200_OK)
 
+
+
+def get_admin_member_or_response(request):
+    """從 request 裡讀取目前登入的管理者 id，並確認 members.role == 'admin'。"""
+    member_id = request.data.get('member') or request.data.get('admin') or request.data.get('admin_id')
+
+    if not member_id:
+        return None, Response({
+            "success": False,
+            "message": "缺少管理者會員 ID"
+        }, status=status.HTTP_403_FORBIDDEN)
+
+    try:
+        admin_member = Members.objects.get(id=member_id)
+    except Members.DoesNotExist:
+        return None, Response({
+            "success": False,
+            "message": "找不到管理者會員"
+        }, status=status.HTTP_404_NOT_FOUND)
+
+    if admin_member.role != 'admin':
+        return None, Response({
+            "success": False,
+            "message": "只有管理者可以執行此操作"
+        }, status=status.HTTP_403_FORBIDDEN)
+
+    return admin_member, None
+
 @api_view(['GET'])
 def products(request):
-    data = Products.objects.all()
+    """一般商品查詢：只回傳已通過審核/正式上架的商品。"""
+    data = Products.objects.filter(status='approved').order_by('name')
+    serializer = ProductSerializer(data, many=True)
+    return Response(serializer.data)
+
+
+@api_view(['GET'])
+def pending_products(request):
+    """管理者審核頁：只列出待審核商品。"""
+    data = Products.objects.filter(status='pending').order_by('-created_at')
+    serializer = ProductSerializer(data, many=True)
+    return Response(serializer.data)
+
+
+@api_view(['GET'])
+def rejected_products(request):
+    """管理者審核紀錄：列出未通過商品。"""
+    data = Products.objects.filter(status='rejected').order_by('-created_at')
     serializer = ProductSerializer(data, many=True)
     return Response(serializer.data)
 
 
 @api_view(['POST'])
 def add_product(request):
-    serializer = ProductSerializer(data=request.data)
+    """
+    新增商品：
+    - 一般使用者新增：status = pending，等管理者審核
+    - 管理者新增：status = approved，直接上架
+    前端可傳 member / creator / creator_id 任一種作為建立者會員 id。
+    """
+    data = request.data.copy()
+
+    member_id = data.get('member') or data.get('creator') or data.get('creator_id')
+    member = None
+
+    if member_id:
+        try:
+            member = Members.objects.get(id=member_id)
+            data['creator'] = member.id
+        except Members.DoesNotExist:
+            return Response({
+                "success": False,
+                "message": "找不到會員"
+            }, status=status.HTTP_404_NOT_FOUND)
+
+    if member and member.role == 'admin':
+        data['status'] = 'approved'
+    else:
+        data['status'] = 'pending'
+
+    serializer = ProductSerializer(data=data)
 
     if serializer.is_valid():
         product = serializer.save()
         return Response({
-            "message": "商品新增成功",
+            "success": True,
+            "message": "商品新增成功，等待管理者審核" if product.status == 'pending' else "商品新增成功，已直接上架",
             "product": ProductSerializer(product).data
         }, status=status.HTTP_201_CREATED)
 
-    return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    return Response({
+        "success": False,
+        "message": "商品新增失敗",
+        "errors": serializer.errors
+    }, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+def approve_product(request, product_id):
+    admin_member, error_response = get_admin_member_or_response(request)
+    if error_response:
+        return error_response
+
+    try:
+        product = Products.objects.get(id=product_id)
+    except Products.DoesNotExist:
+        return Response({
+            "success": False,
+            "message": "找不到商品"
+        }, status=status.HTTP_404_NOT_FOUND)
+
+    product.status = 'approved'
+    product.save()
+
+    return Response({
+        "success": True,
+        "message": "商品已通過審核並上架",
+        "reviewer": member_to_dict(admin_member),
+        "product": ProductSerializer(product).data
+    })
+
+
+@api_view(['POST'])
+def reject_product(request, product_id):
+    admin_member, error_response = get_admin_member_or_response(request)
+    if error_response:
+        return error_response
+
+    try:
+        product = Products.objects.get(id=product_id)
+    except Products.DoesNotExist:
+        return Response({
+            "success": False,
+            "message": "找不到商品"
+        }, status=status.HTTP_404_NOT_FOUND)
+
+    product.status = 'rejected'
+    product.save()
+
+    return Response({
+        "success": True,
+        "message": "商品已拒絕",
+        "reviewer": member_to_dict(admin_member),
+        "product": ProductSerializer(product).data
+    })
+
+
+@api_view(['DELETE', 'POST'])
+def delete_product(request, product_id):
+    admin_member, error_response = get_admin_member_or_response(request)
+    if error_response:
+        return error_response
+
+    try:
+        product = Products.objects.get(id=product_id)
+    except Products.DoesNotExist:
+        return Response({
+            "success": False,
+            "message": "找不到商品"
+        }, status=status.HTTP_404_NOT_FOUND)
+
+    product.delete()
+
+    return Response({
+        "success": True,
+        "message": "商品已刪除",
+        "reviewer": member_to_dict(admin_member),
+    })
 
 
 @api_view(['POST'])

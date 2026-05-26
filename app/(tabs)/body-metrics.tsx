@@ -15,6 +15,56 @@ import {
   View
 } from 'react-native';
 
+const API_URL = 'http://127.0.0.1:8001';
+
+const parseApiResponse = async (response: Response) => {
+  const text = await response.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`後端回傳不是 JSON，HTTP ${response.status}：${text.slice(0, 180)}`);
+  }
+};
+
+const getCurrentMemberId = async () => {
+  try {
+    const userStr = await AsyncStorage.getItem('user');
+    const currentUser = userStr ? JSON.parse(userStr) : null;
+
+    const memberId =
+      currentUser?.id?.toString?.() ||
+      (await AsyncStorage.getItem('current_user_id')) ||
+      (await AsyncStorage.getItem('member_id')) ||
+      'guest';
+
+    return /^\d+$/.test(memberId) ? memberId : 'guest';
+  } catch {
+    return 'guest';
+  }
+};
+
+const getAgeFromBirthday = (birthday: string) => {
+  if (!birthday) return '';
+
+  const birthDate = new Date(birthday);
+  if (isNaN(birthDate.getTime())) return '';
+
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDiff = today.getMonth() - birthDate.getMonth();
+
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    age--;
+  }
+
+  return age >= 0 ? String(age) : '';
+};
+
+const cleanBackendNumberText = (value: any) => {
+  if (value === undefined || value === null) return '';
+  return String(value).replace(/[^0-9.]/g, '').trim();
+};
+
 export default function BodyMetricsScreen() {
 
   // 核心數據狀態 - 初始一律為空字串，對齊選單的「請選擇」
@@ -173,43 +223,56 @@ export default function BodyMetricsScreen() {
     return { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge };
   };
 
-  // 💥【自動化載入】焦點監聽
-  useFocusEffect(
-  useCallback(() => {
-    // 進入身體指數查詢頁時，預設全部清空
-    setInitialProfile(null);
+  const loadProfileFromBackend = async (memberId: string) => {
+    if (!memberId || memberId === 'guest') return null;
 
-    setMetricsData({
-      gender: '',
-      age: '',
-      height: '',
-      weight: '',
-      bmi: '---',
-      bmiStatus: '',
-      bmrValue: 0,
-      isCalculated: false,
-    });
-
-    // 捲動條也重置
-    setScrollY(0);
-  }, [])
-);
-
-  // 🔄 手動點擊「同步會員資料」按鈕邏輯
-  const loadSyncProfileData = async () => {
     try {
-      const savedUserId =
-        await AsyncStorage.getItem('current_user_id') ||
-        await AsyncStorage.getItem('member_id') ||
-        'guest';
+      const response = await fetch(`${API_URL}/members/${memberId}/profile/`);
+      const data = await parseApiResponse(response);
 
-      // 只讀目前登入者自己的會員中心身高資料
+      if (!response.ok || data.success === false || !data.member) {
+        return null;
+      }
+
+      const member = data.member;
+      const profileForCache = {
+        gender: member.gender ? String(member.gender) : '',
+        birthday: member.birthday ? String(member.birthday) : '',
+        age: member.birthday ? getAgeFromBirthday(String(member.birthday)) : '',
+        height: member.height !== null && member.height !== undefined ? cleanBackendNumberText(member.height) : '',
+        weight: member.initial_weight !== null && member.initial_weight !== undefined ? cleanBackendNumberText(member.initial_weight) : '',
+      };
+
+      await AsyncStorage.setItem(`${memberId}_user_profile`, JSON.stringify(profileForCache));
+      await AsyncStorage.setItem(`${memberId}_user_height`, profileForCache.height);
+      await AsyncStorage.setItem(`${memberId}_user_weight`, profileForCache.weight);
+      if (profileForCache.age) {
+        await AsyncStorage.setItem(`${memberId}_user_age`, profileForCache.age);
+      }
+
+      return profileForCache;
+    } catch (e) {
+      console.log('從後端讀取會員資料失敗，改用本機快取', e);
+      return null;
+    }
+  };
+
+  const applyProfileToMetrics = async (showSuccessAlert = false) => {
+    try {
+      const savedUserId = await getCurrentMemberId();
+
+      if (!savedUserId || savedUserId === 'guest') {
+        if (showSuccessAlert) showAlert('⚠️ 找不到目前登入會員，請重新登入');
+        return;
+      }
+
+      const backendProfile = await loadProfileFromBackend(savedUserId);
+
       const scannedHeight =
         await AsyncStorage.getItem(`${savedUserId}_user_height`) ||
         await AsyncStorage.getItem(`${savedUserId}_height`) ||
         '';
 
-      // 今日每日紀錄體重：有輸入才優先使用；沒有就回到會員中心體重
       let todayWeight = '';
       const todayFoodKey = `${savedUserId}_food_record_${getTodayDateString()}`;
       const dailyFoodRecordRaw = await AsyncStorage.getItem(todayFoodKey);
@@ -228,35 +291,38 @@ export default function BodyMetricsScreen() {
         } catch (e) {}
       }
 
-      // 只讀目前登入者自己的會員中心資料，不再讀 userProfile / user_profile 共用 key
-      const localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
+      const localData =
+        backendProfile !== null
+          ? JSON.stringify(backendProfile)
+          : await AsyncStorage.getItem(`${savedUserId}_user_profile`);
+
       const scannedWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`) || '';
 
       const { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge } =
         parseAndCleanProfile(localData, todayWeight, scannedHeight, scannedWeight);
 
-      if (!cleanWeight || cleanWeight.trim() === '' || parseFloat(cleanWeight) === 0) {
+      if (showSuccessAlert && (!cleanWeight || cleanWeight.trim() === '' || parseFloat(cleanWeight) === 0)) {
         showAlert('⚠️ 請先至會員中心或每日紀錄填寫體重資料');
         return;
       }
 
-      if (!cleanGender || !finalAge || !cleanHeight) {
+      if (showSuccessAlert && (!cleanGender || !finalAge || !cleanHeight)) {
         showAlert('⚠️ 請至會員中心填寫完整的性別、生日與身高資料');
         return;
       }
 
       if (isZeroAge) {
-        showAlert("請輸入大等於1的歲數，不滿1足歲無法計算TDEE");
+        if (showSuccessAlert) showAlert('請輸入大等於1的歲數，不滿1足歲無法計算TDEE');
         setInitialProfile({ gender: cleanGender, age: '', height: cleanHeight, weight: cleanWeight });
         setMetricsData(prev => ({
           ...prev,
           gender: cleanGender,
-          age: '', 
+          age: '',
           height: cleanHeight,
           weight: cleanWeight,
-          isCalculated: false
+          isCalculated: false,
         }));
-        return; 
+        return;
       }
 
       setInitialProfile({ gender: cleanGender, age: finalAge, height: cleanHeight, weight: cleanWeight });
@@ -266,14 +332,29 @@ export default function BodyMetricsScreen() {
         age: finalAge,
         height: cleanHeight,
         weight: cleanWeight,
-        isCalculated: false // 同步成功後重置為未計算熱量狀態，促使使用者點擊計算
+        isCalculated: false,
       }));
 
-      showAlert('✨ 指數與會員資料同步成功！');
-
+      if (showSuccessAlert) {
+        showAlert('✨ 指數與會員資料同步成功！');
+      }
     } catch (error) {
-      console.error("手動同步會員資料錯誤：", error);
+      console.error('同步會員資料錯誤：', error);
+      if (showSuccessAlert) showAlert('⚠️ 同步失敗，請確認 Django 是否已啟動');
     }
+  };
+
+  // 💥【自動化載入】焦點監聽：進入頁面時自動從 Django / Aiven 抓目前會員資料
+  useFocusEffect(
+    useCallback(() => {
+      setScrollY(0);
+      applyProfileToMetrics(false);
+    }, [])
+  );
+
+  // 🔄 手動點擊「同步會員資料」按鈕邏輯
+  const loadSyncProfileData = async () => {
+    await applyProfileToMetrics(true);
   };
 
   // 📊 【即時更新】僅自動計算與監聽 BMI

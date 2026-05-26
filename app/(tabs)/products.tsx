@@ -3,6 +3,37 @@ import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+const API_URL = 'http://127.0.0.1:8001';
+
+interface Product {
+  id: string;
+  name: string;
+  unit: string;
+  calories: number;
+  status: 'approved' | 'pending' | 'rejected';
+  creatorId?: string;
+}
+
+const parseApiResponse = async (response: any) => {
+  const text = await response.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch (error) {
+    throw new Error(`後端回傳不是 JSON，HTTP ${response.status}：${text.slice(0, 180)}`);
+  }
+};
+
+const mapProductFromApi = (item: any): Product => ({
+  id: String(item.id),
+  name: item.name || '',
+  unit: item.unit || '',
+  calories: Number(item.calories || 0),
+  status: item.status || 'approved',
+  creatorId: item.creator !== null && item.creator !== undefined
+    ? String(item.creator)
+    : (item.creator_id !== null && item.creator_id !== undefined ? String(item.creator_id) : ''),
+});
+
 // 1. 全頁面配置物件
 const pageLanguageConfig = {
   appName: '食半功倍',
@@ -54,11 +85,6 @@ const pageLanguageConfig = {
   amountPlaceholder: '限輸入數字'
 };
 
-const initialProducts = [
-  { id: '1', name: '光泉 無糖豆漿', unit: '一瓶', calories: 120, status: 'approved' }, 
-  { id: '2', name: '統一 低脂鮮乳', unit: '一盒', calories: 150, status: 'approved' }, 
-  { id: '3', name: '茶葉蛋', unit: '一顆', calories: 75, status: 'approved' },  
-];
 
 export default function ProductsScreen() {
   const txt = pageLanguageConfig;
@@ -68,7 +94,7 @@ export default function ProductsScreen() {
   const [auditSubTab, setAuditSubTab] = useState<'approved' | 'rejected'>('approved'); 
 
   const [searchQuery, setSearchQuery] = useState('');
-  const [products, setProducts] = useState([]); 
+  const [products, setProducts] = useState<Product[]>([]); 
   const [currentUserId, setCurrentUserId] = useState('guest'); 
   
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -107,48 +133,85 @@ export default function ProductsScreen() {
     return cleanUnit ? `${cleanName} / ${cleanUnit}` : cleanName;
   };
 
-  // 載入與拉取快取資料
-  const loadSavedProducts = async () => {
+  const getCurrentMemberId = async () => {
     try {
-      const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
-      setCurrentUserId(savedUserId);
-      
-      let globalList = [];
-      if (Platform.OS === 'web') {
-        const stored = localStorage.getItem('global_products');
-        if (stored) {
-          globalList = JSON.parse(stored);
-        } else {
-          localStorage.setItem('global_products', JSON.stringify(initialProducts));
-          globalList = initialProducts;
-        }
-      } else {
-        const stored = await AsyncStorage.getItem('global_products');
-        globalList = stored ? JSON.parse(stored) : initialProducts;
-      }
+      const userStr = await AsyncStorage.getItem('user');
+      const user = userStr ? JSON.parse(userStr) : null;
 
-      setProducts([...globalList].reverse());
-    } catch (e) {
-      console.error('讀取商品快取失敗:', e);
+      const id =
+        user?.id?.toString?.() ||
+        (await AsyncStorage.getItem('current_user_id')) ||
+        (await AsyncStorage.getItem('member_id')) ||
+        '';
+
+      return /^\d+$/.test(id) ? id : 'guest';
+    } catch (error) {
+      console.error('取得目前會員 ID 失敗:', error);
+      return 'guest';
     }
   };
 
-  // 全域多視窗同步監聽
+  // 從 Django / Aiven 讀取商品資料，不再使用 localStorage。
+  // /products/ 只會回傳 approved 商品；/products/pending/ 會回傳待審核商品；/products/rejected/ 會回傳未通過商品。
+  const loadSavedProducts = async () => {
+    try {
+      const savedUserId = await getCurrentMemberId();
+      setCurrentUserId(savedUserId);
+
+      const [approvedRes, pendingRes, rejectedRes] = await Promise.all([
+        fetch(`${API_URL}/products/`),
+        fetch(`${API_URL}/products/pending/`),
+        fetch(`${API_URL}/products/rejected/`),
+      ]);
+
+      const approvedData = await parseApiResponse(approvedRes);
+      const pendingData = await parseApiResponse(pendingRes);
+      const rejectedData = await parseApiResponse(rejectedRes);
+
+      if (!approvedRes.ok) {
+        throw new Error(approvedData.message || `讀取已上架商品失敗，HTTP ${approvedRes.status}`);
+      }
+
+      if (!pendingRes.ok) {
+        throw new Error(pendingData.message || `讀取待審核商品失敗，HTTP ${pendingRes.status}`);
+      }
+
+      if (!rejectedRes.ok) {
+        throw new Error(rejectedData.message || `讀取未通過商品失敗，HTTP ${rejectedRes.status}`);
+      }
+
+      const mergedMap = new Map<string, Product>();
+
+      (Array.isArray(approvedData) ? approvedData : []).forEach((item: any) => {
+        const product = mapProductFromApi(item);
+        mergedMap.set(product.id, product);
+      });
+
+      (Array.isArray(pendingData) ? pendingData : []).forEach((item: any) => {
+        const product = mapProductFromApi(item);
+        mergedMap.set(product.id, product);
+      });
+
+      (Array.isArray(rejectedData) ? rejectedData : []).forEach((item: any) => {
+        const product = mapProductFromApi(item);
+        mergedMap.set(product.id, product);
+      });
+
+      setProducts(Array.from(mergedMap.values()).reverse());
+    } catch (e: any) {
+      console.error('讀取商品資料失敗:', e);
+      showCustomAlert('讀取失敗', e?.message || '無法從後端讀取商品資料，請確認 Django 是否已啟動。', () => {}, '', txt.btnConfirm);
+    }
+  };
+
+  // 頁面載入與返回頁面時重新向後端讀取資料
   useEffect(() => {
     loadSavedProducts();
 
-    if (Platform.OS === 'web') {
-      const handleStorageChange = (e: StorageEvent) => {
-        if (e.key === 'global_products') {
-          loadSavedProducts();
-        }
-      };
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
       const handleWindowFocus = () => loadSavedProducts();
-
-      window.addEventListener('storage', handleStorageChange);
       window.addEventListener('focus', handleWindowFocus);
       return () => {
-        window.removeEventListener('storage', handleStorageChange);
         window.removeEventListener('focus', handleWindowFocus);
       };
     }
@@ -174,7 +237,7 @@ export default function ProductsScreen() {
 
   // 核心篩選過濾
   const getFilteredDisplayProducts = () => {
-    let baseList = [];
+    let baseList: Product[] = [];
 
     if (activeTab === 'list') {
       // 商品列表：全大眾已通過 + 自己審核中
@@ -243,41 +306,42 @@ export default function ProductsScreen() {
     }
 
     const formattedUnit = `${newProductAmount}${unitType === 'g' ? '克' : 'ml'}`;
-    const combinedName = `${newProductName.trim()} / ${formattedUnit}`;
-    const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
+    const savedUserId = await getCurrentMemberId();
 
-    const pendingProductItem = {
-      id: `user_add_${Date.now()}`, 
-      name: combinedName,
-      unit: formattedUnit, 
-      calories: calorieNum,
-      status: 'pending',   
-      creatorId: savedUserId 
-    };
+    if (savedUserId === 'guest') {
+      showCustomAlert('新增失敗', '找不到登入會員 ID，請重新登入後再試一次。', () => {}, '', txt.btnConfirm);
+      return;
+    }
 
     setIsModalVisible(false);
 
     try {
-      let currentGlobalProducts = [];
-      if (Platform.OS === 'web') {
-        const stored = localStorage.getItem('global_products');
-        currentGlobalProducts = stored ? JSON.parse(stored) : [...initialProducts];
-      } else {
-        const stored = await AsyncStorage.getItem('global_products');
-        currentGlobalProducts = stored ? JSON.parse(stored) : [...initialProducts];
+      const response = await fetch(`${API_URL}/products/add/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: newProductName.trim(),
+          unit: formattedUnit,
+          calories: calorieNum,
+          member: Number(savedUserId),
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+      console.log('新增商品結果:', data);
+
+      if (!response.ok || data.success === false) {
+        showCustomAlert('新增失敗', data.message || `商品新增失敗，HTTP ${response.status}`, () => {}, '', txt.btnConfirm);
+        return;
       }
 
-      currentGlobalProducts.push(pendingProductItem);
-
-      if (Platform.OS === 'web') {
-        localStorage.setItem('global_products', JSON.stringify(currentGlobalProducts));
-      } else {
-        await AsyncStorage.setItem('global_products', JSON.stringify(currentGlobalProducts));
-      }
-
-      loadSavedProducts();
-    } catch (e) {
+      await loadSavedProducts();
+    } catch (e: any) {
       console.error('儲存新商品資料失敗:', e);
+      showCustomAlert('新增失敗', e?.message || '無法連接後端，請確認 Django 是否已啟動。', () => {}, '', txt.btnConfirm);
+      return;
     }
 
     setTimeout(() => {
@@ -512,8 +576,12 @@ const styles = StyleSheet.create({
   searchRowContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 15, width: '100%' },
   searchBoxWrapper: { flex: 1, backgroundColor: '#EBEBEB', borderRadius: 25, paddingHorizontal: 20, height: 46, justifyContent: 'center', overflow: 'hidden' },
   searchInput: { 
-    fontSize: 15, color: '#333', width: '100%', height: '100%', paddingVertical: 0,
-    ...Platform.select({ web: { outlineStyle: 'none' } }),
+    fontSize: 15,
+    color: '#333',
+    width: '100%',
+    height: '100%',
+    paddingVertical: 0,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}),
   },
   searchCancelButton: { paddingLeft: 15, paddingVertical: 10, justifyContent: 'center' },
   searchCancelText: { fontSize: 16, color: '#666', fontWeight: '500' },

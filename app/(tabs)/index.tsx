@@ -111,30 +111,7 @@ export default function LoginScreen() {
         'user_name_key',
       ]);
 
-      // 保留你原本的管理者入口：admin / Admin123 直接進管理者頁面
-      // 這樣就算資料庫裡 admin 的 role 還是 user，也不會影響管理者頁面
-      if (cleanUsername === 'admin' && password === 'Admin123') {
-        if (Platform.OS === 'web') {
-          localStorage.setItem('admin_logged_in', 'true');
-        }
-
-        await AsyncStorage.setItem(
-          'user',
-          JSON.stringify({
-            id: 'admin',
-            username: 'admin',
-            role: 'admin',
-          })
-        );
-        await AsyncStorage.setItem('account', 'admin');
-        await AsyncStorage.setItem('username', 'admin');
-        await AsyncStorage.setItem('password', password);
-
-        setIsLoggedIn(true);
-        router.replace('/admin-review');
-        return;
-      }
-
+      // 管理者也必須走後端登入，才能拿到 members 表裡真正的數字 id 與 role。
       const response = await fetch(`${API_URL}/login/`, {
         method: 'POST',
         headers: {

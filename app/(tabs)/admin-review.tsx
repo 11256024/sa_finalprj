@@ -1,5 +1,8 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+
+const API_URL = 'http://127.0.0.1:8001';
 
 interface Product {
   id: string;
@@ -7,12 +10,95 @@ interface Product {
   unit: string; 
   calories: number;
   status: 'approved' | 'pending' | 'rejected'; 
-  creatorId?: string; 
+  creatorId?: string;
+  creatorRole?: string;
+  creatorUsername?: string;
 }
+
+
+const parseApiResponse = async (response: Response) => {
+  const text = await response.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch (error) {
+    throw new Error(`後端回傳不是 JSON，HTTP ${response.status}：${text.slice(0, 180)}`);
+  }
+};
+
+const getCreatorIdFromApi = (item: any) => {
+  if (item.creator_id !== null && item.creator_id !== undefined) {
+    return String(item.creator_id);
+  }
+
+  if (item.creator && typeof item.creator === 'object' && item.creator.id !== undefined) {
+    return String(item.creator.id);
+  }
+
+  if (item.creator !== null && item.creator !== undefined) {
+    return String(item.creator);
+  }
+
+  return '';
+};
+
+const getCreatorRoleFromApi = (item: any) => {
+  if (item.creator_role) {
+    return String(item.creator_role);
+  }
+
+  if (item.creatorRole) {
+    return String(item.creatorRole);
+  }
+
+  if (item.creator && typeof item.creator === 'object' && item.creator.role) {
+    return String(item.creator.role);
+  }
+
+  return '';
+};
+
+const getCreatorUsernameFromApi = (item: any) => {
+  if (item.creator_username) {
+    return String(item.creator_username);
+  }
+
+  if (item.creatorUsername) {
+    return String(item.creatorUsername);
+  }
+
+  if (item.creator && typeof item.creator === 'object' && item.creator.username) {
+    return String(item.creator.username);
+  }
+
+  return '';
+};
+
+const mapProductFromApi = (item: any): Product => ({
+  id: String(item.id),
+  name: item.name || '',
+  unit: item.unit || '',
+  calories: Number(item.calories || 0),
+  status: item.status || 'approved',
+  creatorId: getCreatorIdFromApi(item),
+  creatorRole: getCreatorRoleFromApi(item),
+  creatorUsername: getCreatorUsernameFromApi(item),
+});
+
+const getCreatorSourceText = (item: Product) => {
+  const creatorId = item.creatorId || 'guest';
+  const creatorRole = String(item.creatorRole || '').toLowerCase();
+  const roleText = creatorRole === 'admin' ? '管理者' : '使用者';
+
+  return `商品來源：${creatorId} (${roleText})`;
+};
+
+const showMessage = (message: string) => {
+  if (Platform.OS === 'web') window.alert(message);
+};
 
 export default function AdminReviewScreen() {
   
-  const currentUserId = 'admin_jack123'; 
+  const [currentUserId, setCurrentUserId] = useState('');
 
   const [activeTab, setActiveTab] = useState<'list' | 'user_pending' | 'audit'>('list'); 
   const [auditSubTab, setAuditSubTab] = useState<'admin_add' | 'approved' | 'rejected'>('admin_add');
@@ -70,26 +156,85 @@ export default function AdminReviewScreen() {
     return { displayName: cleanName || '未命名商品', displayUnit: cleanUnit };
   };
 
-  const fetchGlobalProducts = () => {
-    if (Platform.OS === 'web') {
-      const storedProducts = localStorage.getItem('global_products');
-      if (storedProducts) {
-        setAllProducts(JSON.parse(storedProducts));
-      } else {
-        const dummy: Product[] = [
-          { id: '1', name: '雞胸肉沙拉', unit: '200克', calories: 180, status: 'pending', creatorId: 'user_marry55' },
-          { id: '2', name: '御飯糰', unit: '100克', calories: 210, status: 'approved', creatorId: currentUserId }
-        ];
-        localStorage.setItem('global_products', JSON.stringify(dummy));
-        setAllProducts(dummy);
+  const getCurrentAdminId = async () => {
+    try {
+      const userStr = await AsyncStorage.getItem('user');
+      const currentUser = userStr ? JSON.parse(userStr) : null;
+
+      const savedId =
+        currentUser?.id?.toString?.() ||
+        (await AsyncStorage.getItem('current_user_id')) ||
+        (await AsyncStorage.getItem('member_id')) ||
+        '';
+
+      // 不再寫死 admin id。誰登入，就用誰在 members 表裡的數字 id。
+      // 如果 id 是 "admin" 這種字串，代表登入頁還在使用舊的硬寫 admin 流程，
+      // 後端無法知道真正是哪一位管理者，因此不允許新增官方商品。
+      if (/^\d+$/.test(savedId)) {
+        setCurrentUserId(savedId);
+        return savedId;
       }
+
+      setCurrentUserId('');
+      return '';
+    } catch (e) {
+      setCurrentUserId('');
+      return '';
+    }
+  };
+
+  const fetchGlobalProducts = async () => {
+    try {
+      await getCurrentAdminId();
+
+      const [approvedRes, pendingRes, rejectedRes] = await Promise.all([
+        fetch(`${API_URL}/products/`),
+        fetch(`${API_URL}/products/pending/`),
+        fetch(`${API_URL}/products/rejected/`),
+      ]);
+
+      const approvedData = await parseApiResponse(approvedRes);
+      const pendingData = await parseApiResponse(pendingRes);
+      const rejectedData = await parseApiResponse(rejectedRes);
+
+      if (!approvedRes.ok) {
+        throw new Error(approvedData.message || `讀取已上架商品失敗，HTTP ${approvedRes.status}`);
+      }
+
+      if (!pendingRes.ok) {
+        throw new Error(pendingData.message || `讀取待審核商品失敗，HTTP ${pendingRes.status}`);
+      }
+
+      if (!rejectedRes.ok) {
+        throw new Error(rejectedData.message || `讀取未通過商品失敗，HTTP ${rejectedRes.status}`);
+      }
+
+      const mergedMap = new Map<string, Product>();
+
+      (Array.isArray(approvedData) ? approvedData : []).forEach((item: any) => {
+        const product = mapProductFromApi(item);
+        mergedMap.set(product.id, product);
+      });
+
+      (Array.isArray(pendingData) ? pendingData : []).forEach((item: any) => {
+        const product = mapProductFromApi(item);
+        mergedMap.set(product.id, product);
+      });
+
+      (Array.isArray(rejectedData) ? rejectedData : []).forEach((item: any) => {
+        const product = mapProductFromApi(item);
+        mergedMap.set(product.id, product);
+      });
+
+      setAllProducts(Array.from(mergedMap.values()));
+    } catch (e: any) {
+      console.error('讀取商品資料失敗:', e);
+      showMessage(e?.message || '無法從後端讀取商品資料，請確認 Django 是否已啟動。');
     }
   };
 
   useEffect(() => {
-    if (Platform.OS === 'web') {
-      fetchGlobalProducts();
-    }
+    fetchGlobalProducts();
   }, []);
 
   const getFilteredProducts = () => {
@@ -125,7 +270,7 @@ export default function AdminReviewScreen() {
     }
   };
 
-  const handleAddProduct = () => {
+  const handleAddProduct = async () => {
     let hasError = false;
     const newErrors = { name: '', unit: '', calories: '' };
 
@@ -137,56 +282,131 @@ export default function AdminReviewScreen() {
 
     const unitLabel = unitType === 'g' ? '克' : 'ml';
     const finalUnitString = `${newProdUnitValue.trim()}${unitLabel}`;
+    const adminId = await getCurrentAdminId();
 
-    if (Platform.OS === 'web') {
-      const storedProducts = localStorage.getItem('global_products');
-      let products: Product[] = storedProducts ? JSON.parse(storedProducts) : [];
-      const newProduct: Product = {
-        id: `admin_add_${Date.now()}`,
-        name: newProdName.trim(),
-        unit: finalUnitString,
-        calories: parseInt(newProdCalories, 10) || 0,
-        status: 'approved', 
-        creatorId: currentUserId 
-      };
-      products.push(newProduct);
-      localStorage.setItem('global_products', JSON.stringify(products));
-      setAllProducts(products);
+    if (!adminId) {
+      showMessage('找不到目前管理者的會員 ID。請確認此管理者帳號存在於 members 表，且 role 為 admin，並且是用後端登入成功後進入管理頁。');
+      return;
     }
 
-    closeAddModal();
-    setActiveTab('audit');
-    setAuditSubTab('admin_add');
+    try {
+      const response = await fetch(`${API_URL}/products/add/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: newProdName.trim(),
+          unit: finalUnitString,
+          calories: parseInt(newProdCalories, 10) || 0,
+          member: Number(adminId),
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+      console.log('管理者新增商品結果:', data);
+
+      if (!response.ok || data.success === false) {
+        showMessage(data.message || `商品新增失敗，HTTP ${response.status}`);
+        return;
+      }
+
+      closeAddModal();
+      setActiveTab('audit');
+      setAuditSubTab('admin_add');
+      await fetchGlobalProducts();
+    } catch (e: any) {
+      console.error('管理者新增商品失敗:', e);
+      showMessage(e?.message || '無法連接後端，請確認 Django 是否已啟動。');
+    }
   };
 
-  const handleExecuteAction = () => {
+  const handleExecuteAction = async () => {
     if (!selectedItem) return;
+
     const { id, action } = selectedItem;
-    if (Platform.OS === 'web') {
-      const storedProducts = localStorage.getItem('global_products');
-      if (storedProducts) {
-        let products: Product[] = JSON.parse(storedProducts);
-        products = products.map(p => p.id === id ? { ...p, status: action === 'approve' ? 'approved' : 'rejected' } : p);
-        localStorage.setItem('global_products', JSON.stringify(products));
-        setAllProducts(products);
+
+    try {
+      const adminId = await getCurrentAdminId();
+      if (!adminId) {
+        showMessage('找不到目前管理者的會員 ID，無法審核商品。');
+        return;
       }
+
+      const response = await fetch(`${API_URL}/products/${id}/${action === 'approve' ? 'approve' : 'reject'}/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          member: Number(adminId),
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+      console.log('審核商品結果:', data);
+
+      if (!response.ok || data.success === false) {
+        showMessage(data.message || `審核失敗，HTTP ${response.status}`);
+        return;
+      }
+
+      if (data.product) {
+        const updatedProduct = mapProductFromApi(data.product);
+        setAllProducts(prev => {
+          const exists = prev.some(p => p.id === updatedProduct.id);
+          return exists
+            ? prev.map(p => p.id === updatedProduct.id ? updatedProduct : p)
+            : [...prev, updatedProduct];
+        });
+      }
+
+      await fetchGlobalProducts();
+    } catch (e: any) {
+      console.error('審核商品失敗:', e);
+      showMessage(e?.message || '無法連接後端，請確認 Django 是否已啟動。');
     }
+
     setConfirmModalVisible(false);
     setSelectedItem(null);
   };
 
-  const handleExecuteDelete = () => {
+  const handleExecuteDelete = async () => {
     if (!deleteItem) return;
+
     const { id } = deleteItem;
-    if (Platform.OS === 'web') {
-      const storedProducts = localStorage.getItem('global_products');
-      if (storedProducts) {
-        let products: Product[] = JSON.parse(storedProducts);
-        products = products.filter(p => p.id !== id);
-        localStorage.setItem('global_products', JSON.stringify(products));
-        setAllProducts(products);
+
+    try {
+      const adminId = await getCurrentAdminId();
+      if (!adminId) {
+        showMessage('找不到目前管理者的會員 ID，無法刪除商品。');
+        return;
       }
+
+      const response = await fetch(`${API_URL}/products/${id}/delete/`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          member: Number(adminId),
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+
+      if (!response.ok || data.success === false) {
+        showMessage(data.message || '後端尚未新增刪除商品 API，請先在 views.py 加 delete_product。');
+        return;
+      }
+
+      setAllProducts(prev => prev.filter(p => p.id !== id));
+      await fetchGlobalProducts();
+    } catch (e: any) {
+      console.error('刪除商品失敗:', e);
+      showMessage(e?.message || '後端尚未新增刪除商品 API，請先在 views.py 加 delete_product。');
     }
+
     setDeleteModalVisible(false);
     setDeleteItem(null);
   };
@@ -266,7 +486,7 @@ export default function AdminReviewScreen() {
                     </View>
                     <Text style={styles.prodCal}>熱量：{item.calories} 大卡</Text>
                     <Text style={styles.contributorText}>
-                      商品來源：{item.creatorId === currentUserId ? `${item.creatorId} (管理者)` : `${item.creatorId || 'guest'} (使用者)`}
+                      {getCreatorSourceText(item)}
                     </Text>
                   </View>
 

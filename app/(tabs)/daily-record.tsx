@@ -3,6 +3,34 @@ import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+const API_URL = 'http://127.0.0.1:8001';
+
+const parseApiResponse = async (response: Response) => {
+  const text = await response.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`後端回傳不是 JSON，HTTP ${response.status}：${text.slice(0, 180)}`);
+  }
+};
+
+const getCurrentMemberId = async () => {
+  try {
+    const userStr = await AsyncStorage.getItem('user');
+    const currentUser = userStr ? JSON.parse(userStr) : null;
+
+    const memberId =
+      currentUser?.id?.toString?.() ||
+      (await AsyncStorage.getItem('current_user_id')) ||
+      (await AsyncStorage.getItem('member_id')) ||
+      'guest';
+
+    return /^\d+$/.test(memberId) ? memberId : 'guest';
+  } catch {
+    return 'guest';
+  }
+};
+
 interface FoodItem {
   id: string;
   name: string;      
@@ -65,12 +93,7 @@ export default function DailyRecordScreen() {
   useEffect(() => {
     const initUserAndLoad = async () => {
       try {
-        const savedUserId =
-        await AsyncStorage.getItem('current_user_id') ||
-        await AsyncStorage.getItem('member_id') ||
-        'guest';
-
-        const finalId = savedUserId;
+        const finalId = await getCurrentMemberId();
         setUserId(finalId);
         
         const todayStr = getTaiwanDateString();
@@ -169,11 +192,45 @@ export default function DailyRecordScreen() {
     try {
       let heightValue = '';
 
-      const profileRaw = await AsyncStorage.getItem(`${currentUid}_user_profile`);
-      if (profileRaw) {
-        const profile = JSON.parse(profileRaw);
-        if (profile?.height) {
-          heightValue = profile.height.toString();
+      // 先從 Django / Aiven 讀目前登入會員的身高
+      if (currentUid && currentUid !== 'guest') {
+        try {
+          const response = await fetch(`${API_URL}/members/${currentUid}/profile/`);
+          const data = await parseApiResponse(response);
+
+          if (response.ok && data.success !== false && data.member?.height !== null && data.member?.height !== undefined) {
+            heightValue = String(data.member.height);
+
+            // 同步回目前會員自己的快取，讓身體指數頁也可以讀到同一份資料
+            await AsyncStorage.setItem(`${currentUid}_user_height`, heightValue);
+
+            if (data.member?.initial_weight !== null && data.member?.initial_weight !== undefined) {
+              await AsyncStorage.setItem(`${currentUid}_user_weight`, String(data.member.initial_weight));
+            }
+
+            await AsyncStorage.setItem(
+              `${currentUid}_user_profile`,
+              JSON.stringify({
+                gender: data.member?.gender || '',
+                birthday: data.member?.birthday || '',
+                height: data.member?.height !== null && data.member?.height !== undefined ? String(data.member.height) : '',
+                weight: data.member?.initial_weight !== null && data.member?.initial_weight !== undefined ? String(data.member.initial_weight) : '',
+              })
+            );
+          }
+        } catch (e) {
+          console.log('從後端讀取會員身高失敗，改用本機快取', e);
+        }
+      }
+
+      // 後端沒有資料時，再讀目前會員自己的本機快取
+      if (!heightValue) {
+        const profileRaw = await AsyncStorage.getItem(`${currentUid}_user_profile`);
+        if (profileRaw) {
+          const profile = JSON.parse(profileRaw);
+          if (profile?.height) {
+            heightValue = profile.height.toString();
+          }
         }
       }
 
