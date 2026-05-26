@@ -24,12 +24,12 @@ export default function ProfileScreen() {
   const [cancelModalVisible, setCancelModalVisible] = useState(false); 
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
 
-  // 控制大頭貼操作選單 Modal（一級防呆）
+  // 控制大頭貼操作選單 Modal
   const [avatarMenuVisible, setAvatarMenuVisible] = useState(false);
-  // 控制刪除大頭貼防呆二次確認 Modal（二級防呆）
+  // 控制刪除大頭貼防呆二次確認 Modal
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
 
-  // 初始化個人資料狀態（預設全空）
+  // 初始化個人資料狀態
   const [profileData, setProfileData] = useState<ProfileType>({
     name: '',
     birthday: '',
@@ -156,9 +156,8 @@ export default function ProfileScreen() {
     return ageNum ? ` (${ageNum} 歲)` : '';
   };
 
-  // 開啟相簿功能
   const openImagePicker = async () => {
-    setAvatarMenuVisible(false); // 關閉選單
+    setAvatarMenuVisible(false);
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') return;
     let result = await ImagePicker.launchImageLibraryAsync({
@@ -198,7 +197,6 @@ export default function ProfileScreen() {
     }
   };
 
-  // 確定刪除大頭貼
   const handleConfirmDeleteImage = async () => {
     setDeleteConfirmVisible(false);
     setAvatarUri(null);
@@ -214,22 +212,19 @@ export default function ProfileScreen() {
     }
   };
 
-  // 每次點擊鉛筆，不論有無圖片，一律彈出選單詢問
   const handleAvatarPress = () => {
     setAvatarMenuVisible(true);
   };
 
-  // 🟢 修正：過濾名字裡面的符號，確保只抓取中文或英文字母作為頭像字元
   const getFirstCharOfName = () => {
     const currentName = isEditing ? tempData.name : profileData.name;
     if (currentName && currentName.trim().length > 0) {
-      // 移除名字內所有的標點符號、空白與特殊符號（只保留中文 4e00-9fa5 與 英文 A-Za-z）
       const cleanText = currentName.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
       if (cleanText.length > 0) {
-        return cleanText.charAt(0); // 傳回過濾後的第 1 個有效文字
+        return cleanText.charAt(0);
       }
     }
-    return "👤"; // 若整串都是符號或為空，則顯示人像圖示
+    return "👤";
   };
 
   const showWarningAlert = (message: string) => {
@@ -240,8 +235,6 @@ export default function ProfileScreen() {
   const handleEditPress = () => {
     if (isEditing) {
       if (!tempData.name || tempData.name.trim() === '') { showWarningAlert('請輸入正確的姓名！'); return; }
-      
-      // 🟢 儲存防呆：如果名字裡全都是符號，也不給過
       const cleanText = tempData.name.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
       if (cleanText.length === 0) { showWarningAlert('姓名不能全為空白或符號！'); return; }
 
@@ -322,7 +315,8 @@ export default function ProfileScreen() {
     padding: '4px 10px',
     textAlign: 'right' as const,
     width: '65%',
-    outline: 'none'
+    outline: 'none',
+    cursor: 'pointer'
   };
 
   return (
@@ -368,13 +362,35 @@ export default function ProfileScreen() {
               <Text style={styles.infoLabel}>生 日</Text>
               {isEditing ? (
                 Platform.OS === 'web' ? (
-                  <input
-                    type="date"
-                    value={tempData.birthday}
-                    max={getTodayDateString()}
-                    onChange={(e) => setTempData({ ...tempData, birthday: e.target.value })}
-                    style={webSelectStyle}
-                  />
+                  /* 🟢 修正：使用相對定位包裹，並加一個透明覆蓋層阻斷左側文字區的點擊 */
+                  <div style={{ width: '65%', position: 'relative', display: 'flex', justifyContent: 'flex-end' }}>
+                    <input
+                      id="web-birthday-picker"
+                      type="date"
+                      value={tempData.birthday}
+                      max={getTodayDateString()}
+                      onChange={(e) => setTempData({ ...tempData, birthday: e.target.value })}
+                      style={{ ...webSelectStyle, width: '100%' }}
+                    />
+                    {/* 透明透明點擊層：寬度 82% 剛好避開最右側的日曆小圖標，避免重複觸發 */}
+                    <div 
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        top: 0,
+                        width: '82%',
+                        height: '100%',
+                        cursor: 'pointer',
+                        backgroundColor: 'transparent'
+                      }}
+                      onClick={() => {
+                        const inputEl = document.getElementById('web-birthday-picker') as any;
+                        if (inputEl && typeof inputEl.showPicker === 'function') {
+                          inputEl.showPicker();
+                        }
+                      }}
+                    />
+                  </div>
                 ) : (
                   <TextInput
                     style={styles.textInputRight}
@@ -539,7 +555,7 @@ export default function ProfileScreen() {
         </View>
       </ScrollView>
 
-      {/* 自訂選單 Modal (每次點筆必問) */}
+      {/* 自訂選單 Modal */}
       <Modal animationType="fade" transparent={true} visible={avatarMenuVisible} onRequestClose={() => setAvatarMenuVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
@@ -554,7 +570,7 @@ export default function ProfileScreen() {
               style={[styles.menuActionButton, { borderColor: '#E74C3C' }]} 
               onPress={() => {
                 setAvatarMenuVisible(false);
-                setDeleteConfirmVisible(true); // 關閉選單，開啟二次防呆確認
+                setDeleteConfirmVisible(true);
               }}
             >
               <Text style={styles.menuActionTextDanger}>刪除大頭貼</Text>
