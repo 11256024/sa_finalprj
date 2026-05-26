@@ -32,7 +32,6 @@ class Members(models.Model):
 
     height = models.FloatField(blank=True, null=True)
     initial_weight = models.FloatField(blank=True, null=True)
-    activity_level = models.FloatField(blank=True, null=True)
 
     created_at = models.DateTimeField(default=timezone.now)
 

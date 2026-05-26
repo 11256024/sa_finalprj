@@ -1,8 +1,11 @@
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Alert, Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+const API_URL = 'http://127.0.0.1:8001';
+
 
 interface ProfileType {
   name: string;
@@ -52,19 +55,98 @@ export default function ProfileScreen() {
     return `${yyyy}-${mm}-${dd}`;
   };
 
+  const normalizeDateForApi = (value: string) => {
+    if (!value) return '';
+    return value.trim().replace(/\//g, '-');
+  };
+
+  const parseApiResponse = async (response: Response) => {
+    const text = await response.text();
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch (error) {
+      throw new Error(`後端回傳不是 JSON，HTTP ${response.status}：${text.slice(0, 180)}`);
+    }
+  };
+
   useEffect(() => {
     loadProfileData();
   }, []);
 
+  // Web 版生日欄位：保留瀏覽器原生日曆 icon，只把空值時的 yyyy/月/dd 文字隱藏，
+  // 再用一層「年/月/日」文字覆蓋，避免出現兩個 icon 或 dd 被反白選取。
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+
+    const styleId = 'profile-date-picker-icon-style';
+    if (document.getElementById(styleId)) return;
+
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.innerHTML = `
+      #web-birthday-picker {
+        color-scheme: light;
+      }
+
+      /* 保留原生 calendar icon，調成乾淨的黑色樣式 */
+      #web-birthday-picker::-webkit-calendar-picker-indicator {
+        opacity: 1 !important;
+        display: block !important;
+        cursor: pointer;
+        margin-left: 6px;
+        filter: brightness(0) saturate(100%);
+      }
+
+      #web-birthday-picker::-webkit-inner-spin-button,
+      #web-birthday-picker::-webkit-clear-button {
+        display: none !important;
+        -webkit-appearance: none !important;
+      }
+
+      /* 空值時隱藏瀏覽器原生 yyyy/月/dd 文字，但不要動右側日曆 icon */
+      #web-birthday-picker.empty-date::-webkit-datetime-edit,
+      #web-birthday-picker.empty-date::-webkit-datetime-edit-fields-wrapper,
+      #web-birthday-picker.empty-date::-webkit-datetime-edit-text,
+      #web-birthday-picker.empty-date::-webkit-datetime-edit-year-field,
+      #web-birthday-picker.empty-date::-webkit-datetime-edit-month-field,
+      #web-birthday-picker.empty-date::-webkit-datetime-edit-day-field {
+        color: transparent !important;
+        background: transparent !important;
+      }
+
+      #web-birthday-picker.empty-date:focus::-webkit-datetime-edit,
+      #web-birthday-picker.empty-date:focus::-webkit-datetime-edit-fields-wrapper,
+      #web-birthday-picker.empty-date:focus::-webkit-datetime-edit-text,
+      #web-birthday-picker.empty-date:focus::-webkit-datetime-edit-year-field,
+      #web-birthday-picker.empty-date:focus::-webkit-datetime-edit-month-field,
+      #web-birthday-picker.empty-date:focus::-webkit-datetime-edit-day-field {
+        color: transparent !important;
+        background: transparent !important;
+      }
+    `;
+
+    document.head.appendChild(style);
+  }, []);
+
+  const getCurrentMemberContext = async () => {
+    const userStr = await AsyncStorage.getItem('user');
+    const currentUser = userStr ? JSON.parse(userStr) : null;
+
+    const savedCurrentUserId = await AsyncStorage.getItem('current_user_id');
+    const savedMemberId = await AsyncStorage.getItem('member_id');
+
+    const memberId =
+      currentUser?.id?.toString?.() ||
+      savedCurrentUserId ||
+      savedMemberId ||
+      'guest';
+
+    return { memberId, currentUser };
+  };
+
   const loadProfileData = async () => {
     try {
-      const savedUserId =
-        await AsyncStorage.getItem('current_user_id') ||
-        await AsyncStorage.getItem('member_id') ||
-        'guest';
-
-      const userStr = await AsyncStorage.getItem('user');
-      const currentUser = userStr ? JSON.parse(userStr) : null;
+      const { memberId: savedUserId, currentUser } = await getCurrentMemberContext();
 
       const savedAccount = await AsyncStorage.getItem('account');
       const savedUsername = await AsyncStorage.getItem('username');
@@ -79,25 +161,71 @@ export default function ProfileScreen() {
 
       const singlePassword = savedPassword || '';
 
+      // 只讓「姓名」使用本機快取，因為目前 members 資料表沒有 name 欄位。
+      // 生日、身高、體重、性別只要後端有成功回傳，就完全以資料庫為主。
       let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
       let parsedProfile: any = {};
       if (localData) {
         try { parsedProfile = JSON.parse(localData); } catch (e) {}
       }
 
-      let rawName = parsedProfile.name || '';
-      let rawBirthday = parsedProfile.birthday || '';
-      let rawHeight = parsedProfile.height || '';
-      let rawWeight = parsedProfile.weight || '';
-      let rawGender = parsedProfile.gender || '';
+      let dbProfile: any = {};
+      let hasDbProfile = false;
+
+      if (savedUserId && savedUserId !== 'guest') {
+        try {
+          const response = await fetch(`${API_URL}/member/profile/${savedUserId}/`);
+          const data = await parseApiResponse(response);
+
+          if (response.ok && data.success && data.member) {
+            dbProfile = data.member;
+            hasDbProfile = true;
+
+            await AsyncStorage.setItem('user', JSON.stringify({
+              ...(currentUser || {}),
+              ...data.member,
+            }));
+            await AsyncStorage.setItem('current_user_id', String(data.member.id));
+            await AsyncStorage.setItem('member_id', String(data.member.id));
+          }
+        } catch (e) {
+          console.log('⚠️ 從後端讀取會員資料失敗，才改用本機快取:', e);
+        }
+      }
 
       const singleName = await AsyncStorage.getItem(`${savedUserId}_user_name_key`);
-      const singleHeight = await AsyncStorage.getItem(`${savedUserId}_user_height`);
-      const singleWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`);
 
-      if (singleName) rawName = singleName;
-      if (singleHeight) rawHeight = singleHeight;
-      if (singleWeight) rawWeight = singleWeight;
+      let rawName = singleName || parsedProfile.name || '';
+      let rawBirthday = '';
+      let rawHeight = '';
+      let rawWeight = '';
+      let rawGender = '';
+
+      if (hasDbProfile) {
+        // 後端有成功回傳時，NULL 就保持空值，絕對不要用舊 AsyncStorage 補上。
+        rawBirthday = dbProfile.birthday ? String(dbProfile.birthday) : '';
+        rawHeight = dbProfile.height !== null && dbProfile.height !== undefined ? String(dbProfile.height) : '';
+        rawWeight = dbProfile.initial_weight !== null && dbProfile.initial_weight !== undefined ? String(dbProfile.initial_weight) : '';
+        rawGender = dbProfile.gender ? String(dbProfile.gender) : '';
+
+        // 把舊的欄位快取移除，避免下次又被舊資料污染。
+        if (!rawBirthday && !rawHeight && !rawWeight && !rawGender) {
+          await AsyncStorage.multiRemove([
+            `${savedUserId}_user_height`,
+            `${savedUserId}_user_weight`,
+            `${savedUserId}_user_age`,
+          ]);
+        }
+      } else {
+        // 只有後端真的讀取失敗時，才使用本機快取。
+        const singleHeight = await AsyncStorage.getItem(`${savedUserId}_user_height`);
+        const singleWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`);
+
+        rawBirthday = parsedProfile.birthday || '';
+        rawHeight = singleHeight || parsedProfile.height || '';
+        rawWeight = singleWeight || parsedProfile.weight || '';
+        rawGender = parsedProfile.gender || '';
+      }
 
       const cleanName = (rawName === '請輸入姓名' || rawName === '王小' || rawName === '王小明' || rawName === '你好' || rawName === 'xx') ? '' : rawName;
       const cleanBirthday = (rawBirthday === '請選擇生日' || rawBirthday === '1995-01-15') ? '' : rawBirthday;
@@ -105,7 +233,7 @@ export default function ProfileScreen() {
       const cleanWeight = (rawWeight === '請選擇體重' || !rawWeight) ? '' : rawWeight.toString().trim();
       const cleanGender = (rawGender === '請選擇性別') ? '' : rawGender;
 
-      const singleAge = await AsyncStorage.getItem(`${savedUserId}_user_age`);
+      const singleAge = cleanBirthday ? getPureAgeValue(cleanBirthday) : '';
 
       const safeData = {
         name: cleanName,
@@ -115,23 +243,16 @@ export default function ProfileScreen() {
         gender: cleanGender,
         account: singleAccount || parsedProfile.account || '',
         password: singlePassword || parsedProfile.password || '',
-        age: singleAge || parsedProfile.age || ''
+        age: singleAge
       };
 
       setProfileData(safeData);
       setTempData(safeData);
 
-      const savedAvatar =
-        await AsyncStorage.getItem(`${savedUserId}_user_avatar`) ||
-        await AsyncStorage.getItem('user_avatar');
-
-      if (savedAvatar) {
-        setAvatarUri(savedAvatar);
-      } else {
-        setAvatarUri(null);
-      }
+      const savedAvatar = await AsyncStorage.getItem(`${savedUserId}_user_avatar`);
+      setAvatarUri(savedAvatar || null);
     } catch (error) {
-      console.error("加載快取失敗：", error);
+      console.error("加載會員資料失敗：", error);
     }
   };
 
@@ -252,24 +373,61 @@ export default function ProfileScreen() {
 
   const handleConfirmSave = async () => {
     setSaveModalVisible(false);
+
     try {
-      const savedUserId =
-        await AsyncStorage.getItem('current_user_id') ||
-        await AsyncStorage.getItem('member_id') ||
-        'guest';
-      const calculatedAgeStr = getPureAgeValue(tempData.birthday);
+      const { memberId: savedUserId, currentUser } = await getCurrentMemberContext();
+
+      if (!savedUserId || savedUserId === 'guest') {
+        showWarningAlert('找不到登入會員 ID，請重新登入後再試一次。');
+        return;
+      }
+
+      const birthdayForApi = normalizeDateForApi(tempData.birthday);
+      const calculatedAgeStr = getPureAgeValue(birthdayForApi || tempData.birthday);
       const updatedData = {
         ...tempData,
+        birthday: birthdayForApi,
         account: profileData.account,
         password: profileData.password,
         age: calculatedAgeStr,
       };
 
+      console.log('準備更新會員資料:', {
+        url: `${API_URL}/member/profile/${savedUserId}/`,
+        memberId: savedUserId,
+        gender: updatedData.gender,
+        birthday: birthdayForApi,
+        height: updatedData.height,
+        initial_weight: updatedData.weight,
+      });
+
+      const response = await fetch(`${API_URL}/member/profile/${savedUserId}/`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          gender: updatedData.gender || null,
+          birthday: birthdayForApi || null,
+          height: updatedData.height ? Number(updatedData.height) : null,
+          initial_weight: updatedData.weight ? Number(updatedData.weight) : null,
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+      console.log('會員資料更新結果:', data);
+
+      if (!response.ok || !data.success) {
+        showWarningAlert(data.message || `會員資料更新失敗，HTTP ${response.status}`);
+        return;
+      }
+
       setProfileData(updatedData);
+      setTempData(updatedData);
       setIsEditing(false);
 
       const stringifiedData = JSON.stringify(updatedData);
-      
+
       await AsyncStorage.setItem(`${savedUserId}_user_profile`, stringifiedData);
       await AsyncStorage.setItem(`${savedUserId}_user_name_key`, updatedData.name.trim());
       await AsyncStorage.setItem(`${savedUserId}_user_height`, updatedData.height);
@@ -279,9 +437,17 @@ export default function ProfileScreen() {
         await AsyncStorage.setItem(`${savedUserId}_user_age`, updatedData.age);
       }
 
-      // 已移除阻斷式提示，僅以非阻斷方式處理（不顯示 window.alert / Alert.alert）
-    } catch (error) {
-      console.error(error);
+      if (data.member) {
+        await AsyncStorage.setItem('user', JSON.stringify({
+          ...(currentUser || {}),
+          ...data.member,
+        }));
+        await AsyncStorage.setItem('current_user_id', String(data.member.id));
+        await AsyncStorage.setItem('member_id', String(data.member.id));
+      }
+    } catch (error: any) {
+      console.error('更新會員資料失敗：', error);
+      showWarningAlert(error?.message || '無法連接後端，請確認 Django 是否已啟動。');
     }
   };
 
@@ -318,15 +484,22 @@ export default function ProfileScreen() {
     cursor: 'pointer'
   };
 
-  // 🟢 修正：網頁端 DatePicker 專用樣式，加強字距與字型，盡量消除「年」後面的空格
+  // 網頁端 DatePicker 樣式：使用原生日曆 icon，空值提示文字另外覆蓋。
   const webDateInputStyle = {
     ...webSelectStyle,
     width: '100%',
+    height: 32,
     position: 'relative' as const,
-    letterSpacing: '-2px', // 🔴 負值字距：將瀏覽器預設的 "年 /月/日" 空隙強制縮緊擠壓掉
+    color: '#333',
+    backgroundColor: '#F9F9F9',
+    border: '1px solid #E8E8E8',
+    borderRadius: '8px',
+    padding: '4px 10px',
+    textAlign: 'right' as const,
     fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     fontVariantNumeric: 'tabular-nums' as const,
-    WebkitAppearance: 'textfield' as const,
+    WebkitAppearance: 'none' as const,
+    appearance: 'none' as const,
   };
 
   return (
@@ -372,33 +545,40 @@ export default function ProfileScreen() {
               <Text style={styles.infoLabel}>生 日</Text>
               {isEditing ? (
                 Platform.OS === 'web' ? (
-                  <div style={{ width: '65%', position: 'relative', display: 'flex', justifyContent: 'flex-end' }}>
+                  <div style={{ width: '65%', position: 'relative', display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
                     <input
                       id="web-birthday-picker"
+                      className={!tempData.birthday ? 'empty-date' : ''}
                       type="date"
                       value={tempData.birthday}
                       max={getTodayDateString()}
-                      onChange={(e) => setTempData({ ...tempData, birthday: e.target.value })}
-                      style={webDateInputStyle}
-                    />
-                    {/* 透明點擊層：避開右側日曆小圖標，防重複觸發並正確調用原生的 showPicker */}
-                    <div 
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        top: 0,
-                        width: '82%',
-                        height: '100%',
-                        cursor: 'pointer',
-                        backgroundColor: 'transparent'
-                      }}
-                      onClick={() => {
-                        const inputEl = document.getElementById('web-birthday-picker') as any;
+                      onClick={(e) => {
+                        const inputEl = e.currentTarget as any;
                         if (inputEl && typeof inputEl.showPicker === 'function') {
                           inputEl.showPicker();
                         }
                       }}
+                      onChange={(e) => setTempData({ ...tempData, birthday: e.target.value })}
+                      style={webDateInputStyle}
                     />
+
+                    {!tempData.birthday && (
+                      <span
+                        style={{
+                          position: 'absolute',
+                          right: 34,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          color: '#333',
+                          fontSize: '16px',
+                          lineHeight: '16px',
+                          pointerEvents: 'none',
+                          userSelect: 'none',
+                        }}
+                      >
+                        年/月/日
+                      </span>
+                    )}
                   </div>
                 ) : (
                   <TextInput
@@ -533,10 +713,11 @@ export default function ProfileScreen() {
                     onPress={() => setIsPasswordVisible(!isPasswordVisible)}
                     activeOpacity={0.6}
                   >
-                    <View style={styles.eyeShape}>
-                      <Text style={styles.eyeText}>👁</Text>
-                      {!isPasswordVisible && <View style={styles.eyeSlashLine} />}
-                    </View>
+                    <Ionicons
+                      name={isPasswordVisible ? 'eye-outline' : 'eye-off-outline'}
+                      size={20}
+                      color="#999999"
+                    />
                   </TouchableOpacity>
                 )}
               </View>
@@ -696,6 +877,7 @@ const styles = StyleSheet.create({
   orangeAlertBtn: { backgroundColor: '#F3B07E' },
   modalBtnConfirmText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' },
   
+
   menuActionButton: {
     width: '100%',
     paddingVertical: 14,

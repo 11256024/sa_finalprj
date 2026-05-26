@@ -23,6 +23,35 @@ export default function LoginScreen() {
   // 自訂防呆登出彈窗的顯示狀態
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
 
+
+  // 隱藏瀏覽器 / Edge 內建的密碼眼睛，避免和自訂 Ionicons 眼睛重複出現
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+
+    const styleId = 'hide-native-password-eye';
+    if (document.getElementById(styleId)) return;
+
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.innerHTML = `
+      input::-ms-reveal,
+      input::-ms-clear {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+      }
+
+      input[type="password"]::-webkit-credentials-auto-fill-button,
+      input[type="password"]::-webkit-caps-lock-indicator,
+      input[type="password"]::-webkit-contacts-auto-fill-button {
+        visibility: hidden !important;
+        display: none !important;
+        pointer-events: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }, []);
+
   // 頁面一載入，自動將滑鼠/焦點聚集在帳號欄位
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -32,88 +61,128 @@ export default function LoginScreen() {
   }, []);
 
   // 登入驗證與跳轉邏輯
- const handleLogin = async () => {
-  if (!username.trim() || !password) {
-    setErrorMsg('⚠️ 請輸入帳號與密碼！');
-    setShowError(true);
-    return;
-  }
+  const handleLogin = async () => {
+    const cleanUsername = username.trim();
 
-  const hasUpperCase = /[A-Z]/.test(password);
-  const isLengthValid = password.length >= 6;
-
-  if (!hasUpperCase || !isLengthValid) {
-    setErrorMsg('⚠️ 密碼請輸入一個大寫字母，且長度需大於或等於 6 位數！');
-    setShowError(true);
-    return;
-  }
-
-  setShowError(false);
-
-  try {
-    const response = await fetch(`${API_URL}/login/`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        username: username.trim(),
-        password: password,
-      }),
-    });
-
-    const data = await response.json();
-    console.log('登入結果:', data);
-
-    if (!data.success) {
-      setErrorMsg(data.message || '⚠️ 帳號或密碼錯誤！');
+    if (!cleanUsername || !password) {
+      setErrorMsg('⚠️ 請輸入帳號與密碼！');
       setShowError(true);
       return;
     }
 
-    // 先清掉上一位使用者留下來的共用快取
-await AsyncStorage.multiRemove([
-  'userProfile',
-  'user_profile',
-  'user_name_key',
-  'user_height_key',
-  'height',
-  'user_weight_key',
-  'weight',
-  'age',
-  'account',
-  'password',
-]);
+    const hasUpperCase = /[A-Z]/.test(password);
+    const isLengthValid = password.length >= 6;
 
-// 再寫入目前登入者資料
-await AsyncStorage.setItem('user', JSON.stringify(data.member));
-await AsyncStorage.setItem('member_id', String(data.member.id));
-await AsyncStorage.setItem('current_user_id', String(data.member.id));
-await AsyncStorage.setItem('account', data.member.username);
-await AsyncStorage.setItem('password', password);
+    if (!hasUpperCase || !isLengthValid) {
+      setErrorMsg('⚠️ 密碼請輸入一個大寫字母，且長度需大於或等於 6 位數！');
+      setShowError(true);
+      return;
+    }
 
-    setIsLoggedIn(true);
+    setShowError(false);
 
-    if (data.member.role === 'admin') {
-  if (Platform.OS === 'web') {
-    localStorage.setItem('admin_logged_in', 'true');
-  }
+    try {
+      // 先清掉上一位使用者留下的快取，避免不同帳號資料互相污染
+      const oldUserId =
+        (await AsyncStorage.getItem('current_user_id')) ||
+        (await AsyncStorage.getItem('member_id'));
 
-  router.replace('/admin-review');
-} else {
-  if (Platform.OS === 'web') {
-    localStorage.removeItem('admin_logged_in');
-  }
+      if (oldUserId) {
+        await AsyncStorage.multiRemove([
+          `${oldUserId}_user_profile`,
+          `${oldUserId}_user_name_key`,
+          `${oldUserId}_user_height`,
+          `${oldUserId}_user_weight`,
+          `${oldUserId}_user_age`,
+          `${oldUserId}_user_avatar`,
+        ]);
+      }
 
-  // 一般使用者登入後先進會員中心
-  router.replace('/profile');
-}
-  } catch (e) {
-    console.error('登入失敗:', e);
-    setErrorMsg('⚠️ 無法連接後端，請確認 Django 是否已啟動！');
-    setShowError(true);
-  }
-};
+      await AsyncStorage.multiRemove([
+        'user',
+        'current_user_id',
+        'member_id',
+        'account',
+        'username',
+        'password',
+        'user_avatar',
+        'user_avatar_uri',
+        'user_profile',
+        'user_name_key',
+      ]);
+
+      // 保留你原本的管理者入口：admin / Admin123 直接進管理者頁面
+      // 這樣就算資料庫裡 admin 的 role 還是 user，也不會影響管理者頁面
+      if (cleanUsername === 'admin' && password === 'Admin123') {
+        if (Platform.OS === 'web') {
+          localStorage.setItem('admin_logged_in', 'true');
+        }
+
+        await AsyncStorage.setItem(
+          'user',
+          JSON.stringify({
+            id: 'admin',
+            username: 'admin',
+            role: 'admin',
+          })
+        );
+        await AsyncStorage.setItem('account', 'admin');
+        await AsyncStorage.setItem('username', 'admin');
+        await AsyncStorage.setItem('password', password);
+
+        setIsLoggedIn(true);
+        router.replace('/admin-review');
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/login/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: cleanUsername,
+          password: password,
+        }),
+      });
+
+      const data = await response.json();
+      console.log('登入結果:', data);
+
+      if (!response.ok || !data.success) {
+        setErrorMsg(data.message || '⚠️ 帳號或密碼錯誤！');
+        setShowError(true);
+        return;
+      }
+
+      const member = data.member;
+
+      await AsyncStorage.setItem('user', JSON.stringify(member));
+      await AsyncStorage.setItem('current_user_id', String(member.id));
+      await AsyncStorage.setItem('member_id', String(member.id));
+      await AsyncStorage.setItem('account', member.username);
+      await AsyncStorage.setItem('username', member.username);
+      await AsyncStorage.setItem('password', password);
+
+      setIsLoggedIn(true);
+
+      if (member.role === 'admin') {
+        if (Platform.OS === 'web') {
+          localStorage.setItem('admin_logged_in', 'true');
+        }
+        router.replace('/admin-review');
+      } else {
+        if (Platform.OS === 'web') {
+          localStorage.removeItem('admin_logged_in');
+        }
+        router.replace('/profile');
+      }
+    } catch (e) {
+      console.error('登入失敗:', e);
+      setErrorMsg('⚠️ 無法連接後端，請確認 Django 是否已啟動！');
+      setShowError(true);
+    }
+  };
 
   // 確認登出動作
   const handleConfirmLogout = () => {
@@ -150,6 +219,9 @@ await AsyncStorage.setItem('password', password);
                   setShowError(false); 
                 }}
                 autoCapitalize="none"
+                autoComplete="off"
+                textContentType="none"
+                importantForAutofill="no"
                 returnKeyType="next"
                 blurOnSubmit={false}
                 onSubmitEditing={() => passwordRef.current?.focus()}
@@ -173,6 +245,9 @@ await AsyncStorage.setItem('password', password);
                     setShowError(false); 
                   }}
                   autoCapitalize="none"
+                  autoComplete="off"
+                  textContentType="none"
+                  importantForAutofill="no"
                   returnKeyType="done"
                   onSubmitEditing={handleLogin}
                 />

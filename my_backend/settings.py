@@ -66,17 +66,18 @@ WSGI_APPLICATION = 'my_backend.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'defaultdb',
+        'NAME': 'food-app',
         'USER': 'avnadmin',
         'PASSWORD': 'AVNS_jahsbq0dmFPQ7n9P7SX',
         'HOST': 'mysql-28e17ff3-kting1116-197f.f.aivencloud.com',
         'PORT': '27192',
         'OPTIONS': {
-            'ssl': {'ca': None}, 
+            'ssl': {
+                'ca': str(BASE_DIR / 'ca.pem'),
+            },
         },
     }
 }
-
 # 密碼驗證 (開發階段可維持預設)
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',},

@@ -25,6 +25,35 @@ export default function RegisterScreen() {
   const passwordRef = useRef<TextInput>(null);
   const confirmPasswordRef = useRef<TextInput>(null);
 
+
+  // 隱藏瀏覽器 / Edge 內建的密碼眼睛，避免和自訂 Ionicons 眼睛重複出現
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+
+    const styleId = 'hide-native-password-eye';
+    if (document.getElementById(styleId)) return;
+
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.innerHTML = `
+      input::-ms-reveal,
+      input::-ms-clear {
+        display: none !important;
+        width: 0 !important;
+        height: 0 !important;
+      }
+
+      input[type="password"]::-webkit-credentials-auto-fill-button,
+      input[type="password"]::-webkit-caps-lock-indicator,
+      input[type="password"]::-webkit-contacts-auto-fill-button {
+        visibility: hidden !important;
+        display: none !important;
+        pointer-events: none !important;
+      }
+    `;
+    document.head.appendChild(style);
+  }, []);
+
   // 頁面一載入，自動聚焦在帳號欄位
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -123,6 +152,9 @@ export default function RegisterScreen() {
                   setUsername(text.replace(/[^a-zA-Z0-9]/g, ''));
                 }}
                 autoCapitalize="none"
+                autoComplete="off"
+                textContentType="none"
+                importantForAutofill="no"
                 returnKeyType="next"
                 blurOnSubmit={false}
                 onSubmitEditing={() => passwordRef.current?.focus()}
@@ -145,6 +177,9 @@ export default function RegisterScreen() {
                     setFormatError(false); 
                     setMatchError(false); 
                   }}
+                  autoComplete="new-password"
+                  textContentType="newPassword"
+                  importantForAutofill="no"
                   returnKeyType="next"
                   blurOnSubmit={false}
                   onSubmitEditing={() => confirmPasswordRef.current?.focus()}
@@ -184,6 +219,9 @@ export default function RegisterScreen() {
                     setFormatError(false); 
                     setMatchError(false); 
                   }}
+                  autoComplete="new-password"
+                  textContentType="newPassword"
+                  importantForAutofill="no"
                   returnKeyType="done"
                   onSubmitEditing={handleRegister}
                 />
