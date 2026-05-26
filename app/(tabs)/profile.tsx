@@ -461,7 +461,7 @@ export default function ProfileScreen() {
                     style={webSelectStyle}
                   >
                     <option value="">請選擇體重</option>
-                    {heightOptions.map(w => <option key={w} value={w}>{w} kg</option>)}
+                    {weightOptions.map(w => <option key={w} value={w}>{w} kg</option>)}
                   </select>
                 ) : (
                   <TextInput
