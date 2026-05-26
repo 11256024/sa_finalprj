@@ -319,6 +319,13 @@ export default function ProfileScreen() {
     cursor: 'pointer'
   };
 
+  // 🔴 修正：網頁端 DatePicker 專用樣式，強制定位於輸入框右下
+  const webDateInputStyle = {
+    ...webSelectStyle,
+    width: '100%',
+    position: 'relative' as const,
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
@@ -362,7 +369,7 @@ export default function ProfileScreen() {
               <Text style={styles.infoLabel}>生 日</Text>
               {isEditing ? (
                 Platform.OS === 'web' ? (
-                  /* 🟢 修正：使用相對定位包裹，並加一個透明覆蓋層阻斷左側文字區的點擊 */
+                  /* 🟢 修正：增加一個 className 或直接控制容器節點，並加入包含隱含定位的容器 */
                   <div style={{ width: '65%', position: 'relative', display: 'flex', justifyContent: 'flex-end' }}>
                     <input
                       id="web-birthday-picker"
@@ -370,9 +377,9 @@ export default function ProfileScreen() {
                       value={tempData.birthday}
                       max={getTodayDateString()}
                       onChange={(e) => setTempData({ ...tempData, birthday: e.target.value })}
-                      style={{ ...webSelectStyle, width: '100%' }}
+                      style={webDateInputStyle}
                     />
-                    {/* 透明透明點擊層：寬度 82% 剛好避開最右側的日曆小圖標，避免重複觸發 */}
+                    {/* 透明點擊層：避開右側日曆小圖標，防重複觸發並正確調用原生的 showPicker */}
                     <div 
                       style={{
                         position: 'absolute',
