@@ -161,8 +161,8 @@ export default function ProfileScreen() {
 
       const singlePassword = savedPassword || '';
 
-      // 只讓「姓名」使用本機快取，因為目前 members 資料表沒有 name 欄位。
-      // 生日、身高、體重、性別只要後端有成功回傳，就完全以資料庫為主。
+      // 姓名、照片、生日、身高、體重、性別只要後端有成功回傳，就完全以資料庫為主。
+      // 只有後端讀取失敗時，才使用本機快取。
       let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
       let parsedProfile: any = {};
       if (localData) {
@@ -195,7 +195,8 @@ export default function ProfileScreen() {
 
       const singleName = await AsyncStorage.getItem(`${savedUserId}_user_name_key`);
 
-      let rawName = singleName || parsedProfile.name || '';
+      let rawName = '';
+      let rawAvatar = '';
       let rawBirthday = '';
       let rawHeight = '';
       let rawWeight = '';
@@ -203,24 +204,32 @@ export default function ProfileScreen() {
 
       if (hasDbProfile) {
         // 後端有成功回傳時，NULL 就保持空值，絕對不要用舊 AsyncStorage 補上。
+        rawName = dbProfile.name ? String(dbProfile.name) : '';
+        rawAvatar = dbProfile.avatar ? String(dbProfile.avatar) : '';
         rawBirthday = dbProfile.birthday ? String(dbProfile.birthday) : '';
         rawHeight = dbProfile.height !== null && dbProfile.height !== undefined ? String(dbProfile.height) : '';
         rawWeight = dbProfile.initial_weight !== null && dbProfile.initial_weight !== undefined ? String(dbProfile.initial_weight) : '';
         rawGender = dbProfile.gender ? String(dbProfile.gender) : '';
 
         // 把舊的欄位快取移除，避免下次又被舊資料污染。
-        if (!rawBirthday && !rawHeight && !rawWeight && !rawGender) {
-          await AsyncStorage.multiRemove([
-            `${savedUserId}_user_height`,
-            `${savedUserId}_user_weight`,
-            `${savedUserId}_user_age`,
-          ]);
-        }
+        await AsyncStorage.multiRemove([
+          `${savedUserId}_user_profile`,
+          `${savedUserId}_user_name_key`,
+          `${savedUserId}_user_height`,
+          `${savedUserId}_user_weight`,
+          `${savedUserId}_user_age`,
+          `${savedUserId}_user_avatar`,
+          'user_avatar',
+          'user_avatar_uri',
+        ]);
       } else {
         // 只有後端真的讀取失敗時，才使用本機快取。
         const singleHeight = await AsyncStorage.getItem(`${savedUserId}_user_height`);
         const singleWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`);
+        const savedAvatar = await AsyncStorage.getItem(`${savedUserId}_user_avatar`);
 
+        rawName = singleName || parsedProfile.name || '';
+        rawAvatar = savedAvatar || parsedProfile.avatar || '';
         rawBirthday = parsedProfile.birthday || '';
         rawHeight = singleHeight || parsedProfile.height || '';
         rawWeight = singleWeight || parsedProfile.weight || '';
@@ -248,9 +257,7 @@ export default function ProfileScreen() {
 
       setProfileData(safeData);
       setTempData(safeData);
-
-      const savedAvatar = await AsyncStorage.getItem(`${savedUserId}_user_avatar`);
-      setAvatarUri(savedAvatar || null);
+      setAvatarUri(rawAvatar || null);
     } catch (error) {
       console.error("加載會員資料失敗：", error);
     }
@@ -277,6 +284,37 @@ export default function ProfileScreen() {
     return ageNum ? ` (${ageNum} 歲)` : '';
   };
 
+  const saveAvatarToDatabase = async (avatarValue: string | null) => {
+    try {
+      const { memberId: savedUserId, currentUser } = await getCurrentMemberContext();
+
+      if (!savedUserId || savedUserId === 'guest') {
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/member/profile/${savedUserId}/`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          avatar: avatarValue,
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+
+      if (response.ok && data.success && data.member) {
+        await AsyncStorage.setItem('user', JSON.stringify({
+          ...(currentUser || {}),
+          ...data.member,
+        }));
+      }
+    } catch (error) {
+      console.log('⚠️ 大頭貼同步到資料庫失敗:', error);
+    }
+  };
+
   const openImagePicker = async () => {
     setAvatarMenuVisible(false);
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -298,22 +336,24 @@ export default function ProfileScreen() {
         const reader = new FileReader();
         reader.onload = async () => {
           const base64Data = reader.result as string;
-          await AsyncStorage.setItem('user_avatar', base64Data);
+          setAvatarUri(base64Data);
           const currentUserId =
             await AsyncStorage.getItem('current_user_id') ||
             await AsyncStorage.getItem('member_id') ||
             'guest';
           await AsyncStorage.setItem(`${currentUserId}_user_avatar`, base64Data);
+          await saveAvatarToDatabase(base64Data);
         };
         reader.readAsDataURL(blob);
       } catch (e) {
         console.log('⚠️ Base64 轉換失敗，使用原始 URI:', e);
-        await AsyncStorage.setItem('user_avatar', imageUri);
+        setAvatarUri(imageUri);
         const currentUserId =
           await AsyncStorage.getItem('current_user_id') ||
           await AsyncStorage.getItem('member_id') ||
           'guest';
         await AsyncStorage.setItem(`${currentUserId}_user_avatar`, imageUri);
+        await saveAvatarToDatabase(imageUri);
       }
     }
   };
@@ -322,12 +362,14 @@ export default function ProfileScreen() {
     setDeleteConfirmVisible(false);
     setAvatarUri(null);
     try {
-      await AsyncStorage.removeItem('user_avatar');
       const currentUserId =
         await AsyncStorage.getItem('current_user_id') ||
         await AsyncStorage.getItem('member_id') ||
         'guest';
       await AsyncStorage.removeItem(`${currentUserId}_user_avatar`);
+      await AsyncStorage.removeItem('user_avatar');
+      await AsyncStorage.removeItem('user_avatar_uri');
+      await saveAvatarToDatabase(null);
     } catch (e) {
       console.error("刪除圖片失敗：", e);
     }
@@ -395,6 +437,8 @@ export default function ProfileScreen() {
       console.log('準備更新會員資料:', {
         url: `${API_URL}/member/profile/${savedUserId}/`,
         memberId: savedUserId,
+        name: updatedData.name,
+        avatar: avatarUri ? '已選擇圖片' : null,
         gender: updatedData.gender,
         birthday: birthdayForApi,
         height: updatedData.height,
@@ -407,6 +451,8 @@ export default function ProfileScreen() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          name: updatedData.name.trim() || null,
+          avatar: avatarUri || null,
           gender: updatedData.gender || null,
           birthday: birthdayForApi || null,
           height: updatedData.height ? Number(updatedData.height) : null,

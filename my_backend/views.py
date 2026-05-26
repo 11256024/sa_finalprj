@@ -27,6 +27,8 @@ def member_to_dict(member):
         "id": member.id,
         "username": member.username,
         "role": member.role,
+        "name": member.name,
+        "avatar": member.avatar,
         "gender": member.gender,
         "birthday": member.birthday.isoformat() if member.birthday else None,
         "height": member.height,
@@ -135,6 +137,8 @@ def member_profile(request, member_id):
             "id": member.id,
             "username": member.username,
             "role": member.role,
+            "name": member.name,
+            "avatar": member.avatar,
             "gender": member.gender,
             "birthday": safe_birthday(member.birthday),
             "height": member.height,
@@ -151,6 +155,12 @@ def member_profile(request, member_id):
         data = request.data
 
         # 只有前端有傳欄位時才更新，避免沒傳的欄位被清空
+        if "name" in data:
+            member.name = data.get("name") or None
+
+        if "avatar" in data:
+            member.avatar = data.get("avatar") or None
+
         if "gender" in data:
             member.gender = data.get("gender")
 

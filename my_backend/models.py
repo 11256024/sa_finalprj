@@ -27,6 +27,8 @@ class Members(models.Model):
     password = models.CharField(max_length=255)
 
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='user')
+    name = models.CharField(max_length=100, blank=True, null=True)
+    avatar = models.TextField(blank=True, null=True)
     gender = models.CharField(max_length=10, blank=True, null=True)
     birthday = models.DateField(blank=True, null=True)
 
