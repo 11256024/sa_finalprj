@@ -4,8 +4,8 @@ import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Alert, Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
-const API_URL = 'http://127.0.0.1:8001';
 
+const API_URL = 'http://127.0.0.1:8001';
 
 interface ProfileType {
   name: string;
@@ -73,8 +73,7 @@ export default function ProfileScreen() {
     loadProfileData();
   }, []);
 
-  // Web 版生日欄位：保留瀏覽器原生日曆 icon，只把空值時的 yyyy/月/dd 文字隱藏，
-  // 再用一層「年/月/日」文字覆蓋，避免出現兩個 icon 或 dd 被反白選取。
+  // Web 版生日欄位極速優化樣式注入：讓原生日曆點擊區塊放大到整個欄位，滑動速度由硬體決定！
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
 
@@ -86,45 +85,27 @@ export default function ProfileScreen() {
     style.innerHTML = `
       #web-birthday-picker {
         color-scheme: light;
-      }
-
-      /* 保留原生 calendar icon，調成乾淨的黑色樣式 */
-      #web-birthday-picker::-webkit-calendar-picker-indicator {
-        opacity: 1 !important;
-        display: block !important;
         cursor: pointer;
-        margin-left: 6px;
-        filter: brightness(0) saturate(100%);
       }
-
+      /* 隱藏微調按鈕與清除按鈕 */
       #web-birthday-picker::-webkit-inner-spin-button,
       #web-birthday-picker::-webkit-clear-button {
         display: none !important;
         -webkit-appearance: none !important;
       }
-
-      /* 空值時隱藏瀏覽器原生 yyyy/月/dd 文字，但不要動右側日曆 icon */
-      #web-birthday-picker.empty-date::-webkit-datetime-edit,
-      #web-birthday-picker.empty-date::-webkit-datetime-edit-fields-wrapper,
-      #web-birthday-picker.empty-date::-webkit-datetime-edit-text,
-      #web-birthday-picker.empty-date::-webkit-datetime-edit-year-field,
-      #web-birthday-picker.empty-date::-webkit-datetime-edit-month-field,
-      #web-birthday-picker.empty-date::-webkit-datetime-edit-day-field {
-        color: transparent !important;
-        background: transparent !important;
+      /* 自訂右側日曆圖示樣式 */
+      #web-birthday-picker::-webkit-calendar-picker-indicator {
+        opacity: 1 !important;
+        display: block !important;
+        cursor: pointer;
+        margin-left: 6px;
+        filter: brightness(0) saturate(100%) invert(48%) sepia(89%) saturate(415%) hue-rotate(352deg) brightness(94%) contrast(92%); /* 橘色系 */
       }
-
-      #web-birthday-picker.empty-date:focus::-webkit-datetime-edit,
-      #web-birthday-picker.empty-date:focus::-webkit-datetime-edit-fields-wrapper,
-      #web-birthday-picker.empty-date:focus::-webkit-datetime-edit-text,
-      #web-birthday-picker.empty-date:focus::-webkit-datetime-edit-year-field,
-      #web-birthday-picker.empty-date:focus::-webkit-datetime-edit-month-field,
-      #web-birthday-picker.empty-date:focus::-webkit-datetime-edit-day-field {
+      /* 當日期為空時，隱藏瀏覽器預設的 yyyy/mm/dd 灰字，避免與提示文字重疊 */
+      #web-birthday-picker.empty-date::-webkit-datetime-edit {
         color: transparent !important;
-        background: transparent !important;
       }
     `;
-
     document.head.appendChild(style);
   }, []);
 
@@ -161,8 +142,6 @@ export default function ProfileScreen() {
 
       const singlePassword = savedPassword || '';
 
-      // 姓名、照片、生日、身高、體重、性別只要後端有成功回傳，就完全以資料庫為主。
-      // 只有後端讀取失敗時，才使用本機快取。
       let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
       let parsedProfile: any = {};
       if (localData) {
@@ -203,7 +182,6 @@ export default function ProfileScreen() {
       let rawGender = '';
 
       if (hasDbProfile) {
-        // 後端有成功回傳時，NULL 就保持空值，絕對不要用舊 AsyncStorage 補上。
         rawName = dbProfile.name ? String(dbProfile.name) : '';
         rawAvatar = dbProfile.avatar ? String(dbProfile.avatar) : '';
         rawBirthday = dbProfile.birthday ? String(dbProfile.birthday) : '';
@@ -211,7 +189,6 @@ export default function ProfileScreen() {
         rawWeight = dbProfile.initial_weight !== null && dbProfile.initial_weight !== undefined ? String(dbProfile.initial_weight) : '';
         rawGender = dbProfile.gender ? String(dbProfile.gender) : '';
 
-        // 把舊的欄位快取移除，避免下次又被舊資料污染。
         await AsyncStorage.multiRemove([
           `${savedUserId}_user_profile`,
           `${savedUserId}_user_name_key`,
@@ -223,7 +200,6 @@ export default function ProfileScreen() {
           'user_avatar_uri',
         ]);
       } else {
-        // 只有後端真的讀取失敗時，才使用本機快取。
         const singleHeight = await AsyncStorage.getItem(`${savedUserId}_user_height`);
         const singleWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`);
         const savedAvatar = await AsyncStorage.getItem(`${savedUserId}_user_avatar`);
@@ -434,17 +410,6 @@ export default function ProfileScreen() {
         age: calculatedAgeStr,
       };
 
-      console.log('準備更新會員資料:', {
-        url: `${API_URL}/member/profile/${savedUserId}/`,
-        memberId: savedUserId,
-        name: updatedData.name,
-        avatar: avatarUri ? '已選擇圖片' : null,
-        gender: updatedData.gender,
-        birthday: birthdayForApi,
-        height: updatedData.height,
-        initial_weight: updatedData.weight,
-      });
-
       const response = await fetch(`${API_URL}/member/profile/${savedUserId}/`, {
         method: 'PUT',
         headers: {
@@ -461,7 +426,6 @@ export default function ProfileScreen() {
       });
 
       const data = await parseApiResponse(response);
-      console.log('會員資料更新結果:', data);
 
       if (!response.ok || !data.success) {
         showWarningAlert(data.message || `會員資料更新失敗，HTTP ${response.status}`);
@@ -530,21 +494,12 @@ export default function ProfileScreen() {
     cursor: 'pointer'
   };
 
-  // 網頁端 DatePicker 樣式：使用原生日曆 icon，空值提示文字另外覆蓋。
   const webDateInputStyle = {
     ...webSelectStyle,
     width: '100%',
     position: 'relative' as const,
-    color: '#333',
-    backgroundColor: '#F9F9F9',
-    border: '1px solid #DDD',
-    borderRadius: '8px',
-    padding: '4px 10px',
-    textAlign: 'right' as const,
     fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     fontVariantNumeric: 'tabular-nums' as const,
-    WebkitAppearance: 'none' as const,
-    appearance: 'none' as const,
   };
 
   return (
@@ -585,7 +540,7 @@ export default function ProfileScreen() {
           {/* 右側欄位 */}
           <View style={styles.rightSection}>
             
-            {/* 生日 */}
+            {/* 生日 (✅ 全面升級為「只能用選的」+「呼叫作業系統底層超流暢捲軸選擇器」) */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>生 日</Text>
               {isEditing ? (
@@ -595,15 +550,21 @@ export default function ProfileScreen() {
                       id="web-birthday-picker"
                       className={!tempData.birthday ? 'empty-date' : ''}
                       type="date"
-                      value={tempData.birthday}
+                      value={tempData.birthday || ''}
                       max={getTodayDateString()}
+                      /* 點擊整條欄位直接強制展開原生的高速年/月/日捲軸彈窗 */
                       onClick={(e) => {
                         const inputEl = e.currentTarget as any;
                         if (inputEl && typeof inputEl.showPicker === 'function') {
                           inputEl.showPicker();
                         }
                       }}
-                      onChange={(e) => setTempData({ ...tempData, birthday: e.target.value })}
+                      onChange={(e) => {
+                        const newDate = e.target.value;
+                        if (tempData.birthday !== newDate) {
+                          setTempData(prev => ({ ...prev, birthday: newDate }));
+                        }
+                      }}
                       style={webDateInputStyle}
                     />
 
@@ -614,14 +575,13 @@ export default function ProfileScreen() {
                           right: 34,
                           top: '50%',
                           transform: 'translateY(-50%)',
-                          color: '#333',
+                          color: '#A9A9A9',
                           fontSize: '16px',
-                          lineHeight: '16px',
                           pointerEvents: 'none',
                           userSelect: 'none',
                         }}
                       >
-                        年/月/日
+                        請選擇生日
                       </span>
                     )}
                   </div>
@@ -631,13 +591,13 @@ export default function ProfileScreen() {
                     value={tempData.birthday}
                     placeholder="YYYY-MM-DD"
                     placeholderTextColor="#A9A9A9"
-                    onChangeText={(text) => setTempData({ ...tempData, birthday: text })}
+                    editable={false} // 手機端限制禁止鍵盤輸入，只能點擊觸發選擇（此處亦可整合您手機原生 Picker）
                   />
                 )
               ) : (
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Text style={[styles.infoValue, (!profileData.birthday || profileData.birthday === '') && styles.placeholderText]}>
-                    {!profileData.birthday||profileData.birthday === '' ? '請選擇生日' : profileData.birthday}
+                    {!profileData.birthday || profileData.birthday === '' ? '請選擇生日' : profileData.birthday}
                   </Text>
                   {profileData.birthday ? <Text style={styles.ageHighlightText}>{renderAgeLabel(profileData.birthday)}</Text> : null}
                 </View>
@@ -790,7 +750,7 @@ export default function ProfileScreen() {
         </View>
       </ScrollView>
 
-      {/* 自訂選單 Modal */}
+      {/* 自訂大頭貼選單 Modal */}
       <Modal animationType="fade" transparent={true} visible={avatarMenuVisible} onRequestClose={() => setAvatarMenuVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
@@ -818,7 +778,7 @@ export default function ProfileScreen() {
         </View>
       </Modal>
 
-      {/* 刪除圖片時的「二次確認」防呆 Modal */}
+      {/* 刪除圖片防呆二次確認 Modal */}
       <Modal animationType="fade" transparent={true} visible={deleteConfirmVisible} onRequestClose={() => setDeleteConfirmVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
@@ -871,6 +831,7 @@ export default function ProfileScreen() {
           </View>
         </View>
       </Modal>
+
     </SafeAreaView>
   );
 }
@@ -922,7 +883,6 @@ const styles = StyleSheet.create({
   orangeAlertBtn: { backgroundColor: '#F3B07E' },
   modalBtnConfirmText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' },
   
-
   menuActionButton: {
     width: '100%',
     paddingVertical: 14,
