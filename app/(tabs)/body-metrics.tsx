@@ -644,7 +644,12 @@ export default function BodyMetricsScreen() {
               <View style={styles.bmrList}>
                 {/* 生生理性別 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>生 理 性 別</Text>
+                  <View style={styles.bmrLabelContainer}>
+                    <Text style={styles.bmrLabelText}>生</Text>
+                    <Text style={styles.bmrLabelText}>理</Text>
+                    <Text style={styles.bmrLabelText}>性</Text>
+                    <Text style={styles.bmrLabelText}>別</Text>
+                  </View>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.gender}
@@ -670,7 +675,10 @@ export default function BodyMetricsScreen() {
 
                 {/* 年齡 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>年       齡</Text>
+                  <View style={styles.bmrLabelContainer}>
+                    <Text style={styles.bmrLabelText}>年</Text>
+                    <Text style={styles.bmrLabelText}>齡</Text>
+                  </View>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.age}
@@ -712,7 +720,10 @@ export default function BodyMetricsScreen() {
 
                 {/* 身高 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>身       高</Text>
+                  <View style={styles.bmrLabelContainer}>
+                    <Text style={styles.bmrLabelText}>身</Text>
+                    <Text style={styles.bmrLabelText}>高</Text>
+                  </View>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.height}
@@ -739,7 +750,10 @@ export default function BodyMetricsScreen() {
 
                 {/* 體重 */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>體       重</Text>
+                  <View style={styles.bmrLabelContainer}>
+                    <Text style={styles.bmrLabelText}>體</Text>
+                    <Text style={styles.bmrLabelText}>重</Text>
+                  </View>
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.weight}
@@ -766,7 +780,11 @@ export default function BodyMetricsScreen() {
 
                 {/* BMI */}
                 <View style={styles.bmrRow}>
-                  <Text style={styles.bmrLabel}>B  M  I</Text>
+                  <View style={styles.bmrLabelContainer}>
+                    <Text style={styles.bmrLabelText}>Ｂ</Text>
+                    <Text style={styles.bmrLabelText}>Ｍ</Text>
+                    <Text style={styles.bmrLabelText}>Ｉ</Text>
+                  </View>
                   <Text style={[styles.bmrValueText, hasBmiDisplay && styles.darkValueText]}>
                     {hasBmiDisplay ? metricsData.bmi : '---'} {(metricsData.bmiStatus && hasBmiDisplay) ? `(${metricsData.bmiStatus})` : ''}
                   </Text>
@@ -921,7 +939,8 @@ const styles = StyleSheet.create({
   bmrMainTitle: { fontSize: 32, fontWeight: 'bold', color: '#333333', textAlign: 'center', marginBottom: 30 },
   bmrList: { marginBottom: 15 },
   bmrRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F5F5F5' },
-  bmrLabel: { fontSize: 20, fontWeight: '600', color: '#444', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' }, 
+  bmrLabelContainer: { width: 130, flexDirection: 'row', justifyContent: 'space-between' },
+  bmrLabelText: { fontSize: 20, fontWeight: '600', color: '#444' },
   bmrInput: { fontSize: 18, textAlign: 'right', width: 140, fontWeight: '500', padding: 0 },
   bmrValueText: { fontSize: 18, color: '#DCDCDC', fontWeight: '500', textAlign: 'right', width: 190 }, 
   lightValueText: { color: '#999999', fontWeight: '600' }, 
