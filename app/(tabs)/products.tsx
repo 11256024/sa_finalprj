@@ -94,10 +94,13 @@ export default function ProductsScreen() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [products, setProducts] = useState<Product[]>([]); 
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState('guest'); 
   const lastFetchAtRef = useRef(0);
   const isFetchingRef = useRef(false);
   
+  // 🎯 新增 Ref 來儲存最新的商品列表，避免在 useEffect 中直接監聽 products 導致無窮迴圈
+  const productsRef = useRef<Product[]>([]);
   // 用來追蹤上一次有哪些商品在審核中，以便抓到狀態改變的瞬間
   const prevPendingIdsRef = useRef<string[]>([]);
 
@@ -109,6 +112,11 @@ export default function ProductsScreen() {
 
   const amountInputRef = useRef<TextInput>(null);
   const calorieInputRef = useRef<TextInput>(null);
+
+  // 每次 products 狀態更新時，同步更新到 Ref 中
+  useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
 
   // 自動格式化並串接前台顯示的「品名與單位」
   const formatDisplayInfo = (name: string, unit: string) => {
@@ -175,6 +183,7 @@ export default function ProductsScreen() {
   // 從 Django 讀取商品資料並執行自動跳轉與過濾判定
   const loadSavedProducts = async (force = false) => {
     try {
+      setErrorMessage(null);
       const savedUserId = await getCurrentMemberId();
       setCurrentUserId(savedUserId);
 
@@ -260,10 +269,11 @@ export default function ProductsScreen() {
 
       const allFailed = results.every(result => result.status === 'rejected');
       if (allFailed && cachedProducts.length === 0) {
-        throw new Error('無法從後端讀取商品資料，請確認 Django 是否已啟動。');
+        setErrorMessage('⚠️ 無法從後端讀取商品資料，請確認 Django (8001) 是否已啟動。');
       }
     } catch (e: any) {
       console.error('讀取商品資料失敗:', e);
+      setErrorMessage('⚠️ 連線失敗，請檢查網路或後端伺服器。');
     } finally {
       isFetchingRef.current = false;
     }
@@ -271,22 +281,22 @@ export default function ProductsScreen() {
 
   // 💡 建立高頻即時輪詢監聽機制：若當前有 pending 商品，每 3 秒自動向後端刷新確認狀態
   useEffect(() => {
-    loadSavedProducts(true);
+    loadSavedProducts(true); // 頁面初次載入執行一次
 
     const intervalId = setInterval(() => {
-      // 檢查目前畫面上是否有屬於當前使用者且正在 pending 的商品
-      const hasActivePending = products.some(
+      // 🎯 修正：從 productsRef 讀取最新資料，而不是直接依賴 state
+      const hasActivePending = productsRef.current.some(
         item => item.creatorId === currentUserId && item.status === 'pending'
       );
 
       // 如果有任何一筆在審核中，強制背景刷新，達到「免刷新的自動跳轉」
       if (hasActivePending) {
-        loadSavedProducts(true);
+        loadSavedProducts(true); 
       }
     }, 3000); // 3000ms = 3 秒
 
     return () => clearInterval(intervalId);
-  }, [products, currentUserId]);
+  }, [currentUserId]); // 🚀 關鍵：移除對 products 的監聽，徹底解決卡死問題
 
   useEffect(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
