@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
-import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import { useFocusEffect, useRouter } from 'expo-router';
+import React, { useCallback, useState } from 'react';
 import { Alert, Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 const API_URL = 'http://127.0.0.1:8001';
@@ -61,9 +61,49 @@ export default function ProfileScreen() {
     }
   };
 
-  useEffect(() => {
-    loadProfileData();
-  }, []);
+  const getTodayDateString = () => {
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('zh-TW', {
+      timeZone: 'Asia/Taipei',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+
+    const parts = formatter.format(now).split('/');
+    return `${parts[0]}-${parts[1]}-${parts[2]}`;
+  };
+
+  const getTodayRecordWeight = async (memberId: string) => {
+    try {
+      const todayFoodKey = `${memberId}_food_record_${getTodayDateString()}`;
+      const dailyFoodRecordRaw = await AsyncStorage.getItem(todayFoodKey);
+
+      if (!dailyFoodRecordRaw) return '';
+
+      const parsedFood = JSON.parse(dailyFoodRecordRaw);
+
+      if (
+        parsedFood.hasDailyWeight === true &&
+        parsedFood.weight !== undefined &&
+        parsedFood.weight !== null &&
+        parsedFood.weight.toString().trim() !== ''
+      ) {
+        return parsedFood.weight.toString().trim();
+      }
+
+      return '';
+    } catch (e) {
+      console.log('讀取今日每日紀錄體重失敗:', e);
+      return '';
+    }
+  };
+
+  useFocusEffect(
+    useCallback(() => {
+      loadProfileData();
+    }, [])
+  );
 
   const getCurrentMemberContext = async () => {
     const userStr = await AsyncStorage.getItem('user');
@@ -104,6 +144,36 @@ export default function ProfileScreen() {
         try { parsedProfile = JSON.parse(localData); } catch (e) {}
       }
 
+      const singleNameForInstant = await AsyncStorage.getItem(`${savedUserId}_user_name_key`);
+      const singleHeightForInstant = await AsyncStorage.getItem(`${savedUserId}_user_height`);
+      const singleWeightForInstant = await AsyncStorage.getItem(`${savedUserId}_user_weight`);
+      const savedAvatarForInstant = await AsyncStorage.getItem(`${savedUserId}_user_avatar`);
+      const todayRecordWeight = await getTodayRecordWeight(savedUserId);
+
+      // 先用本機快取與今日每日紀錄體重立即渲染，避免切回會員資料時先閃舊體重。
+      const instantBirthday = parsedProfile.birthday || '';
+      const instantName = singleNameForInstant || parsedProfile.name || '';
+      const instantHeight = singleHeightForInstant || parsedProfile.height || '';
+      const instantWeight = todayRecordWeight || singleWeightForInstant || parsedProfile.weight || '';
+      const instantGender = parsedProfile.gender || '';
+
+      const instantData = {
+        name: (instantName === '請輸入姓名' || instantName === '王小' || instantName === '王小明' || instantName === '你好' || instantName === 'xx') ? '' : instantName,
+        birthday: (instantBirthday === '請選擇生日' || instantBirthday === '1995-01-15') ? '' : instantBirthday,
+        height: (instantHeight === '請選擇身高' || !instantHeight) ? '' : instantHeight.toString().trim(),
+        weight: (instantWeight === '請選擇體重' || !instantWeight) ? '' : instantWeight.toString().trim(),
+        gender: instantGender === '請選擇性別' ? '' : instantGender,
+        account: singleAccount || parsedProfile.account || '',
+        password: singlePassword || parsedProfile.password || '',
+        age: instantBirthday ? getPureAgeValue(instantBirthday) : ''
+      };
+
+      setProfileData(instantData);
+      setTempData(instantData);
+      if (savedAvatarForInstant || parsedProfile.avatar) {
+        setAvatarUri(savedAvatarForInstant || parsedProfile.avatar);
+      }
+
       let dbProfile: any = {};
       let hasDbProfile = false;
 
@@ -142,16 +212,10 @@ export default function ProfileScreen() {
         rawAvatar = dbProfile.avatar ? String(dbProfile.avatar) : '';
         rawBirthday = dbProfile.birthday ? String(dbProfile.birthday) : '';
         rawHeight = dbProfile.height !== null && dbProfile.height !== undefined ? String(dbProfile.height) : '';
-        rawWeight = dbProfile.initial_weight !== null && dbProfile.initial_weight !== undefined ? String(dbProfile.initial_weight) : '';
+        rawWeight = todayRecordWeight || (dbProfile.initial_weight !== null && dbProfile.initial_weight !== undefined ? String(dbProfile.initial_weight) : '');
         rawGender = dbProfile.gender ? String(dbProfile.gender) : '';
 
         await AsyncStorage.multiRemove([
-          `${savedUserId}_user_profile`,
-          `${savedUserId}_user_name_key`,
-          `${savedUserId}_user_height`,
-          `${savedUserId}_user_weight`,
-          `${savedUserId}_user_age`,
-          `${savedUserId}_user_avatar`,
           'user_avatar',
           'user_avatar_uri',
         ]);
@@ -164,7 +228,7 @@ export default function ProfileScreen() {
         rawAvatar = savedAvatar || parsedProfile.avatar || '';
         rawBirthday = parsedProfile.birthday || '';
         rawHeight = singleHeight || parsedProfile.height || '';
-        rawWeight = singleWeight || parsedProfile.weight || '';
+        rawWeight = todayRecordWeight || singleWeight || parsedProfile.weight || '';
         rawGender = parsedProfile.gender || '';
       }
 
@@ -189,7 +253,20 @@ export default function ProfileScreen() {
 
       setProfileData(safeData);
       setTempData(safeData);
-      setAvatarUri(rawAvatar || null);
+      setAvatarUri(rawAvatar || savedAvatarForInstant || null);
+
+      await AsyncStorage.setItem(`${savedUserId}_user_profile`, JSON.stringify(safeData));
+      await AsyncStorage.setItem(`${savedUserId}_user_height`, safeData.height);
+      await AsyncStorage.setItem(`${savedUserId}_user_weight`, safeData.weight);
+      if (safeData.name) {
+        await AsyncStorage.setItem(`${savedUserId}_user_name_key`, safeData.name);
+      }
+      if (safeData.age) {
+        await AsyncStorage.setItem(`${savedUserId}_user_age`, safeData.age);
+      }
+      if (rawAvatar || savedAvatarForInstant) {
+        await AsyncStorage.setItem(`${savedUserId}_user_avatar`, rawAvatar || savedAvatarForInstant || '');
+      }
     } catch (error) {
       error && console.error("加載會員資料失敗：", error);
     }
