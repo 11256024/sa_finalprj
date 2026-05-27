@@ -94,13 +94,16 @@ export default function ProductsScreen() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [products, setProducts] = useState<Product[]>([]); 
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState('guest'); 
   const lastFetchAtRef = useRef(0);
   const isFetchingRef = useRef(false);
   
-  // 🎯 新增 Ref 來儲存最新的商品列表，避免在 useEffect 中直接監聽 products 導致無窮迴圈
+  // 用於在不觸發 useEffect 重複執行的情況下，即時供計時器內部比對最新狀態
   const productsRef = useRef<Product[]>([]);
+  useEffect(() => {
+    productsRef.current = products;
+  }, [products]);
+
   // 用來追蹤上一次有哪些商品在審核中，以便抓到狀態改變的瞬間
   const prevPendingIdsRef = useRef<string[]>([]);
 
@@ -112,11 +115,6 @@ export default function ProductsScreen() {
 
   const amountInputRef = useRef<TextInput>(null);
   const calorieInputRef = useRef<TextInput>(null);
-
-  // 每次 products 狀態更新時，同步更新到 Ref 中
-  useEffect(() => {
-    productsRef.current = products;
-  }, [products]);
 
   // 自動格式化並串接前台顯示的「品名與單位」
   const formatDisplayInfo = (name: string, unit: string) => {
@@ -142,6 +140,7 @@ export default function ProductsScreen() {
     return cleanUnit ? `${cleanName} / ${cleanUnit}` : cleanName;
   };
 
+  // 🛠️ 精準修改 1：移除內部的 setCurrentUserId，改為純唯讀，避免身分衝突與卡死
   const getCurrentMemberId = async () => {
     try {
       const userStr = await AsyncStorage.getItem('user');
@@ -183,9 +182,7 @@ export default function ProductsScreen() {
   // 從 Django 讀取商品資料並執行自動跳轉與過濾判定
   const loadSavedProducts = async (force = false) => {
     try {
-      setErrorMessage(null);
       const savedUserId = await getCurrentMemberId();
-      setCurrentUserId(savedUserId);
 
       const cacheKey = getProductCacheKey(savedUserId);
       let cachedProducts: Product[] = [];
@@ -194,7 +191,7 @@ export default function ProductsScreen() {
       if (cachedRaw) {
         try {
           cachedProducts = JSON.parse(cachedRaw);
-          if (Array.isArray(cachedProducts)) {
+          if (Array.isArray(cachedProducts) && productsRef.current.length === 0) {
             setProducts(cachedProducts);
           }
         } catch (e) {
@@ -211,15 +208,13 @@ export default function ProductsScreen() {
 
       // 同時拉取全部、審核中、未通過的資料，確保同步最精確
       const requests = [
-        fetchProductsByUrl(`${API_URL}/products/`),
-        fetchProductsByUrl(`${API_URL}/products/pending/`),
-        fetchProductsByUrl(`${API_URL}/products/rejected/`),
+        fetchProductsByUrl(`${API_URL}/products/`).catch(() => []),
+        fetchProductsByUrl(`${API_URL}/products/pending/`).catch(() => []),
+        fetchProductsByUrl(`${API_URL}/products/rejected/`).catch(() => []),
       ];
 
-      const results = await Promise.allSettled(requests);
-      const fetchedProducts = results.flatMap((result: any) =>
-        result.status === 'fulfilled' ? result.value : []
-      );
+      const results = await Promise.all(requests);
+      const fetchedProducts = results.flat();
 
       if (fetchedProducts.length > 0 || cachedProducts.length > 0) {
         const mergedMap = new Map<string, Product>();
@@ -233,30 +228,26 @@ export default function ProductsScreen() {
         const mergedProducts = Array.from(mergedMap.values());
         mergedProducts.sort((a, b) => Number(b.id) - Number(a.id));
 
-        // 💡 核心智慧跳轉邏輯
-        // 找出這次撈回來的最新資料中，原本屬於當前使用者且在 prevPendingIdsRef 紀錄中「正在審核」的商品狀態變化
+        // 智慧跳轉邏輯
         if (prevPendingIdsRef.current.length > 0) {
           for (const pId of prevPendingIdsRef.current) {
             const currentProductState = mergedProducts.find(item => item.id === pId);
             
             if (currentProductState && currentProductState.creatorId === savedUserId) {
-              // 1. 如果變成了已通過 (approved)
               if (currentProductState.status === 'approved') {
                 setActiveTab('audit');
                 setAuditSubTab('approved');
-                break; // 跳轉完成，中斷迴圈
+                break; 
               }
-              // 2. 如果變成了未通過 (rejected)
               else if (currentProductState.status === 'rejected') {
                 setActiveTab('audit');
                 setAuditSubTab('rejected');
-                break; // 跳轉完成，中斷迴圈
+                break; 
               }
             }
           }
         }
 
-        // 更新當前還在審核中的 ID 紀錄，供下一次輪詢比對
         const currentPendingIds = mergedProducts
           .filter(item => item.creatorId === savedUserId && item.status === 'pending')
           .map(item => item.id);
@@ -266,37 +257,33 @@ export default function ProductsScreen() {
         setProducts(mergedProducts);
         await AsyncStorage.setItem(cacheKey, JSON.stringify(mergedProducts));
       }
-
-      const allFailed = results.every(result => result.status === 'rejected');
-      if (allFailed && cachedProducts.length === 0) {
-        setErrorMessage('⚠️ 無法從後端讀取商品資料，請確認 Django (8001) 是否已啟動。');
-      }
     } catch (e: any) {
       console.error('讀取商品資料失敗:', e);
-      setErrorMessage('⚠️ 連線失敗，請檢查網路或後端伺服器。');
     } finally {
       isFetchingRef.current = false;
     }
   };
 
-  // 💡 建立高頻即時輪詢監聽機制：若當前有 pending 商品，每 3 秒自動向後端刷新確認狀態
+  // 🛠️ 精準修改 2：將依賴陣列改為 []。初始化讀取一次 ID 存入狀態，徹底移除高頻重新執行的死結
   useEffect(() => {
-    loadSavedProducts(true); // 頁面初次載入執行一次
+    getCurrentMemberId().then(id => {
+      setCurrentUserId(id);
+    });
+
+    loadSavedProducts(true);
 
     const intervalId = setInterval(() => {
-      // 🎯 修正：從 productsRef 讀取最新資料，而不是直接依賴 state
       const hasActivePending = productsRef.current.some(
-        item => item.creatorId === currentUserId && item.status === 'pending'
+        item => item.status === 'pending'
       );
 
-      // 如果有任何一筆在審核中，強制背景刷新，達到「免刷新的自動跳轉」
       if (hasActivePending) {
-        loadSavedProducts(true); 
+        loadSavedProducts(true);
       }
-    }, 3000); // 3000ms = 3 秒
+    }, 3000); 
 
     return () => clearInterval(intervalId);
-  }, [currentUserId]); // 🚀 關鍵：移除對 products 的監聽，徹底解決卡死問題
+  }, []); 
 
   useEffect(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -308,10 +295,11 @@ export default function ProductsScreen() {
     }
   }, []);
 
+  // 🛠️ 精準修改 3：將使用焦點的 useFocusEffect 依賴清空，杜絕連鎖二次重複載入
   useFocusEffect(
     useCallback(() => {
       loadSavedProducts(true);
-    }, [activeTab, auditSubTab])
+    }, [])
   );
 
   const handleTabChange = (tab: 'list' | 'audit') => {
@@ -326,25 +314,19 @@ export default function ProductsScreen() {
     loadSavedProducts(true);
   };
 
-  // 篩選過濾：確保商品列表在審核狀態一變更時，資料立刻從當前畫面消失
   const getFilteredDisplayProducts = () => {
     let baseList: Product[] = [];
 
     if (activeTab === 'list') {
-      // 💡 商品列表：只顯示大眾已通過，以及自己建立且「還在審核中」的商品
-      // 一旦通過 (approved 大眾都看得到) 或 拒絕 (rejected)，此筆資料就會自動從這個 Filter 條件中消失
       baseList = products.filter(item => {
         if (item.status === 'approved') return true;
         if (item.status === 'pending' && item.creatorId === currentUserId) return true;
         return false; 
       });
     } else {
-      // 審核紀錄分頁
       if (auditSubTab === 'approved') {
-        // 您的已通過商品
         baseList = products.filter(item => item.creatorId === currentUserId && item.status === 'approved');
       } else {
-        // 您的未通過商品
         baseList = products.filter(item => item.creatorId === currentUserId && item.status === 'rejected');
       }
     }
@@ -407,7 +389,6 @@ export default function ProductsScreen() {
 
     setIsModalVisible(false);
 
-    // 送出審核請求，並立刻記錄下這筆商品的 pending 狀態
     try {
       const response = await fetch(`${API_URL}/products/add/`, {
         method: 'POST',
@@ -424,7 +405,6 @@ export default function ProductsScreen() {
 
       const data = await parseApiResponse(response);
       if (response.ok && data.success !== false) {
-        // 送審成功後，強制連線後端抓取最新資料，觸發審核中顯示
         await loadSavedProducts(true);
       }
     } catch (e) {
@@ -440,16 +420,13 @@ export default function ProductsScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      
       <View style={styles.mainContent}>
         <View style={styles.cardContainer}>
           
-          {/* 頂部標題與主分頁切換區 */}
           <View style={styles.cardHeader}>
             <View style={styles.titleTabRow}>
               <Text style={styles.pageTitle}>{txt.pageTitle}</Text>
               
-              {/* 主標籤：商品列表 */}
               <TouchableOpacity 
                 style={[styles.mainTabButton, activeTab === 'list' && styles.mainTabButtonActive]}
                 onPress={() => handleTabChange('list')}
@@ -459,7 +436,6 @@ export default function ProductsScreen() {
                 </Text>
               </TouchableOpacity>
 
-              {/* 主標籤：審核紀錄 */}
               <TouchableOpacity 
                 style={[styles.mainTabButton, activeTab === 'audit' && styles.mainTabButtonActive]}
                 onPress={() => handleTabChange('audit')}
@@ -470,7 +446,6 @@ export default function ProductsScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* 只有在 activeTab === 'list' 時才顯示新增功能 */}
             {activeTab === 'list' && (
               <TouchableOpacity onPress={openAddModal}>
                 <Text style={styles.addText}>{txt.addButtonText}</Text>
@@ -478,7 +453,6 @@ export default function ProductsScreen() {
             )}
           </View>
 
-          {/* 內層分流切換鈕 */}
           {activeTab === 'audit' && (
             <View style={styles.subTabToggleContainer}>
               <TouchableOpacity 
@@ -501,7 +475,6 @@ export default function ProductsScreen() {
             </View>
           )}
 
-          {/* 🔍 滿版搜尋框 */}
           <View style={styles.searchRowContainer}>
             <View style={styles.searchBoxWrapper}>
               <TextInput 
@@ -521,7 +494,6 @@ export default function ProductsScreen() {
 
           <Text style={styles.recentText}>{txt.recentSearchLabel}</Text>
 
-          {/* 📦 資料列表 */}
           <View style={styles.listContainer}>
             <ScrollView showsVerticalScrollIndicator={true} contentContainerStyle={styles.scrollListContent}>
               {displayProducts.map((item) => {
@@ -553,7 +525,6 @@ export default function ProductsScreen() {
         </View>
       </View>
 
-      {/* 📦 新增商品彈窗 */}
       <Modal animationType="fade" transparent={true} visible={isModalVisible} onRequestClose={handleCancelAdd}>
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPressOut={handleCancelAdd}>
           <TouchableOpacity activeOpacity={1} style={styles.squareModalContent}>
@@ -609,7 +580,6 @@ export default function ProductsScreen() {
         </TouchableOpacity>
       </Modal>
 
-      {/* 💡 通用確認提示對話框 */}
       <Modal animationType="fade" transparent={true} visible={customAlert.visible} onRequestClose={() => setCustomAlert(prev => ({ ...prev, visible: false }))}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
@@ -640,7 +610,7 @@ const styles = StyleSheet.create({
     flex: 1, backgroundColor: '#FFF', borderRadius: 30, paddingHorizontal: 40, paddingTop: 35, paddingBottom: 15,
     shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 10, elevation: 5,
   },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 5, alignItems: 'center', marginBottom: 15 },
   
   titleTabRow: { flexDirection: 'row', alignItems: 'center' },
   pageTitle: { fontSize: 28, fontWeight: 'bold', color: '#333', letterSpacing: 2, marginRight: 30 },
