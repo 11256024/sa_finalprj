@@ -96,6 +96,8 @@ export default function ProductsScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [products, setProducts] = useState<Product[]>([]); 
   const [currentUserId, setCurrentUserId] = useState('guest'); 
+  const lastFetchAtRef = useRef(0);
+  const isFetchingRef = useRef(false);
   
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newProductName, setNewProductName] = useState('');
@@ -151,56 +153,102 @@ export default function ProductsScreen() {
     }
   };
 
+  const getProductCacheKey = (memberId: string) => `${memberId}_products_cache_v4`;
+
+  const mergeProductLists = (baseList: Product[], nextList: Product[]) => {
+    const mergedMap = new Map<string, Product>();
+
+    baseList.forEach(product => {
+      if (product?.id) mergedMap.set(product.id, product);
+    });
+
+    nextList.forEach(product => {
+      if (product?.id) mergedMap.set(product.id, product);
+    });
+
+    return Array.from(mergedMap.values());
+  };
+
+  const fetchProductsByUrl = async (url: string) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      const data = await parseApiResponse(response);
+
+      if (!response.ok) {
+        throw new Error(data.message || `讀取商品資料失敗，HTTP ${response.status}`);
+      }
+
+      return Array.isArray(data) ? data.map(mapProductFromApi) : [];
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   // 從 Django / Aiven 讀取商品資料，不再使用 localStorage。
   // /products/ 只會回傳 approved 商品；/products/pending/ 會回傳待審核商品；/products/rejected/ 會回傳未通過商品。
-  const loadSavedProducts = async () => {
+  const loadSavedProducts = async (force = false, includeRejected = false) => {
     try {
       const savedUserId = await getCurrentMemberId();
       setCurrentUserId(savedUserId);
 
-      const [approvedRes, pendingRes, rejectedRes] = await Promise.all([
-        fetch(`${API_URL}/products/`),
-        fetch(`${API_URL}/products/pending/`),
-        fetch(`${API_URL}/products/rejected/`),
-      ]);
+      const cacheKey = getProductCacheKey(savedUserId);
+      let cachedProducts: Product[] = [];
 
-      const approvedData = await parseApiResponse(approvedRes);
-      const pendingData = await parseApiResponse(pendingRes);
-      const rejectedData = await parseApiResponse(rejectedRes);
-
-      if (!approvedRes.ok) {
-        throw new Error(approvedData.message || `讀取已上架商品失敗，HTTP ${approvedRes.status}`);
+      const cachedRaw = await AsyncStorage.getItem(cacheKey);
+      if (cachedRaw) {
+        try {
+          cachedProducts = JSON.parse(cachedRaw);
+          if (Array.isArray(cachedProducts)) {
+            setProducts(cachedProducts);
+          }
+        } catch (e) {
+          cachedProducts = [];
+        }
       }
 
-      if (!pendingRes.ok) {
-        throw new Error(pendingData.message || `讀取待審核商品失敗，HTTP ${pendingRes.status}`);
+      const now = Date.now();
+      if (!force && isFetchingRef.current) return;
+      if (!force && cachedProducts.length > 0 && now - lastFetchAtRef.current < 15000) return;
+
+      isFetchingRef.current = true;
+      lastFetchAtRef.current = now;
+
+      const requests = [
+        fetchProductsByUrl(`${API_URL}/products/`),
+        fetchProductsByUrl(`${API_URL}/products/pending/`),
+      ];
+
+      if (includeRejected) {
+        requests.push(fetchProductsByUrl(`${API_URL}/products/rejected/`));
       }
 
-      if (!rejectedRes.ok) {
-        throw new Error(rejectedData.message || `讀取未通過商品失敗，HTTP ${rejectedRes.status}`);
+      const results = await Promise.allSettled(requests);
+      const fetchedProducts = results.flatMap((result: any) =>
+        result.status === 'fulfilled' ? result.value : []
+      );
+
+      if (fetchedProducts.length > 0 || cachedProducts.length > 0) {
+        const mergedProducts = mergeProductLists(cachedProducts, fetchedProducts);
+        
+        // 🎯 修正：強制根據 ID 進行降序排序（最新鮮的商品在最上方），確保每次重新整理後順序一致
+        mergedProducts.sort((a, b) => Number(b.id) - Number(a.id));
+
+        setProducts(mergedProducts);
+        await AsyncStorage.setItem(cacheKey, JSON.stringify(mergedProducts));
       }
 
-      const mergedMap = new Map<string, Product>();
-
-      (Array.isArray(approvedData) ? approvedData : []).forEach((item: any) => {
-        const product = mapProductFromApi(item);
-        mergedMap.set(product.id, product);
-      });
-
-      (Array.isArray(pendingData) ? pendingData : []).forEach((item: any) => {
-        const product = mapProductFromApi(item);
-        mergedMap.set(product.id, product);
-      });
-
-      (Array.isArray(rejectedData) ? rejectedData : []).forEach((item: any) => {
-        const product = mapProductFromApi(item);
-        mergedMap.set(product.id, product);
-      });
-
-      setProducts(Array.from(mergedMap.values()).reverse());
+      const allFailed = results.every(result => result.status === 'rejected');
+      if (allFailed && cachedProducts.length === 0) {
+        throw new Error('無法從後端讀取商品資料，請確認 Django 是否已啟動。');
+      }
     } catch (e: any) {
       console.error('讀取商品資料失敗:', e);
       showCustomAlert('讀取失敗', e?.message || '無法從後端讀取商品資料，請確認 Django 是否已啟動。', () => {}, '', txt.btnConfirm);
+    } finally {
+      isFetchingRef.current = false;
     }
   };
 
@@ -226,13 +274,21 @@ export default function ProductsScreen() {
   // 切換主分頁
   const handleTabChange = (tab: 'list' | 'audit') => {
     setActiveTab(tab);
-    setSearchQuery(''); 
+    setSearchQuery('');
+
+    if (tab === 'audit' && auditSubTab === 'rejected') {
+      loadSavedProducts(false, true);
+    }
   };
 
   // 切換子分頁
   const handleSubTabChange = (subTab: 'approved' | 'rejected') => {
     setAuditSubTab(subTab);
     setSearchQuery('');
+
+    if (subTab === 'rejected') {
+      loadSavedProducts(false, true);
+    }
   };
 
   // 核心篩選過濾
@@ -337,7 +393,7 @@ export default function ProductsScreen() {
         return;
       }
 
-      await loadSavedProducts();
+      await loadSavedProducts(true, true);
     } catch (e: any) {
       console.error('儲存新商品資料失敗:', e);
       showCustomAlert('新增失敗', e?.message || '無法連接後端，請確認 Django 是否已啟動。', () => {}, '', txt.btnConfirm);
