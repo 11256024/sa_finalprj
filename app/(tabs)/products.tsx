@@ -34,7 +34,7 @@ const mapProductFromApi = (item: any): Product => ({
     : (item.creator_id !== null && item.creator_id !== undefined ? String(item.creator_id) : ''),
 });
 
-// 1. 全頁面配置物件
+// 全頁面配置物件
 const pageLanguageConfig = {
   appName: '食半功倍',
   pageTitle: '新 增 / 刪 除 商 品',
@@ -108,12 +108,11 @@ export default function ProductsScreen() {
   const amountInputRef = useRef<TextInput>(null);
   const calorieInputRef = useRef<TextInput>(null);
 
-  // 🌟【核心防重複邏輯】：自動格式化並串接前台顯示的「品名與單位」
+  // 自動格式化並串接前台顯示的「品名與單位」
   const formatDisplayInfo = (name: string, unit: string) => {
     let cleanName = name ? name.trim() : '';
     let cleanUnit = unit ? unit.trim() : '';
 
-    // 1. 如果名稱欄位裡已經包含了單位（例如：名稱叫 "火腿 / 20克" 或是 "大便 / 500克"）
     if (cleanName.includes('/') || (cleanUnit && cleanName.includes(cleanUnit))) {
       const parts = cleanName.split('/');
       if (parts.length > 1) {
@@ -123,7 +122,6 @@ export default function ProductsScreen() {
       }
     }
 
-    // 2. 針對單位欄位本身做去重
     if (cleanUnit.includes('/')) {
       const unitParts = cleanUnit.split('/');
       if (unitParts[0].trim() === unitParts[1].trim()) {
@@ -131,7 +129,6 @@ export default function ProductsScreen() {
       }
     }
 
-    // 3. 組合出完美的顯示外觀：如果有單位就加上斜線，沒有就只顯示品名
     return cleanUnit ? `${cleanName} / ${cleanUnit}` : cleanName;
   };
 
@@ -155,20 +152,6 @@ export default function ProductsScreen() {
 
   const getProductCacheKey = (memberId: string) => `${memberId}_products_cache_v4`;
 
-  const mergeProductLists = (baseList: Product[], nextList: Product[]) => {
-    const mergedMap = new Map<string, Product>();
-
-    baseList.forEach(product => {
-      if (product?.id) mergedMap.set(product.id, product);
-    });
-
-    nextList.forEach(product => {
-      if (product?.id) mergedMap.set(product.id, product);
-    });
-
-    return Array.from(mergedMap.values());
-  };
-
   const fetchProductsByUrl = async (url: string) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
@@ -187,9 +170,8 @@ export default function ProductsScreen() {
     }
   };
 
-  // 從 Django / Aiven 讀取商品資料，不再使用 localStorage。
-  // /products/ 只會回傳 approved 商品；/products/pending/ 會回傳待審核商品；/products/rejected/ 會回傳未通過商品。
-  const loadSavedProducts = async (force = false, includeRejected = false) => {
+  // 從 Django 讀取商品資料
+  const loadSavedProducts = async (force = false, overridesIncludeRejected = false) => {
     try {
       const savedUserId = await getCurrentMemberId();
       setCurrentUserId(savedUserId);
@@ -216,12 +198,15 @@ export default function ProductsScreen() {
       isFetchingRef.current = true;
       lastFetchAtRef.current = now;
 
+      // 💡 修正點：自動偵測，如果切換到審核紀錄且處於未通過子分頁，主動加入拒絕 API 的請求
+      const shouldIncludeRejected = overridesIncludeRejected || (activeTab === 'audit' && auditSubTab === 'rejected');
+
       const requests = [
         fetchProductsByUrl(`${API_URL}/products/`),
         fetchProductsByUrl(`${API_URL}/products/pending/`),
       ];
 
-      if (includeRejected) {
+      if (shouldIncludeRejected) {
         requests.push(fetchProductsByUrl(`${API_URL}/products/rejected/`));
       }
 
@@ -231,9 +216,18 @@ export default function ProductsScreen() {
       );
 
       if (fetchedProducts.length > 0 || cachedProducts.length > 0) {
-        const mergedProducts = mergeProductLists(cachedProducts, fetchedProducts);
+        // 💡 修正點：建立新 Map，由後端最新撈出的狀態（fetchedProducts）去覆蓋本地舊的快取狀態（如 pending 轉為 rejected）
+        const mergedMap = new Map<string, Product>();
+        cachedProducts.forEach(product => {
+          if (product?.id) mergedMap.set(product.id, product);
+        });
+        fetchedProducts.forEach(product => {
+          if (product?.id) mergedMap.set(product.id, product);
+        });
+
+        const mergedProducts = Array.from(mergedMap.values());
         
-        // 🎯 修正：強制根據 ID 進行降序排序（最新鮮的商品在最上方），確保每次重新整理後順序一致
+        // 根據 ID 進行降序排序（最新鮮的商品在最上方）
         mergedProducts.sort((a, b) => Number(b.id) - Number(a.id));
 
         setProducts(mergedProducts);
@@ -252,7 +246,6 @@ export default function ProductsScreen() {
     }
   };
 
-  // 頁面載入與返回頁面時重新向後端讀取資料
   useEffect(() => {
     loadSavedProducts();
 
@@ -268,7 +261,7 @@ export default function ProductsScreen() {
   useFocusEffect(
     useCallback(() => {
       loadSavedProducts();
-    }, [])
+    }, [activeTab, auditSubTab])
   );
 
   // 切換主分頁
@@ -276,8 +269,9 @@ export default function ProductsScreen() {
     setActiveTab(tab);
     setSearchQuery('');
 
-    if (tab === 'audit' && auditSubTab === 'rejected') {
-      loadSavedProducts(false, true);
+    // 💡 修正點：當使用者切換到「審核紀錄」分頁時，無論子分頁在哪，都強制觸發連線重新獲取包括被拒絕在內的完整狀態
+    if (tab === 'audit') {
+      loadSavedProducts(true, true);
     }
   };
 
@@ -287,7 +281,7 @@ export default function ProductsScreen() {
     setSearchQuery('');
 
     if (subTab === 'rejected') {
-      loadSavedProducts(false, true);
+      loadSavedProducts(true, true);
     }
   };
 
@@ -308,7 +302,7 @@ export default function ProductsScreen() {
         // 您的已通過商品
         baseList = products.filter(item => item.creatorId === currentUserId && item.status === 'approved');
       } else {
-        // 您的未通過商品
+        // 您的未通過商品 (status === 'rejected')
         baseList = products.filter(item => item.creatorId === currentUserId && item.status === 'rejected');
       }
     }
@@ -371,8 +365,8 @@ export default function ProductsScreen() {
 
     setIsModalVisible(false);
 
-    // 🤫 幕後分流：把非同步網路要求丟進背景執行，絕不阻塞前台控時
-    const bgTask = (async () => {
+    // 把非同步網路要求丟進背景執行
+    (async () => {
       try {
         const response = await fetch(`${API_URL}/products/add/`, {
           method: 'POST',
@@ -396,10 +390,9 @@ export default function ProductsScreen() {
       }
     })();
 
-    // 🎯 精準控制：定時器強制背景數秒，不加遮罩，「剛好 1000 毫秒 (1秒)」跳出成功
     setTimeout(() => {
       showCustomAlert(txt.alertSubmitSuccessTitle, txt.alertSubmitSuccessMessage, () => {}, '', txt.btnConfirm);
-    }, 1000); // ⏱️ 精準 1.0 秒
+    }, 1000); 
   };
 
   const displayProducts = getFilteredDisplayProducts();
@@ -498,7 +491,6 @@ export default function ProductsScreen() {
                     
                     <View style={styles.nameAndStatusWrapper}>
                       <Text style={styles.productName} numberOfLines={1}>
-                        {/* 🌟 修正問題 2：調用智慧過濾，完美結合「商品名稱 / 單位」，並阻絕重複現象 */}
                         {formatDisplayInfo(item.name, item.unit)}
                         {activeTab === 'list' && isMyOwnProduct && item.status === 'pending' && (
                           <Text style={styles.pendingStatusTag}>{txt.statusPending}</Text>
@@ -509,8 +501,6 @@ export default function ProductsScreen() {
                     <Text style={styles.productCalorie}>
                       {txt.calorieLabelPrefix}{item.calories}{txt.calorieLabelSuffix}
                     </Text>
-                    
-                    {/* 🌟 修正問題 1：此處原本的「- 刪除 / 確認並刪除」按鈕元件已完全移除，杜絕使用者刪除商品的權限 */}
                   </View>
                 );
               })}
