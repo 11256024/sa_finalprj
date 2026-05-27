@@ -47,14 +47,6 @@ export default function ProfileScreen() {
   const [tempData, setTempData] = useState<ProfileType>({ ...profileData });
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
-  const getTodayDateString = () => {
-    const today = new Date();
-    const yyyy = today.getFullYear();
-    const mm = String(today.getMonth() + 1).padStart(2, '0');
-    const dd = String(today.getDate()).padStart(2, '0');
-    return `${yyyy}-${mm}-${dd}`;
-  };
-
   const normalizeDateForApi = (value: string) => {
     if (!value) return '';
     return value.trim().replace(/\//g, '-');
@@ -71,42 +63,6 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     loadProfileData();
-  }, []);
-
-  // Web 版生日欄位極速優化樣式注入：讓原生日曆點擊區塊放大到整個欄位，滑動速度由硬體決定！
-  useEffect(() => {
-    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
-
-    const styleId = 'profile-date-picker-icon-style';
-    if (document.getElementById(styleId)) return;
-
-    const style = document.createElement('style');
-    style.id = styleId;
-    style.innerHTML = `
-      #web-birthday-picker {
-        color-scheme: light;
-        cursor: pointer;
-      }
-      /* 隱藏微調按鈕與清除按鈕 */
-      #web-birthday-picker::-webkit-inner-spin-button,
-      #web-birthday-picker::-webkit-clear-button {
-        display: none !important;
-        -webkit-appearance: none !important;
-      }
-      /* 自訂右側日曆圖示樣式 */
-      #web-birthday-picker::-webkit-calendar-picker-indicator {
-        opacity: 1 !important;
-        display: block !important;
-        cursor: pointer;
-        margin-left: 6px;
-        filter: brightness(0) saturate(100%) invert(48%) sepia(89%) saturate(415%) hue-rotate(352deg) brightness(94%) contrast(92%); /* 橘色系 */
-      }
-      /* 當日期為空時，隱藏瀏覽器預設的 yyyy/mm/dd 灰字，避免與提示文字重疊 */
-      #web-birthday-picker.empty-date::-webkit-datetime-edit {
-        color: transparent !important;
-      }
-    `;
-    document.head.appendChild(style);
   }, []);
 
   const getCurrentMemberContext = async () => {
@@ -235,7 +191,7 @@ export default function ProfileScreen() {
       setTempData(safeData);
       setAvatarUri(rawAvatar || null);
     } catch (error) {
-      console.error("加載會員資料失敗：", error);
+      error && console.error("加載會員資料失敗：", error);
     }
   };
 
@@ -481,6 +437,7 @@ export default function ProfileScreen() {
     setIsEditing(false);
   };
 
+  // ⚡ 極速硬體加速與拔除延遲的網頁樣式
   const webSelectStyle = {
     fontSize: '16px',
     color: '#333',
@@ -491,15 +448,25 @@ export default function ProfileScreen() {
     textAlign: 'right' as const,
     width: '65%',
     outline: 'none',
-    cursor: 'pointer'
+    cursor: 'pointer',
+    touchAction: 'manipulation', // 拔除網頁 300ms 點擊延遲
+    willChange: 'transform',      // 告訴瀏覽器提早分配 GPU 資源
   };
 
-  const webDateInputStyle = {
-    ...webSelectStyle,
-    width: '100%',
-    position: 'relative' as const,
-    fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-    fontVariantNumeric: 'tabular-nums' as const,
+  const webCalendarStyle = {
+    fontSize: '16px',
+    color: '#333',
+    backgroundColor: '#F9F9F9',
+    border: '1px solid #DDD',
+    borderRadius: '8px',
+    padding: '4px 10px',
+    textAlign: 'right' as const,
+    width: '65%',
+    outline: 'none',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    touchAction: 'manipulation', // 拔除日曆點擊延遲
+    willChange: 'transform',      // 提早硬體加速
   };
 
   return (
@@ -540,58 +507,26 @@ export default function ProfileScreen() {
           {/* 右側欄位 */}
           <View style={styles.rightSection}>
             
-            {/* 生日 (✅ 全面升級為「只能用選的」+「呼叫作業系統底層超流暢捲軸選擇器」) */}
+            {/* 生日 (已進行極速優化之原生日曆彈窗) */}
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>生 日</Text>
               {isEditing ? (
                 Platform.OS === 'web' ? (
-                  <div style={{ width: '65%', position: 'relative', display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
-                    <input
-                      id="web-birthday-picker"
-                      className={!tempData.birthday ? 'empty-date' : ''}
-                      type="date"
-                      value={tempData.birthday || ''}
-                      max={getTodayDateString()}
-                      /* 點擊整條欄位直接強制展開原生的高速年/月/日捲軸彈窗 */
-                      onClick={(e) => {
-                        const inputEl = e.currentTarget as any;
-                        if (inputEl && typeof inputEl.showPicker === 'function') {
-                          inputEl.showPicker();
-                        }
-                      }}
-                      onChange={(e) => {
-                        const newDate = e.target.value;
-                        if (tempData.birthday !== newDate) {
-                          setTempData(prev => ({ ...prev, birthday: newDate }));
-                        }
-                      }}
-                      style={webDateInputStyle}
-                    />
-
-                    {!tempData.birthday && (
-                      <span
-                        style={{
-                          position: 'absolute',
-                          right: 34,
-                          top: '50%',
-                          transform: 'translateY(-50%)',
-                          color: '#A9A9A9',
-                          fontSize: '16px',
-                          pointerEvents: 'none',
-                          userSelect: 'none',
-                        }}
-                      >
-                        請選擇生日
-                      </span>
-                    )}
-                  </div>
+                  <input
+                    type="date"
+                    value={tempData.birthday}
+                    min="1900-01-01"
+                    max="2026-12-31"
+                    onChange={(e) => setTempData({ ...tempData, birthday: e.target.value })}
+                    style={webCalendarStyle}
+                  />
                 ) : (
                   <TextInput
                     style={styles.textInputRight}
                     value={tempData.birthday}
                     placeholder="YYYY-MM-DD"
                     placeholderTextColor="#A9A9A9"
-                    editable={false} // 手機端限制禁止鍵盤輸入，只能點擊觸發選擇（此處亦可整合您手機原生 Picker）
+                    onChangeText={(text) => setTempData({ ...tempData, birthday: text })}
                   />
                 )
               ) : (
@@ -859,15 +794,6 @@ const styles = StyleSheet.create({
   readOnlyText: { color: '#777' },
   passwordContainer: { flexDirection: 'row', alignItems: 'center' },
   customEyeButton: { marginLeft: 12, padding: 4, justifyContent: 'center', alignItems: 'center' },
-  eyeShape: { position: 'relative', width: 24, height: 24, justifyContent: 'center', alignItems: 'center' },
-  eyeText: { fontSize: 18, color: '#999999' },
-  eyeSlashLine: {
-    position: 'absolute',
-    width: 22,
-    height: 1.5,
-    backgroundColor: '#999999',
-    transform: [{ rotate: '-45deg' }]
-  },
   btnGroupRow: { flexDirection: 'row', alignSelf: 'flex-end', marginTop: 15 },
   editBtn: { paddingVertical: 10, paddingHorizontal: 35, borderRadius: 15 },
   editBtnText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
@@ -890,19 +816,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#F0F0F0',
   },
-  menuActionTextPrimary: {
-    fontSize: 16,
-    color: '#E67E22',
-    fontWeight: '600',
-  },
-  menuActionTextDanger: {
-    fontSize: 16,
-    color: '#E74C3C',
-    fontWeight: '600',
-  },
-  menuActionTextCancel: {
-    fontSize: 16,
-    color: '#999',
-    fontWeight: '500',
-  }
+  menuActionTextPrimary: { fontSize: 16, color: '#E67E22', fontWeight: '600' },
+  menuActionTextDanger: { fontSize: 16, color: '#E74C3C', fontWeight: '600' },
+  menuActionTextCancel: { fontSize: 16, color: '#999', fontWeight: '500' }
 });
