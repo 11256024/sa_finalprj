@@ -534,11 +534,10 @@ export default function ProfileScreen() {
   const webDateInputStyle = {
     ...webSelectStyle,
     width: '100%',
-    height: 32,
     position: 'relative' as const,
     color: '#333',
     backgroundColor: '#F9F9F9',
-    border: '1px solid #E8E8E8',
+    border: '1px solid #DDD',
     borderRadius: '8px',
     padding: '4px 10px',
     textAlign: 'right' as const,
