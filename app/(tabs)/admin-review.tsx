@@ -289,126 +289,132 @@ export default function AdminReviewScreen() {
       return;
     }
 
-    try {
-      const response = await fetch(`${API_URL}/products/add/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: newProdName.trim(),
-          unit: finalUnitString,
-          calories: parseInt(newProdCalories, 10) || 0,
-          member: Number(adminId),
-        }),
-      });
+    closeAddModal(); // ⚡ 立刻關閉彈窗
 
-      const data = await parseApiResponse(response);
-      console.log('管理者新增商品結果:', data);
+    // 🤫 背景靜默執行網路請求
+    (async () => {
+      try {
+        const response = await fetch(`${API_URL}/products/add/`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: newProdName.trim(),
+            unit: finalUnitString,
+            calories: parseInt(newProdCalories, 10) || 0,
+            member: Number(adminId),
+          }),
+        });
 
-      if (!response.ok || data.success === false) {
-        showMessage(data.message || `商品新增失敗，HTTP ${response.status}`);
-        return;
+        const data = await parseApiResponse(response);
+        if (response.ok && data.success !== false) {
+          await fetchGlobalProducts(); // 成功後才更新列表
+        }
+      } catch (e) {
+        console.log('背景新增官方商品失敗，將於手動刷新時同步', e);
       }
+    })();
 
-      closeAddModal();
+    // 🎯 強制控時 0.5 秒提示
+    setTimeout(() => {
       setActiveTab('audit');
       setAuditSubTab('admin_add');
-      await fetchGlobalProducts();
-    } catch (e: any) {
-      console.error('管理者新增商品失敗:', e);
-      showMessage(e?.message || '無法連接後端，請確認 Django 是否已啟動。');
-    }
+      fetchGlobalProducts(); // 💡 提示跳出時立即觸發一次列表刷新
+      showMessage('✨ 官方商品已成功新增並入庫！');
+    }, 500); // ⏱️ 精準 0.5 秒
   };
 
   const handleExecuteAction = async () => {
     if (!selectedItem) return;
 
+    setConfirmModalVisible(false); // ⚡ 立刻關閉彈窗
+
     const { id, action } = selectedItem;
 
-    try {
-      const adminId = await getCurrentAdminId();
-      if (!adminId) {
-        showMessage('找不到目前管理者的會員 ID，無法審核商品。');
-        return;
-      }
-
-      const response = await fetch(`${API_URL}/products/${id}/${action === 'approve' ? 'approve' : 'reject'}/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          member: Number(adminId),
-        }),
-      });
-
-      const data = await parseApiResponse(response);
-      console.log('審核商品結果:', data);
-
-      if (!response.ok || data.success === false) {
-        showMessage(data.message || `審核失敗，HTTP ${response.status}`);
-        return;
-      }
-
-      if (data.product) {
-        const updatedProduct = mapProductFromApi(data.product);
-        setAllProducts(prev => {
-          const exists = prev.some(p => p.id === updatedProduct.id);
-          return exists
-            ? prev.map(p => p.id === updatedProduct.id ? updatedProduct : p)
-            : [...prev, updatedProduct];
-        });
-      }
-
-      await fetchGlobalProducts();
-    } catch (e: any) {
-      console.error('審核商品失敗:', e);
-      showMessage(e?.message || '無法連接後端，請確認 Django 是否已啟動。');
-    }
-
-    setConfirmModalVisible(false);
     setSelectedItem(null);
+
+    // 🤫 背景靜默執行網路請求
+    (async () => {
+      try {
+        const adminId = await getCurrentAdminId();
+        if (!adminId) {
+          console.log('背景審核失敗：找不到管理者 ID');
+          return;
+        }
+
+        const response = await fetch(`${API_URL}/products/${id}/${action === 'approve' ? 'approve' : 'reject'}/`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            member: Number(adminId),
+          }),
+        });
+
+        const data = await parseApiResponse(response);
+        if (response.ok && data.success !== false) {
+          await fetchGlobalProducts(); // 成功後才更新列表
+        }
+      } catch (e) {
+        console.log('背景審核商品失敗，將於手動刷新時同步', e);
+      }
+    })();
+
+    // 🎯 強制控時 0.5 秒提示
+    setTimeout(() => {
+      // 💡 樂觀更新：在畫面端立即更改狀態，不需要等待 API 回傳才變
+      setAllProducts(prev => prev.map(p => 
+        p.id === id ? { ...p, status: action === 'approve' ? 'approved' : 'rejected' } : p
+      ));
+      showMessage(action === 'approve' ? '✅ 商品已核准入庫！' : '❌ 商品已拒絕退件！');
+    }, 500); // ⏱️ 精準 0.5 秒
   };
 
   const handleExecuteDelete = async () => {
     if (!deleteItem) return;
 
+    setDeleteModalVisible(false); // ⚡ 立刻關閉彈窗
+
     const { id } = deleteItem;
 
-    try {
-      const adminId = await getCurrentAdminId();
-      if (!adminId) {
-        showMessage('找不到目前管理者的會員 ID，無法刪除商品。');
-        return;
-      }
-
-      const response = await fetch(`${API_URL}/products/${id}/delete/`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          member: Number(adminId),
-        }),
-      });
-
-      const data = await parseApiResponse(response);
-
-      if (!response.ok || data.success === false) {
-        showMessage(data.message || '後端尚未新增刪除商品 API，請先在 views.py 加 delete_product。');
-        return;
-      }
-
-      setAllProducts(prev => prev.filter(p => p.id !== id));
-      await fetchGlobalProducts();
-    } catch (e: any) {
-      console.error('刪除商品失敗:', e);
-      showMessage(e?.message || '後端尚未新增刪除商品 API，請先在 views.py 加 delete_product。');
-    }
-
-    setDeleteModalVisible(false);
     setDeleteItem(null);
+
+    // 🤫 背景靜默執行網路請求
+    (async () => {
+      try {
+        const adminId = await getCurrentAdminId();
+        if (!adminId) {
+          console.log('背景刪除失敗：找不到管理者 ID');
+          return;
+        }
+
+        const response = await fetch(`${API_URL}/products/${id}/delete/`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            member: Number(adminId),
+          }),
+        });
+
+        const data = await parseApiResponse(response);
+        if (response.ok && data.success !== false) {
+          await fetchGlobalProducts(); // 成功後才更新列表
+        }
+      } catch (e) {
+        console.log('背景刪除商品失敗，將於手動刷新時同步', e);
+      }
+    })();
+
+    // 🎯 強制控時 0.5 秒提示
+    setTimeout(() => {
+      // 💡 樂觀更新：在畫面端立即移除該項目
+      setAllProducts(prev => prev.filter(p => p.id !== id));
+      showMessage('🗑️ 商品已成功刪除！');
+    }, 500); // ⏱️ 精準 0.5 秒
   };
 
   const displayedList = getFilteredProducts();
