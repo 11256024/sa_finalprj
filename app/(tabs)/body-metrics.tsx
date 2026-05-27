@@ -389,7 +389,7 @@ export default function BodyMetricsScreen() {
     const { gender, age, height, weight } = metricsData;
     
     if (!weight || weight.trim() === '' || parseFloat(weight) === 0) {
-      showAlert('⚠️ 請先至會員中心或每日紀錄填寫體重資料');
+      showAlert('⚠️請先填寫完整資料才可以計算BMR與TDEE！\n');
       return;
     }
 
