@@ -226,7 +226,10 @@ export default function AdminReviewScreen() {
         mergedMap.set(product.id, product);
       });
 
-      setAllProducts(Array.from(mergedMap.values()));
+      const mergedList = Array.from(mergedMap.values());
+      // 🎯 修正：強制根據 ID 進行降序排序 (由大到小)，確保最新處理的商品永遠在最上面
+      mergedList.sort((a, b) => Number(b.id) - Number(a.id));
+      setAllProducts(mergedList);
     } catch (e: any) {
       console.error('讀取商品資料失敗:', e);
       showMessage(e?.message || '無法從後端讀取商品資料，請確認 Django 是否已啟動。');
@@ -238,12 +241,30 @@ export default function AdminReviewScreen() {
   }, []);
 
   const getFilteredProducts = () => {
-    const reversedProducts = [...allProducts].reverse();
-    if (activeTab === 'list') return reversedProducts.filter(p => p.status === 'approved');
-    if (activeTab === 'user_pending') return reversedProducts.filter(p => p.status === 'pending' && p.creatorId !== currentUserId);
-    if (auditSubTab === 'admin_add') return reversedProducts.filter(p => p.creatorId === currentUserId);
-    if (auditSubTab === 'approved') return reversedProducts.filter(p => p.status === 'approved' && p.creatorId !== currentUserId);
-    return reversedProducts.filter(p => p.status === 'rejected');
+    const sortedProducts = [...allProducts].sort((a, b) => {
+      const valA = a.id.startsWith('temp-') ? Number(a.id.split('-')[1]) : Number(a.id);
+      const valB = b.id.startsWith('temp-') ? Number(b.id.split('-')[1]) : Number(b.id);
+      return valB - valA;
+    });
+
+    // 1. 商品列表：顯示所有已通過的商品
+    if (activeTab === 'list') {
+      return sortedProducts.filter(p => p.status === 'approved');
+    }
+
+    // 2. 待審核：顯示所有 pending 且非管理者自己新增的商品
+    if (activeTab === 'user_pending') {
+      return sortedProducts.filter(p => p.status === 'pending' && p.creatorId !== currentUserId);
+    }
+
+    // 3. 審核紀錄分頁
+    if (activeTab === 'audit') {
+      if (auditSubTab === 'admin_add') return sortedProducts.filter(p => p.creatorId === currentUserId);
+      if (auditSubTab === 'approved') return sortedProducts.filter(p => p.status === 'approved' && p.creatorId !== currentUserId);
+      if (auditSubTab === 'rejected') return sortedProducts.filter(p => p.status === 'rejected');
+    }
+
+    return []; // 確保永遠回傳陣列，避免前端 .length 報錯
   };
 
   const handleNumberChange = (text: string, setter: (val: string) => void, field: 'unit' | 'calories') => {
