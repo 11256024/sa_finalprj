@@ -85,7 +85,6 @@ const pageLanguageConfig = {
   amountPlaceholder: '限輸入數字'
 };
 
-
 export default function ProductsScreen() {
   const txt = pageLanguageConfig;
 
@@ -99,6 +98,9 @@ export default function ProductsScreen() {
   const lastFetchAtRef = useRef(0);
   const isFetchingRef = useRef(false);
   
+  // 用來追蹤上一次有哪些商品在審核中，以便抓到狀態改變的瞬間
+  const prevPendingIdsRef = useRef<string[]>([]);
+
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newProductName, setNewProductName] = useState('');
   const [newProductAmount, setNewProductAmount] = useState('');
@@ -170,8 +172,8 @@ export default function ProductsScreen() {
     }
   };
 
-  // 從 Django 讀取商品資料
-  const loadSavedProducts = async (force = false, overridesIncludeRejected = false) => {
+  // 從 Django 讀取商品資料並執行自動跳轉與過濾判定
+  const loadSavedProducts = async (force = false) => {
     try {
       const savedUserId = await getCurrentMemberId();
       setCurrentUserId(savedUserId);
@@ -198,17 +200,12 @@ export default function ProductsScreen() {
       isFetchingRef.current = true;
       lastFetchAtRef.current = now;
 
-      // 💡 修正點：自動偵測，如果切換到審核紀錄且處於未通過子分頁，主動加入拒絕 API 的請求
-      const shouldIncludeRejected = overridesIncludeRejected || (activeTab === 'audit' && auditSubTab === 'rejected');
-
+      // 同時拉取全部、審核中、未通過的資料，確保同步最精確
       const requests = [
         fetchProductsByUrl(`${API_URL}/products/`),
         fetchProductsByUrl(`${API_URL}/products/pending/`),
+        fetchProductsByUrl(`${API_URL}/products/rejected/`),
       ];
-
-      if (shouldIncludeRejected) {
-        requests.push(fetchProductsByUrl(`${API_URL}/products/rejected/`));
-      }
 
       const results = await Promise.allSettled(requests);
       const fetchedProducts = results.flatMap((result: any) =>
@@ -216,7 +213,6 @@ export default function ProductsScreen() {
       );
 
       if (fetchedProducts.length > 0 || cachedProducts.length > 0) {
-        // 💡 修正點：建立新 Map，由後端最新撈出的狀態（fetchedProducts）去覆蓋本地舊的快取狀態（如 pending 轉為 rejected）
         const mergedMap = new Map<string, Product>();
         cachedProducts.forEach(product => {
           if (product?.id) mergedMap.set(product.id, product);
@@ -226,9 +222,37 @@ export default function ProductsScreen() {
         });
 
         const mergedProducts = Array.from(mergedMap.values());
-        
-        // 根據 ID 進行降序排序（最新鮮的商品在最上方）
         mergedProducts.sort((a, b) => Number(b.id) - Number(a.id));
+
+        // 💡 核心智慧跳轉邏輯
+        // 找出這次撈回來的最新資料中，原本屬於當前使用者且在 prevPendingIdsRef 紀錄中「正在審核」的商品狀態變化
+        if (prevPendingIdsRef.current.length > 0) {
+          for (const pId of prevPendingIdsRef.current) {
+            const currentProductState = mergedProducts.find(item => item.id === pId);
+            
+            if (currentProductState && currentProductState.creatorId === savedUserId) {
+              // 1. 如果變成了已通過 (approved)
+              if (currentProductState.status === 'approved') {
+                setActiveTab('audit');
+                setAuditSubTab('approved');
+                break; // 跳轉完成，中斷迴圈
+              }
+              // 2. 如果變成了未通過 (rejected)
+              else if (currentProductState.status === 'rejected') {
+                setActiveTab('audit');
+                setAuditSubTab('rejected');
+                break; // 跳轉完成，中斷迴圈
+              }
+            }
+          }
+        }
+
+        // 更新當前還在審核中的 ID 紀錄，供下一次輪詢比對
+        const currentPendingIds = mergedProducts
+          .filter(item => item.creatorId === savedUserId && item.status === 'pending')
+          .map(item => item.id);
+        
+        prevPendingIdsRef.current = currentPendingIds;
 
         setProducts(mergedProducts);
         await AsyncStorage.setItem(cacheKey, JSON.stringify(mergedProducts));
@@ -240,17 +264,33 @@ export default function ProductsScreen() {
       }
     } catch (e: any) {
       console.error('讀取商品資料失敗:', e);
-      showCustomAlert('讀取失敗', e?.message || '無法從後端讀取商品資料，請確認 Django 是否已啟動。', () => {}, '', txt.btnConfirm);
     } finally {
       isFetchingRef.current = false;
     }
   };
 
+  // 💡 建立高頻即時輪詢監聽機制：若當前有 pending 商品，每 3 秒自動向後端刷新確認狀態
   useEffect(() => {
-    loadSavedProducts();
+    loadSavedProducts(true);
 
+    const intervalId = setInterval(() => {
+      // 檢查目前畫面上是否有屬於當前使用者且正在 pending 的商品
+      const hasActivePending = products.some(
+        item => item.creatorId === currentUserId && item.status === 'pending'
+      );
+
+      // 如果有任何一筆在審核中，強制背景刷新，達到「免刷新的自動跳轉」
+      if (hasActivePending) {
+        loadSavedProducts(true);
+      }
+    }, 3000); // 3000ms = 3 秒
+
+    return () => clearInterval(intervalId);
+  }, [products, currentUserId]);
+
+  useEffect(() => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const handleWindowFocus = () => loadSavedProducts();
+      const handleWindowFocus = () => loadSavedProducts(true);
       window.addEventListener('focus', handleWindowFocus);
       return () => {
         window.removeEventListener('focus', handleWindowFocus);
@@ -260,49 +300,41 @@ export default function ProductsScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      loadSavedProducts();
+      loadSavedProducts(true);
     }, [activeTab, auditSubTab])
   );
 
-  // 切換主分頁
   const handleTabChange = (tab: 'list' | 'audit') => {
     setActiveTab(tab);
     setSearchQuery('');
-
-    // 💡 修正點：當使用者切換到「審核紀錄」分頁時，無論子分頁在哪，都強制觸發連線重新獲取包括被拒絕在內的完整狀態
-    if (tab === 'audit') {
-      loadSavedProducts(true, true);
-    }
+    loadSavedProducts(true);
   };
 
-  // 切換子分頁
   const handleSubTabChange = (subTab: 'approved' | 'rejected') => {
     setAuditSubTab(subTab);
     setSearchQuery('');
-
-    if (subTab === 'rejected') {
-      loadSavedProducts(true, true);
-    }
+    loadSavedProducts(true);
   };
 
-  // 核心篩選過濾
+  // 篩選過濾：確保商品列表在審核狀態一變更時，資料立刻從當前畫面消失
   const getFilteredDisplayProducts = () => {
     let baseList: Product[] = [];
 
     if (activeTab === 'list') {
-      // 商品列表：全大眾已通過 + 自己審核中
+      // 💡 商品列表：只顯示大眾已通過，以及自己建立且「還在審核中」的商品
+      // 一旦通過 (approved 大眾都看得到) 或 拒絕 (rejected)，此筆資料就會自動從這個 Filter 條件中消失
       baseList = products.filter(item => {
         if (item.status === 'approved') return true;
         if (item.status === 'pending' && item.creatorId === currentUserId) return true;
-        return false;
+        return false; 
       });
     } else {
-      // 審核紀錄
+      // 審核紀錄分頁
       if (auditSubTab === 'approved') {
         // 您的已通過商品
         baseList = products.filter(item => item.creatorId === currentUserId && item.status === 'approved');
       } else {
-        // 您的未通過商品 (status === 'rejected')
+        // 您的未通過商品
         baseList = products.filter(item => item.creatorId === currentUserId && item.status === 'rejected');
       }
     }
@@ -365,34 +397,33 @@ export default function ProductsScreen() {
 
     setIsModalVisible(false);
 
-    // 把非同步網路要求丟進背景執行
-    (async () => {
-      try {
-        const response = await fetch(`${API_URL}/products/add/`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            name: newProductName.trim(),
-            unit: formattedUnit,
-            calories: calorieNum,
-            member: Number(savedUserId),
-          }),
-        });
+    // 送出審核請求，並立刻記錄下這筆商品的 pending 狀態
+    try {
+      const response = await fetch(`${API_URL}/products/add/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: newProductName.trim(),
+          unit: formattedUnit,
+          calories: calorieNum,
+          member: Number(savedUserId),
+        }),
+      });
 
-        const data = await parseApiResponse(response);
-        if (response.ok && data.success !== false) {
-          await loadSavedProducts(true, true);
-        }
-      } catch (e) {
-        console.log('背景新增商品備份略過，數據將於下次重新整理時同步', e);
+      const data = await parseApiResponse(response);
+      if (response.ok && data.success !== false) {
+        // 送審成功後，強制連線後端抓取最新資料，觸發審核中顯示
+        await loadSavedProducts(true);
       }
-    })();
+    } catch (e) {
+      console.log('新增商品要求失敗', e);
+    }
 
     setTimeout(() => {
       showCustomAlert(txt.alertSubmitSuccessTitle, txt.alertSubmitSuccessMessage, () => {}, '', txt.btnConfirm);
-    }, 1000); 
+    }, 500); 
   };
 
   const displayProducts = getFilteredDisplayProducts();
@@ -488,7 +519,6 @@ export default function ProductsScreen() {
 
                 return (
                   <View key={item.id} style={styles.productRow}>
-                    
                     <View style={styles.nameAndStatusWrapper}>
                       <Text style={styles.productName} numberOfLines={1}>
                         {formatDisplayInfo(item.name, item.unit)}

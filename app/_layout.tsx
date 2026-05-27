@@ -11,6 +11,9 @@ export default function RootLayout() {
   const [globalAvatar, setGlobalAvatar] = useState<string | null>(null);
   const [fallbackText, setFallbackText] = useState<string>('👤'); // 預設安全符號改為人像
 
+  // 🌟 新增：專門控制身分驗證載入狀態，防止刷新閃爍
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+
   // 控管目前是否為管理者狀態
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
 
@@ -122,6 +125,9 @@ export default function RootLayout() {
       console.log('全域 Layout 讀取失敗：', e);
       setGlobalAvatar(null);
       setFallbackText('👤');
+    } finally {
+      // 🌟 核心防禦：不論讀取成功或失敗，確認完畢後關閉載入狀態
+      setIsAuthLoading(false);
     }
   }, []);
 
@@ -140,6 +146,11 @@ export default function RootLayout() {
   
   // 判定目前是否為管理者頁面
   const isAdminPage = pathname === '/admin-review';
+
+  // 🌟 核心防禦點：如果還在讀取 localStorage/身分狀態，完全不渲染任何橫幅與內頁，避免橫幅跳動
+  if (isAuthLoading) {
+    return null;
+  }
 
   // 核心清除 Session 的登出執行動作
   const executeLogoutLogic = async () => {
