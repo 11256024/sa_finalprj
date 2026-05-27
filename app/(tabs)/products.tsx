@@ -98,13 +98,11 @@ export default function ProductsScreen() {
   const lastFetchAtRef = useRef(0);
   const isFetchingRef = useRef(false);
   
-  // 用於在不觸發 useEffect 重複執行的情況下，即時供計時器內部比對最新狀態
   const productsRef = useRef<Product[]>([]);
   useEffect(() => {
     productsRef.current = products;
   }, [products]);
 
-  // 用來追蹤上一次有哪些商品在審核中，以便抓到狀態改變的瞬間
   const prevPendingIdsRef = useRef<string[]>([]);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -113,10 +111,11 @@ export default function ProductsScreen() {
   const [unitType, setUnitType] = useState<'g' | 'ml'>('g');
   const [newProductCalorie, setNewProductCalorie] = useState('');
 
+  const [submittedInfo, setSubmittedInfo] = useState({ name: '', unit: '' });
+
   const amountInputRef = useRef<TextInput>(null);
   const calorieInputRef = useRef<TextInput>(null);
 
-  // 自動格式化並串接前台顯示的「品名與單位」
   const formatDisplayInfo = (name: string, unit: string) => {
     let cleanName = name ? name.trim() : '';
     let cleanUnit = unit ? unit.trim() : '';
@@ -140,7 +139,6 @@ export default function ProductsScreen() {
     return cleanUnit ? `${cleanName} / ${cleanUnit}` : cleanName;
   };
 
-  // 🛠️ 精準修改 1：移除內部的 setCurrentUserId，改為純唯讀，避免身分衝突與卡死
   const getCurrentMemberId = async () => {
     try {
       const userStr = await AsyncStorage.getItem('user');
@@ -179,11 +177,9 @@ export default function ProductsScreen() {
     }
   };
 
-  // 從 Django 讀取商品資料並執行自動跳轉與過濾判定
   const loadSavedProducts = async (force = false) => {
     try {
       const savedUserId = await getCurrentMemberId();
-
       const cacheKey = getProductCacheKey(savedUserId);
       let cachedProducts: Product[] = [];
 
@@ -206,7 +202,6 @@ export default function ProductsScreen() {
       isFetchingRef.current = true;
       lastFetchAtRef.current = now;
 
-      // 同時拉取全部、審核中、未通過的資料，確保同步最精確
       const requests = [
         fetchProductsByUrl(`${API_URL}/products/`).catch(() => []),
         fetchProductsByUrl(`${API_URL}/products/pending/`).catch(() => []),
@@ -219,27 +214,43 @@ export default function ProductsScreen() {
       if (fetchedProducts.length > 0 || cachedProducts.length > 0) {
         const mergedMap = new Map<string, Product>();
         cachedProducts.forEach(product => {
-          if (product?.id) mergedMap.set(product.id, product);
+          if (product?.id && !product.id.startsWith('virtual_')) mergedMap.set(product.id, product);
         });
         fetchedProducts.forEach(product => {
           if (product?.id) mergedMap.set(product.id, product);
         });
 
-        const mergedProducts = Array.from(mergedMap.values());
-        mergedProducts.sort((a, b) => Number(b.id) - Number(a.id));
+        // ⚠️【終極防重防閃安全防線】
+        // 檢查當前畫面的虛擬物件，如果在後端抓回來的正式列表裡「已經存在相同內容的商品」，就直接略過不加入
+        productsRef.current.forEach(product => {
+          if (product.id.startsWith('virtual_') && !mergedMap.has(product.id)) {
+            const isAlreadyInFetched = fetchedProducts.some(
+              f => f.name === product.name && f.unit === product.unit && f.calories === product.calories
+            );
+            // 只有當後端正式列表還抓不到它時，才保留這個前端虛擬物件
+            if (!isAlreadyInFetched) {
+              mergedMap.set(product.id, product);
+            }
+          }
+        });
 
-        // 智慧跳轉邏輯
+        const mergedProducts = Array.from(mergedMap.values());
+        mergedProducts.sort((a, b) => {
+          if (a.id.startsWith('virtual_') && !b.id.startsWith('virtual_')) return -1;
+          if (!a.id.startsWith('virtual_') && b.id.startsWith('virtual_')) return 1;
+          if (a.id.startsWith('virtual_') && b.id.startsWith('virtual_')) return Number(b.id.split('_')[1]) - Number(a.id.split('_')[1]);
+          return Number(b.id) - Number(a.id);
+        });
+
         if (prevPendingIdsRef.current.length > 0) {
           for (const pId of prevPendingIdsRef.current) {
             const currentProductState = mergedProducts.find(item => item.id === pId);
-            
             if (currentProductState && currentProductState.creatorId === savedUserId) {
               if (currentProductState.status === 'approved') {
                 setActiveTab('audit');
                 setAuditSubTab('approved');
                 break; 
-              }
-              else if (currentProductState.status === 'rejected') {
+              } else if (currentProductState.status === 'rejected') {
                 setActiveTab('audit');
                 setAuditSubTab('rejected');
                 break; 
@@ -255,7 +266,7 @@ export default function ProductsScreen() {
         prevPendingIdsRef.current = currentPendingIds;
 
         setProducts(mergedProducts);
-        await AsyncStorage.setItem(cacheKey, JSON.stringify(mergedProducts));
+        await AsyncStorage.setItem(cacheKey, JSON.stringify(mergedProducts.filter(p => !p.id.startsWith('virtual_'))));
       }
     } catch (e: any) {
       console.error('讀取商品資料失敗:', e);
@@ -264,7 +275,6 @@ export default function ProductsScreen() {
     }
   };
 
-  // 🛠️ 精準修改 2：將依賴陣列改為 []。初始化讀取一次 ID 存入狀態，徹底移除高頻重新執行的死結
   useEffect(() => {
     getCurrentMemberId().then(id => {
       setCurrentUserId(id);
@@ -274,9 +284,8 @@ export default function ProductsScreen() {
 
     const intervalId = setInterval(() => {
       const hasActivePending = productsRef.current.some(
-        item => item.status === 'pending'
+        item => item.status === 'pending' || item.id.startsWith('virtual_')
       );
-
       if (hasActivePending) {
         loadSavedProducts(true);
       }
@@ -295,7 +304,6 @@ export default function ProductsScreen() {
     }
   }, []);
 
-  // 🛠️ 精準修改 3：將使用焦點的 useFocusEffect 依賴清空，杜絕連鎖二次重複載入
   useFocusEffect(
     useCallback(() => {
       loadSavedProducts(true);
@@ -387,14 +395,37 @@ export default function ProductsScreen() {
       return;
     }
 
+    setSubmittedInfo({
+      name: newProductName.trim(),
+      unit: formattedUnit
+    });
+
+    const virtualId = `virtual_${Date.now()}`;
+    const virtualProduct: Product = {
+      id: virtualId,
+      name: newProductName.trim(),
+      unit: formattedUnit,
+      calories: calorieNum,
+      status: 'pending',
+      creatorId: savedUserId,
+    };
+
+    // ⚡ 0.1 秒極速上架虛擬物件
+    setProducts(prevProducts => [virtualProduct, ...prevProducts]);
     setIsModalVisible(false);
+    
+    showCustomAlert(
+      txt.alertSubmitSuccessTitle, 
+      `商品「${newProductName.trim()} / ${formattedUnit}」已成功提交！${txt.alertSubmitSuccessMessage}`, 
+      () => {}, 
+      '', 
+      txt.btnConfirm
+    );
 
     try {
       const response = await fetch(`${API_URL}/products/add/`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: newProductName.trim(),
           unit: formattedUnit,
@@ -404,16 +435,20 @@ export default function ProductsScreen() {
       });
 
       const data = await parseApiResponse(response);
-      if (response.ok && data.success !== false) {
+      
+      if (response.ok && data && data.id) {
+        const realProduct = mapProductFromApi(data);
+        // ⚡ 直接用正式物件覆蓋該虛擬物件，防止重複與閃爍
+        setProducts(prevProducts => 
+          prevProducts.map(item => item.id === virtualId ? realProduct : item)
+        );
+      } else {
         await loadSavedProducts(true);
       }
     } catch (e) {
       console.log('新增商品要求失敗', e);
+      setProducts(prevProducts => prevProducts.filter(item => item.id !== virtualId));
     }
-
-    setTimeout(() => {
-      showCustomAlert(txt.alertSubmitSuccessTitle, txt.alertSubmitSuccessMessage, () => {}, '', txt.btnConfirm);
-    }, 500); 
   };
 
   const displayProducts = getFilteredDisplayProducts();
