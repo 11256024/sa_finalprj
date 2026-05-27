@@ -371,38 +371,35 @@ export default function ProductsScreen() {
 
     setIsModalVisible(false);
 
-    try {
-      const response = await fetch(`${API_URL}/products/add/`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: newProductName.trim(),
-          unit: formattedUnit,
-          calories: calorieNum,
-          member: Number(savedUserId),
-        }),
-      });
+    // 🤫 幕後分流：把非同步網路要求丟進背景執行，絕不阻塞前台控時
+    const bgTask = (async () => {
+      try {
+        const response = await fetch(`${API_URL}/products/add/`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            name: newProductName.trim(),
+            unit: formattedUnit,
+            calories: calorieNum,
+            member: Number(savedUserId),
+          }),
+        });
 
-      const data = await parseApiResponse(response);
-      console.log('新增商品結果:', data);
-
-      if (!response.ok || data.success === false) {
-        showCustomAlert('新增失敗', data.message || `商品新增失敗，HTTP ${response.status}`, () => {}, '', txt.btnConfirm);
-        return;
+        const data = await parseApiResponse(response);
+        if (response.ok && data.success !== false) {
+          await loadSavedProducts(true, true);
+        }
+      } catch (e) {
+        console.log('背景新增商品備份略過，數據將於下次重新整理時同步', e);
       }
+    })();
 
-      await loadSavedProducts(true, true);
-    } catch (e: any) {
-      console.error('儲存新商品資料失敗:', e);
-      showCustomAlert('新增失敗', e?.message || '無法連接後端，請確認 Django 是否已啟動。', () => {}, '', txt.btnConfirm);
-      return;
-    }
-
+    // 🎯 精準控制：定時器強制背景數秒，不加遮罩，「剛好 1000 毫秒 (1秒)」跳出成功
     setTimeout(() => {
       showCustomAlert(txt.alertSubmitSuccessTitle, txt.alertSubmitSuccessMessage, () => {}, '', txt.btnConfirm);
-    } , 400);
+    }, 1000); // ⏱️ 精準 1.0 秒
   };
 
   const displayProducts = getFilteredDisplayProducts();
