@@ -272,6 +272,72 @@ export default function DailyRecordScreen() {
     return { calculatedBmi, calculatedStatus };
   };
 
+  const updateMemberWeightToBackend = async (newWeight: string) => {
+    try {
+      const cleanWeight = newWeight.trim();
+
+      if (!cleanWeight || isNaN(Number(cleanWeight))) {
+        return;
+      }
+
+      const memberId = await getCurrentMemberId();
+
+      if (!memberId || memberId === 'guest') {
+        console.log('找不到會員 ID，無法同步會員體重');
+        return;
+      }
+
+      const response = await fetch(`${API_URL}/members/${memberId}/profile/`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          initial_weight: Number(cleanWeight),
+        }),
+      });
+
+      const data = await parseApiResponse(response);
+
+      if (!response.ok || data.success === false) {
+        console.log('同步會員體重失敗:', data);
+        return;
+      }
+
+      // 同步目前會員自己的本機快取，讓會員中心與身體指數查詢頁能立刻讀到最新體重
+      await AsyncStorage.setItem(`${memberId}_user_weight`, cleanWeight);
+
+      const profileRaw = await AsyncStorage.getItem(`${memberId}_user_profile`);
+      if (profileRaw) {
+        try {
+          const profile = JSON.parse(profileRaw);
+          profile.weight = cleanWeight;
+          profile.initial_weight = Number(cleanWeight);
+          await AsyncStorage.setItem(`${memberId}_user_profile`, JSON.stringify(profile));
+        } catch (e) {
+          console.log('更新會員體重快取失敗:', e);
+        }
+      }
+
+      const userRaw = await AsyncStorage.getItem('user');
+      if (userRaw) {
+        try {
+          const user = JSON.parse(userRaw);
+          if (String(user?.id) === memberId) {
+            user.initial_weight = Number(cleanWeight);
+            await AsyncStorage.setItem('user', JSON.stringify(user));
+          }
+        } catch (e) {
+          console.log('更新登入使用者體重快取失敗:', e);
+        }
+      }
+
+      console.log('會員體重已同步到後端:', cleanWeight);
+    } catch (e) {
+      console.error('同步會員體重錯誤:', e);
+    }
+  };
+
   const handleWeightChange = (text: string) => {
     let cleanedText = text.replace(/[^0-9.]/g, '');
     const parts = cleanedText.split('.');
@@ -285,7 +351,7 @@ export default function DailyRecordScreen() {
     saveDataToStorage(cleanedText, calculatedBmi, calculatedStatus, mealBlocks);
   };
 
-  const handleWeightBlur = () => {
+  const handleWeightBlur = async () => {
     if (weight.trim() === '') {
       setWeight('');
       setBmi('—');
@@ -317,6 +383,7 @@ export default function DailyRecordScreen() {
     setBmiStatus(calculatedStatus);
 
     saveDataToStorage(finalWeight, calculatedBmi, calculatedStatus, mealBlocks);
+    await updateMemberWeightToBackend(finalWeight);
   };
 
   const calculateTotalCalories = () => {
