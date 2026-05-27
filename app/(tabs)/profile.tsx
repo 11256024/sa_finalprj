@@ -509,7 +509,10 @@ export default function ProfileScreen() {
             
             {/* 生日 (已進行極速優化之原生日曆彈窗) */}
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>生 日</Text>
+              <View style={styles.infoLabelContainer}>
+                <Text style={styles.infoLabelText}>生</Text>
+                <Text style={styles.infoLabelText}>日</Text>
+              </View>
               {isEditing ? (
                 Platform.OS === 'web' ? (
                   <input
@@ -541,7 +544,13 @@ export default function ProfileScreen() {
 
             {/* 身高 */}
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>身 高 (cm)</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={styles.infoLabelContainer}>
+                  <Text style={styles.infoLabelText}>身</Text>
+                  <Text style={styles.infoLabelText}>高</Text>
+                </View>
+                <Text style={styles.infoLabelText}> (cm)</Text>
+              </View>
               {isEditing ? (
                 Platform.OS === 'web' ? (
                   <select
@@ -571,7 +580,13 @@ export default function ProfileScreen() {
 
             {/* 體重 */}
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>體 重 (kg)</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={styles.infoLabelContainer}>
+                  <Text style={styles.infoLabelText}>體</Text>
+                  <Text style={styles.infoLabelText}>重</Text>
+                </View>
+                <Text style={styles.infoLabelText}> (kg)</Text>
+              </View>
               {isEditing ? (
                 Platform.OS === 'web' ? (
                   <select
@@ -601,7 +616,12 @@ export default function ProfileScreen() {
 
             {/* 性別 */}
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>生理性別</Text>
+              <View style={styles.infoLabelContainer}>
+                <Text style={styles.infoLabelText}>生</Text>
+                <Text style={styles.infoLabelText}>理</Text>
+                <Text style={styles.infoLabelText}>性</Text>
+                <Text style={styles.infoLabelText}>別</Text>
+              </View>
               {isEditing ? (
                 Platform.OS === 'web' ? (
                   <select
@@ -630,7 +650,10 @@ export default function ProfileScreen() {
 
             {/* 帳號 */}
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>帳 號</Text>
+              <View style={styles.infoLabelContainer}>
+                <Text style={styles.infoLabelText}>帳</Text>
+                <Text style={styles.infoLabelText}>號</Text>
+              </View>
               <Text style={[styles.infoValue, styles.readOnlyText, (!profileData.account || profileData.account.trim() === '') && styles.placeholderText]}>
                 {profileData.account && profileData.account.trim() !== '' ? profileData.account : '請輸入帳號'}
               </Text>
@@ -638,7 +661,10 @@ export default function ProfileScreen() {
 
             {/* 密碼 */}
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>密 碼</Text>
+              <View style={styles.infoLabelContainer}>
+                <Text style={styles.infoLabelText}>密</Text>
+                <Text style={styles.infoLabelText}>碼</Text>
+              </View>
               <View style={styles.passwordContainer}>
                 <Text style={[styles.infoValue, styles.readOnlyText, (!profileData.password || profileData.password.trim() === '') && styles.placeholderText]}>
                   {!profileData.password || profileData.password.trim() === ''
@@ -789,7 +815,8 @@ const styles = StyleSheet.create({
   divider: { width: 1, backgroundColor: '#EBEBEB', marginHorizontal: 40 },
   rightSection: { flex: 1.5, justifyContent: 'center' },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, borderBottomWidth: 1, borderBottomColor: '#F2F2F2', paddingBottom: 6 },
-  infoLabel: { fontSize: 18, color: '#333', fontWeight: '600' },
+  infoLabelContainer: { width: 110, flexDirection: 'row', justifyContent: 'space-between' },
+  infoLabelText: { fontSize: 18, color: '#333', fontWeight: '600' },
   infoValue: { fontSize: 18, color: '#666' },
   readOnlyText: { color: '#777' },
   passwordContainer: { flexDirection: 'row', alignItems: 'center' },
