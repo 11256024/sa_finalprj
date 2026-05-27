@@ -1,6 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useFocusEffect } from 'expo-router';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal,
   NativeScrollEvent,
@@ -23,6 +22,26 @@ const parseApiResponse = async (response: Response) => {
     return text ? JSON.parse(text) : {};
   } catch {
     throw new Error(`後端回傳不是 JSON，HTTP ${response.status}：${text.slice(0, 180)}`);
+  }
+};
+
+// 避免按「同步會員資料」時一直等待 Aiven / Django 回應。
+// 超過 timeout 就中止，不會讓畫面卡太久。
+const fetchWithTimeout = async (
+  url: string,
+  options: RequestInit = {},
+  timeout = 5000
+) => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
   }
 };
 
@@ -227,7 +246,13 @@ export default function BodyMetricsScreen() {
     if (!memberId || memberId === 'guest') return null;
 
     try {
-      const response = await fetch(`${API_URL}/members/${memberId}/profile/`);
+      // 主要使用目前 urls.py 保留的 members/<id>/profile/ 路徑。
+      // 若之後有舊前端還用 member/profile/<id>/，後端也有保留，不會壞。
+      const response = await fetchWithTimeout(
+        `${API_URL}/members/${memberId}/profile/`,
+        {},
+        5000
+      );
       const data = await parseApiResponse(response);
 
       if (!response.ok || data.success === false || !data.member) {
@@ -258,6 +283,55 @@ export default function BodyMetricsScreen() {
   };
 
   const applyProfileToMetrics = async (showSuccessAlert = false) => {
+    const applyParsedDataToScreen = (
+      parsedData: {
+        cleanGender: string;
+        finalAge: string;
+        cleanHeight: string;
+        cleanWeight: string;
+        isZeroAge: boolean;
+      },
+      shouldValidate: boolean
+    ) => {
+      const { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge } = parsedData;
+
+      if (shouldValidate && (!cleanWeight || cleanWeight.trim() === '' || parseFloat(cleanWeight) === 0)) {
+        showAlert('⚠️ 請先至會員中心或每日紀錄填寫體重資料');
+        return false;
+      }
+
+      if (shouldValidate && (!cleanGender || !finalAge || !cleanHeight)) {
+        showAlert('⚠️ 請至會員中心填寫完整的性別、生日與身高資料');
+        return false;
+      }
+
+      if (isZeroAge) {
+        if (shouldValidate) showAlert('請輸入大等於1的歲數，不滿1足歲無法計算TDEE');
+        setInitialProfile({ gender: cleanGender, age: '', height: cleanHeight, weight: cleanWeight });
+        setMetricsData(prev => ({
+          ...prev,
+          gender: cleanGender,
+          age: '',
+          height: cleanHeight,
+          weight: cleanWeight,
+          isCalculated: false,
+        }));
+        return false;
+      }
+
+      setInitialProfile({ gender: cleanGender, age: finalAge, height: cleanHeight, weight: cleanWeight });
+      setMetricsData(prev => ({
+        ...prev,
+        gender: cleanGender,
+        age: finalAge,
+        height: cleanHeight,
+        weight: cleanWeight,
+        isCalculated: false,
+      }));
+
+      return true;
+    };
+
     try {
       const savedUserId = await getCurrentMemberId();
 
@@ -265,8 +339,6 @@ export default function BodyMetricsScreen() {
         if (showSuccessAlert) showAlert('⚠️ 找不到目前登入會員，請重新登入');
         return;
       }
-
-      const backendProfile = await loadProfileFromBackend(savedUserId);
 
       const scannedHeight =
         await AsyncStorage.getItem(`${savedUserId}_user_height`) ||
@@ -291,66 +363,66 @@ export default function BodyMetricsScreen() {
         } catch (e) {}
       }
 
-      const localData =
+      const scannedWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`) || '';
+      const localProfileRaw = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
+
+      // 1. 先讀本機快取，讓畫面立即出現資料，不等待 Aiven。
+      if (localProfileRaw) {
+        const localParsed = parseAndCleanProfile(localProfileRaw, todayWeight, scannedHeight, scannedWeight);
+        applyParsedDataToScreen(localParsed, false);
+      }
+
+      // 2. 再背景向 Django / Aiven 要最新資料，最多等 5 秒。
+      const backendProfile = await loadProfileFromBackend(savedUserId);
+      const latestProfileRaw =
         backendProfile !== null
           ? JSON.stringify(backendProfile)
-          : await AsyncStorage.getItem(`${savedUserId}_user_profile`);
+          : localProfileRaw;
 
-      const scannedWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`) || '';
-
-      const { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge } =
-        parseAndCleanProfile(localData, todayWeight, scannedHeight, scannedWeight);
-
-      if (showSuccessAlert && (!cleanWeight || cleanWeight.trim() === '' || parseFloat(cleanWeight) === 0)) {
-        showAlert('⚠️ 請先至會員中心或每日紀錄填寫體重資料');
+      if (!latestProfileRaw) {
+        if (showSuccessAlert) showAlert('⚠️ 無法從後端讀取會員資料，請確認 Django 是否已啟動');
         return;
       }
 
-      if (showSuccessAlert && (!cleanGender || !finalAge || !cleanHeight)) {
-        showAlert('⚠️ 請至會員中心填寫完整的性別、生日與身高資料');
-        return;
-      }
+      const latestScannedHeight =
+        await AsyncStorage.getItem(`${savedUserId}_user_height`) ||
+        await AsyncStorage.getItem(`${savedUserId}_height`) ||
+        scannedHeight ||
+        '';
 
-      if (isZeroAge) {
-        if (showSuccessAlert) showAlert('請輸入大等於1的歲數，不滿1足歲無法計算TDEE');
-        setInitialProfile({ gender: cleanGender, age: '', height: cleanHeight, weight: cleanWeight });
-        setMetricsData(prev => ({
-          ...prev,
-          gender: cleanGender,
-          age: '',
-          height: cleanHeight,
-          weight: cleanWeight,
-          isCalculated: false,
-        }));
-        return;
-      }
+      const latestScannedWeight =
+        await AsyncStorage.getItem(`${savedUserId}_user_weight`) ||
+        scannedWeight ||
+        '';
 
-      setInitialProfile({ gender: cleanGender, age: finalAge, height: cleanHeight, weight: cleanWeight });
-      setMetricsData(prev => ({
-        ...prev,
-        gender: cleanGender,
-        age: finalAge,
-        height: cleanHeight,
-        weight: cleanWeight,
-        isCalculated: false,
-      }));
+      const parsedLatest = parseAndCleanProfile(
+        latestProfileRaw,
+        todayWeight,
+        latestScannedHeight,
+        latestScannedWeight
+      );
 
-      if (showSuccessAlert) {
+      const applied = applyParsedDataToScreen(parsedLatest, showSuccessAlert);
+
+      if (showSuccessAlert && applied) {
         showAlert('✨ 指數與會員資料同步成功！');
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('同步會員資料錯誤：', error);
-      if (showSuccessAlert) showAlert('⚠️ 同步失敗，請確認 Django 是否已啟動');
+
+      if (showSuccessAlert && error?.name === 'AbortError') {
+        showAlert('⚠️ 後端回應太久，請確認 Django / Aiven 連線是否正常');
+      } else if (showSuccessAlert) {
+        showAlert('⚠️ 同步失敗，請確認 Django 是否已啟動');
+      }
     }
   };
 
-  // 💥【自動化載入】焦點監聽：進入頁面時自動從 Django / Aiven 抓目前會員資料
-  useFocusEffect(
-    useCallback(() => {
-      setScrollY(0);
-      applyProfileToMetrics(false);
-    }, [])
-  );
+  // 進入頁面時只重置右側捲動位置，不自動載入會員資料。
+  // 會員資料只會在使用者按「同步會員資料」後才載入。
+  useEffect(() => {
+    setScrollY(0);
+  }, []);
 
   // 🔄 手動點擊「同步會員資料」按鈕邏輯
   const loadSyncProfileData = async () => {
