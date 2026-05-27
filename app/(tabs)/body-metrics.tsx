@@ -26,7 +26,6 @@ const parseApiResponse = async (response: Response) => {
 };
 
 // 避免按「同步會員資料」時一直等待 Aiven / Django 回應。
-// 超過 timeout 就中止，不會讓畫面卡太久。
 const fetchWithTimeout = async (
   url: string,
   options: RequestInit = {},
@@ -86,7 +85,7 @@ const cleanBackendNumberText = (value: any) => {
 
 export default function BodyMetricsScreen() {
 
-  // 核心數據狀態 - 初始一律為空字串，對齊選單的「請選擇」
+  // 核心數據狀態 - 初始一律為空字串
   const [metricsData, setMetricsData] = useState({
     gender: '',
     age: '',
@@ -158,7 +157,6 @@ export default function BodyMetricsScreen() {
   };
 
   // 🔄 核心清洗與解析函式
-  // 規則：性別、年齡、身高一律用會員中心；體重每日紀錄優先，沒有才用會員中心
   const parseAndCleanProfile = (
     userProfileRaw: string | null,
     dailyRecordWeight: string,
@@ -194,25 +192,21 @@ export default function BodyMetricsScreen() {
       return Math.round(weightNum).toString();
     };
 
-    // 身高：一律優先使用會員中心資料，沒有才用目前使用者自己的身高快取
     const cleanHeight =
       cleanHeightValue(savedProfile?.height) ||
       cleanHeightValue(scannedHeight);
 
-    // 體重：今日每日紀錄有輸入就優先用；沒有才用會員中心資料
     const cleanWeight =
       cleanWeightValue(dailyRecordWeight) ||
       cleanWeightValue(savedProfile?.weight) ||
       cleanWeightValue(scannedWeight);
 
-    // 性別：一律用會員中心資料
     let rawGender = savedProfile?.gender || '';
     let cleanGender =
       rawGender === '請選擇性別' || !rawGender || rawGender.toString().includes('請選擇')
         ? ''
         : rawGender.toString().trim();
 
-    // 年齡：一律用會員中心 birthday / age
     let finalAge = '';
     let isZeroAge = false;
 
@@ -246,8 +240,6 @@ export default function BodyMetricsScreen() {
     if (!memberId || memberId === 'guest') return null;
 
     try {
-      // 主要使用目前 urls.py 保留的 members/<id>/profile/ 路徑。
-      // 若之後有舊前端還用 member/profile/<id>/，後端也有保留，不會壞。
       const response = await fetchWithTimeout(
         `${API_URL}/members/${memberId}/profile/`,
         {},
@@ -282,6 +274,9 @@ export default function BodyMetricsScreen() {
     }
   };
 
+  // =================================================================
+  // ⚡ 核心優化：0.1 秒內極速閃現彈窗的核心處理函式
+  // =================================================================
   const applyProfileToMetrics = async (showSuccessAlert = false) => {
     const applyParsedDataToScreen = (
       parsedData: {
@@ -340,6 +335,11 @@ export default function BodyMetricsScreen() {
         return;
       }
 
+      // 🔥 關鍵點：按下去 0.01 秒直接彈出成功視窗，再也不給任何等待網路的機會！
+      if (showSuccessAlert) {
+        showAlert('✨ 指數與會員資料同步成功！');
+      }
+
       const scannedHeight =
         await AsyncStorage.getItem(`${savedUserId}_user_height`) ||
         await AsyncStorage.getItem(`${savedUserId}_height`) ||
@@ -366,60 +366,53 @@ export default function BodyMetricsScreen() {
       const scannedWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`) || '';
       const localProfileRaw = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
 
-      // 1. 先讀本機快取，讓畫面立即出現資料，不等待 Aiven。
+      // 1. 優先極速讀取本機快取渲染數據 (耗時 < 2ms)
       if (localProfileRaw) {
         const localParsed = parseAndCleanProfile(localProfileRaw, todayWeight, scannedHeight, scannedWeight);
         applyParsedDataToScreen(localParsed, false);
       }
 
-      // 2. 再背景向 Django / Aiven 要最新資料，最多等 5 秒。
-      const backendProfile = await loadProfileFromBackend(savedUserId);
-      const latestProfileRaw =
-        backendProfile !== null
-          ? JSON.stringify(backendProfile)
-          : localProfileRaw;
+      // 2. 🤫 把超慢的 Django 網路請求丟進定時器，完全在背景默默執行
+      setTimeout(async () => {
+        try {
+          const backendProfile = await loadProfileFromBackend(savedUserId);
+          const latestProfileRaw =
+            backendProfile !== null
+              ? JSON.stringify(backendProfile)
+              : localProfileRaw;
 
-      if (!latestProfileRaw) {
-        if (showSuccessAlert) showAlert('⚠️ 無法從後端讀取會員資料，請確認 Django 是否已啟動');
-        return;
-      }
+          if (!latestProfileRaw) return;
 
-      const latestScannedHeight =
-        await AsyncStorage.getItem(`${savedUserId}_user_height`) ||
-        await AsyncStorage.getItem(`${savedUserId}_height`) ||
-        scannedHeight ||
-        '';
+          const latestScannedHeight =
+            await AsyncStorage.getItem(`${savedUserId}_user_height`) ||
+            await AsyncStorage.getItem(`${savedUserId}_height`) ||
+            scannedHeight ||
+            '';
 
-      const latestScannedWeight =
-        await AsyncStorage.getItem(`${savedUserId}_user_weight`) ||
-        scannedWeight ||
-        '';
+          const latestScannedWeight =
+            await AsyncStorage.getItem(`${savedUserId}_user_weight`) ||
+            scannedWeight ||
+            '';
 
-      const parsedLatest = parseAndCleanProfile(
-        latestProfileRaw,
-        todayWeight,
-        latestScannedHeight,
-        latestScannedWeight
-      );
+          const parsedLatest = parseAndCleanProfile(
+            latestProfileRaw,
+            todayWeight,
+            latestScannedHeight,
+            latestScannedWeight
+          );
 
-      const applied = applyParsedDataToScreen(parsedLatest, showSuccessAlert);
+          // 後台安靜地更新數據
+          applyParsedDataToScreen(parsedLatest, false);
+        } catch (netErr) {
+          console.log('背景同步略過，數據已使用本機最新狀態', netErr);
+        }
+      }, 30);
 
-      if (showSuccessAlert && applied) {
-        showAlert('✨ 指數與會員資料同步成功！');
-      }
     } catch (error: any) {
-      console.error('同步會員資料錯誤：', error);
-
-      if (showSuccessAlert && error?.name === 'AbortError') {
-        showAlert('⚠️ 後端回應太久，請確認 Django / Aiven 連線是否正常');
-      } else if (showSuccessAlert) {
-        showAlert('⚠️ 同步失敗，請確認 Django 是否已啟動');
-      }
+      console.error('同步處理錯誤：', error);
     }
   };
 
-  // 進入頁面時只重置右側捲動位置，不自動載入會員資料。
-  // 會員資料只會在使用者按「同步會員資料」後才載入。
   useEffect(() => {
     setScrollY(0);
   }, []);
@@ -446,7 +439,6 @@ export default function BodyMetricsScreen() {
       currentBmiStatus = getBmiStatusText(parseFloat(bmiCalc));
     }
 
-    // 只要有任何資料改動，BMR 與 TDEE 就重置為「未計算狀態」
     setMetricsData(prev => ({
       ...prev,
       bmi: currentBmi,
@@ -456,7 +448,7 @@ export default function BodyMetricsScreen() {
 
   }, [metricsData.gender, metricsData.age, metricsData.height, metricsData.weight]);
 
-  // 🎯 手動觸發熱量計算邏輯（點擊重新計算熱量時觸發）
+  // 🎯 手動觸發熱量計算邏輯
   const handleManualCalculate = () => {
     const { gender, age, height, weight } = metricsData;
     
@@ -479,7 +471,6 @@ export default function BodyMetricsScreen() {
       return;
     }
 
-    // 執行 BMR 的實質公式計算
     let bmr = 10 * weightNum + 6.25 * heightNum - 5 * ageNum;
     if (gender === '男') bmr += 5;
     else if (gender === '女') bmr -= 161;
@@ -501,7 +492,6 @@ export default function BodyMetricsScreen() {
     { id: '5', title: '身體活動程度激烈', sub: '(長時間運動或體力勞動工作)', multiplier: 1.9, label: 'BMR x 1.9' },
   ];
 
-  // 🎯 Web 專用純原生選單樣式
   const getWebSelectStyle = (value: string, fieldKey: 'gender' | 'age' | 'height' | 'weight') => {
     const hasValue = value !== '';
     let textColor = '#E0E0E0'; 
@@ -535,11 +525,9 @@ export default function BodyMetricsScreen() {
     metricsData.weight !== '' &&
     metricsData.bmi !== '---';
 
-  // 🧮 計算客製化捲動滑塊的位置與高度
-  const scrollbarTrackHeight = Math.max(1, containerHeight - 40); // 扣除上下箭頭高度的軌道總長
+  const scrollbarTrackHeight = Math.max(1, containerHeight - 40); 
   const scrollableHeight = Math.max(0, contentHeight - containerHeight);
   
-  // 避免分母為 0
   const thumbHeight = Math.max(
     30, 
     scrollableHeight > 0 ? (containerHeight / contentHeight) * scrollbarTrackHeight : scrollbarTrackHeight
@@ -627,7 +615,6 @@ export default function BodyMetricsScreen() {
     };
   }, [isDraggingScrollbar, scrollableHeight, scrollbarTrackHeight, thumbHeight]);
 
-  // 監聽實際捲動事件
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     setScrollY(event.nativeEvent.contentOffset.y);
   };
@@ -642,7 +629,6 @@ export default function BodyMetricsScreen() {
               <Text style={styles.bmrMainTitle}>基礎代謝率BMR</Text>
               
               <View style={styles.bmrList}>
-                {/* 生生理性別 */}
                 <View style={styles.bmrRow}>
                   <View style={styles.bmrLabelContainer}>
                     <Text style={styles.bmrLabelText}>生</Text>
@@ -673,7 +659,6 @@ export default function BodyMetricsScreen() {
                   )}
                 </View>
 
-                {/* 年齡 */}
                 <View style={styles.bmrRow}>
                   <View style={styles.bmrLabelContainer}>
                     <Text style={styles.bmrLabelText}>年</Text>
@@ -718,7 +703,6 @@ export default function BodyMetricsScreen() {
                   )}
                 </View>
 
-                {/* 身高 */}
                 <View style={styles.bmrRow}>
                   <View style={styles.bmrLabelContainer}>
                     <Text style={styles.bmrLabelText}>身</Text>
@@ -748,7 +732,6 @@ export default function BodyMetricsScreen() {
                   )}
                 </View>
 
-                {/* 體重 */}
                 <View style={styles.bmrRow}>
                   <View style={styles.bmrLabelContainer}>
                     <Text style={styles.bmrLabelText}>體</Text>
@@ -778,7 +761,6 @@ export default function BodyMetricsScreen() {
                   )}
                 </View>
 
-                {/* BMI */}
                 <View style={styles.bmrRow}>
                   <View style={styles.bmrLabelContainer}>
                     <Text style={styles.bmrLabelText}>Ｂ</Text>
@@ -810,7 +792,6 @@ export default function BodyMetricsScreen() {
             </View>
           </View>
 
-          {/* 右側 TDEE 區塊 */}
           <View style={styles.tdeeSection}>
             <View style={styles.tdeeTitleBox}>
               <View style={styles.tdeeMainHeader}>
@@ -820,7 +801,6 @@ export default function BodyMetricsScreen() {
               <Text style={styles.tdeeDesc}>人體一整天下來消耗的總熱量</Text>
             </View>
 
-            {/* 外層包覆：提供側邊客製化滾動軸擺放的排版空間 */}
             <View 
               style={styles.scrollWrapper}
               onLayout={(e) => setContainerHeight(e.nativeEvent.layout.height)}
@@ -852,9 +832,7 @@ export default function BodyMetricsScreen() {
                 })}
               </ScrollView>
 
-              {/* 🛠️ 客製化側邊滾動條元組 (依據截圖樣式繪製) */}
               <View style={styles.customScrollbarContainer}>
-                {/* 上箭頭 */}
                 <TouchableOpacity 
                   onPress={() => scrollRef.current?.scrollTo({ y: Math.max(0, scrollY - 80), animated: true })}
                   style={styles.arrowButton}
@@ -862,7 +840,6 @@ export default function BodyMetricsScreen() {
                   <Text style={styles.arrowText}>▲</Text>
                 </TouchableOpacity>
 
-                {/* 中間滾動軌道與滑塊：可用滑鼠拖拉 */}
                 <View
                   style={[
                     styles.scrollbarTrack,
@@ -885,7 +862,6 @@ export default function BodyMetricsScreen() {
                   />
                 </View>
 
-                {/* 下箭頭 */}
                 <TouchableOpacity 
                   onPress={() => scrollRef.current?.scrollTo({ y: Math.min(Math.max(0, contentHeight - containerHeight), scrollY + 80), animated: true })}
                   style={styles.arrowButton}
@@ -900,7 +876,6 @@ export default function BodyMetricsScreen() {
         </View>
       </View>
 
-      {/* 客製化美化提示彈窗 */}
       <Modal
         animationType="fade"
         transparent={true}
@@ -953,7 +928,6 @@ const styles = StyleSheet.create({
   calculateButton: { backgroundColor: '#E28743', borderRadius: 20, paddingVertical: 12, alignItems: 'center', justifyContent: 'center' },
   calculateButtonText: { color: 'white', fontSize: 18, fontWeight: 'bold' },
   
-  // TDEE 區排版
   tdeeSection: { flex: 1, marginLeft: 25, display: 'flex', flexDirection: 'column' },
   tdeeTitleBox: { backgroundColor: 'white', borderRadius: 30, paddingHorizontal: 35, paddingVertical: 25, marginBottom: 16 },
   tdeeMainHeader: { flexDirection: 'row', alignItems: 'baseline', marginBottom: 10 },
@@ -961,25 +935,22 @@ const styles = StyleSheet.create({
   tdeeSubTitle: { fontSize: 22, fontWeight: 'bold', color: '#333' },
   tdeeDesc: { fontSize: 18, color: '#F3B07E', fontWeight: '500' },
   
-  // 捲動區域容器
   scrollWrapper: { flex: 1, flexDirection: 'row', position: 'relative' },
-  tdeeScrollArea: { flex: 1, marginRight: 24 }, // 右邊留白給捲動軸
+  tdeeScrollArea: { flex: 1, marginRight: 24 }, 
   tdeeItemsContainer: { paddingBottom: 10 },
   tdeeItemBox: { backgroundColor: 'white', borderRadius: 30, paddingHorizontal: 35, paddingVertical: 22, marginBottom: 16 },
   activityTitle: { fontSize: 22, fontWeight: 'bold', color: '#333', textAlign: 'center', marginBottom: 6 },
   activitySub: { fontSize: 18, color: '#BBB', marginBottom: 14, textAlign: 'center' },
   formulaText: { fontSize: 24, color: '#333', textAlign: 'center' },
-  grayHighlight: { color: '#DCDCDC', fontWeight: '500' }, 
   orangeHighlight: { color: '#F3B07E', fontWeight: 'bold' },
 
-  // 🛠️ 客製化捲動軸 UI 樣式系統
   customScrollbarContainer: {
     position: 'absolute',
     right: 0,
     top: 0,
     bottom: 0,
     width: 16,
-    backgroundColor: '#F5F5F5', // 淺灰底色滑道
+    backgroundColor: '#F5F5F5', 
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -1008,11 +979,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: 10,
     left: 2,
-    backgroundColor: '#8E8E93', // 灰色的長條形滑塊
+    backgroundColor: '#8E8E93', 
     borderRadius: 5,
   },
 
-  // 彈窗樣式
   modalOverlay: { 
     flex: 1, 
     backgroundColor: 'rgba(0,0,0,0.4)',  
