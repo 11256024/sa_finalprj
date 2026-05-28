@@ -60,7 +60,7 @@ const pageLanguageConfig = {
   recentSearchLabel: '近 期 資 資料', 
   calorieLabelPrefix: '熱量（',
   calorieLabelSuffix: ' 大卡）',
-  emptyResultText: '找不到相關商品（請確認後台是否有審核通過的資料）',
+  emptyResultText: '找不到相關商品',
   loadingText: '載入中，請稍後', 
   
   alertWarningTitle: '提示',
