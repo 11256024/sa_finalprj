@@ -132,10 +132,11 @@ export default function AdminReviewScreen() {
     isFetchingRef.current = true;
 
     try {
+      const t = Date.now();
       const [approvedRes, pendingRes, rejectedRes] = await Promise.all([
-        fetch(`${API_URL}/products/`),
-        fetch(`${API_URL}/products/pending/`),
-        fetch(`${API_URL}/products/rejected/`),
+        fetch(`${API_URL}/products/?t=${t}`),
+        fetch(`${API_URL}/products/pending/?t=${t}`),
+        fetch(`${API_URL}/products/rejected/?t=${t}`),
       ]);
 
       const approvedData = await parseApiResponse(approvedRes);
@@ -145,12 +146,25 @@ export default function AdminReviewScreen() {
       if (!approvedRes.ok || !pendingRes.ok || !rejectedRes.ok) throw new Error('讀取失敗');
 
       const mergedMap = new Map<string, Product>();
-      (Array.isArray(approvedData) ? approvedData : []).forEach(item => mergedMap.set(String(item.id), mapProductFromApi(item)));
+      // 🛠️ 同樣修正順序：Pending 先放，讓 Approved/Rejected 擁有最後決定權
       (Array.isArray(pendingData) ? pendingData : []).forEach(item => mergedMap.set(String(item.id), mapProductFromApi(item)));
       (Array.isArray(rejectedData) ? rejectedData : []).forEach(item => mergedMap.set(String(item.id), mapProductFromApi(item)));
+      (Array.isArray(approvedData) ? approvedData : []).forEach(item => mergedMap.set(String(item.id), mapProductFromApi(item)));
 
-      const mergedList = Array.from(mergedMap.values()).sort((a, b) => Number(b.id) - Number(a.id));
-      setAllProducts(mergedList);
+      const mergedList = Array.from(mergedMap.values());
+
+      // 🛠️ 強化：防閃爍 (Anti-flicker) 邏輯
+      // 如果後端抓回來的狀態還是 'pending'，但本地已經標記為 'approved' 或 'rejected'，
+      // 則優先保留本地狀態。這能避免後端資料庫尚未同步完成前導致的「資料跳回」現象。
+      setAllProducts(prev => {
+        return mergedList.map(newItem => {
+          const existing = prev.find(p => p.id === newItem.id);
+          if (existing && existing.status !== 'pending' && newItem.status === 'pending') {
+            return existing;
+          }
+          return newItem;
+        }).sort((a, b) => Number(b.id) - Number(a.id));
+      });
     } catch (e) {
       console.error('更新列表失敗:', e);
       if (!isBackground) showMessage('無法同步後端最新資料。');
@@ -191,12 +205,9 @@ export default function AdminReviewScreen() {
 
     connectWebSocket();
 
-    // 🕒 0.1 秒自動刷新定時器邏輯
-    const isUserPendingTab = activeTab === 'user_pending';
-    const hasAnyModalOpen = confirmModalVisible || addModalVisible || deleteModalVisible || cancelWarningVisible;
-    
-    // 如果在待審核頁面且當前無操作彈窗，啟用 100 毫秒刷新，否則維持基本刷新率
-    const refreshInterval = (isUserPendingTab && !hasAnyModalOpen) ? 100 : 2000;
+    // 🕒 調整自動刷新頻率。因為已有 WebSocket 即時監聽，輪詢建議降至 3 秒一次。
+    // 避免過快頻率 (如 0.1秒) 在資料庫更新尚未完全反映時抓到舊資料，導致「消失後又出現」的閃爍現象。
+    const refreshInterval = 3000;
 
     const pollingTimer = setInterval(() => {
       fetchGlobalProducts(true); 
@@ -206,7 +217,7 @@ export default function AdminReviewScreen() {
       if (wsRef.current) wsRef.current.close();
       clearInterval(pollingTimer);
     };
-  }, [activeTab, confirmModalVisible, addModalVisible, deleteModalVisible, cancelWarningVisible]);
+  }, [activeTab]); // 僅在切換標籤時重新初始化，移除彈窗狀態依賴，防止操作後立即觸發刷新
 
   const getFilteredProducts = () => {
     const sortedProducts = [...allProducts].sort((a, b) => Number(b.id) - Number(a.id));

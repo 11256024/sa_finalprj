@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
 const API_URL = 'http://127.0.0.1:8001';
+const WS_URL = 'ws://127.0.0.1:8001/ws/admin-reviews/'; 
 
 interface Product {
   id: string;
@@ -23,16 +24,26 @@ const parseApiResponse = async (response: any) => {
   }
 };
 
-const mapProductFromApi = (item: any): Product => ({
-  id: String(item.id),
-  name: item.name || '',
-  unit: item.unit || '',
-  calories: Number(item.calories || 0),
-  status: item.status || 'approved',
-  creatorId: item.creator !== null && item.creator !== undefined
-    ? String(item.creator)
-    : (item.creator_id !== null && item.creator_id !== undefined ? String(item.creator_id) : ''),
-});
+const mapProductFromApi = (item: any): Product => {
+  // 強化 Creator ID 提取邏輯，支援直接 ID 或巢狀物件格式
+  let cId = '';
+  if (item.creator_id !== undefined && item.creator_id !== null) {
+    cId = String(item.creator_id);
+  } else if (item.creator && typeof item.creator === 'object' && item.creator.id !== undefined) {
+    cId = String(item.creator.id);
+  } else if (item.creator !== undefined && item.creator !== null) {
+    cId = String(item.creator);
+  }
+
+  return {
+    id: String(item.id),
+    name: item.name || '',
+    unit: item.unit || '',
+    calories: Number(item.calories || 0),
+    status: item.status || 'approved',
+    creatorId: cId,
+  };
+};
 
 // 全頁面配置物件
 const pageLanguageConfig = {
@@ -96,6 +107,7 @@ export default function ProductsScreen() {
   const [products, setProducts] = useState<Product[]>([]); 
   const [currentUserId, setCurrentUserId] = useState('guest'); 
   const lastFetchAtRef = useRef(0);
+  const wsRef = useRef<WebSocket | null>(null);
   const isFetchingRef = useRef(false);
   
   const productsRef = useRef<Product[]>([]);
@@ -162,9 +174,16 @@ export default function ProductsScreen() {
   const fetchProductsByUrl = async (url: string) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
+    
+    // 🛠️ 加入防快取時間戳記
+    const separator = url.includes('?') ? '&' : '?';
+    const cacheBustUrl = `${url}${separator}t=${Date.now()}`;
 
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(cacheBustUrl, { 
+        signal: controller.signal,
+        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } 
+      });
       const data = await parseApiResponse(response);
 
       if (!response.ok) {
@@ -209,16 +228,18 @@ export default function ProductsScreen() {
       ];
 
       const results = await Promise.all(requests);
-      const fetchedProducts = results.flat();
+      const [approvedData, pendingData, rejectedData] = results;
 
       if (fetchedProducts.length > 0 || cachedProducts.length > 0) {
         const mergedMap = new Map<string, Product>();
         cachedProducts.forEach(product => {
           if (product?.id && !product.id.startsWith('virtual_')) mergedMap.set(product.id, product);
         });
-        fetchedProducts.forEach(product => {
-          if (product?.id) mergedMap.set(product.id, product);
-        });
+
+        // 🛠️ 關鍵修正：順序很重要！讓最終狀態 (Approved/Rejected) 覆蓋中間狀態 (Pending)
+        pendingData.forEach((p: Product) => mergedMap.set(p.id, p));
+        rejectedData.forEach((p: Product) => mergedMap.set(p.id, p));
+        approvedData.forEach((p: Product) => mergedMap.set(p.id, p));
 
         // ⚠️【終極防重防閃安全防線】
         // 檢查當前畫面的虛擬物件，如果在後端抓回來的正式列表裡「已經存在相同內容的商品」，就直接略過不加入
@@ -234,8 +255,16 @@ export default function ProductsScreen() {
           }
         });
 
-        const mergedProducts = Array.from(mergedMap.values());
-        mergedProducts.sort((a, b) => {
+        const rawMergedList = Array.from(mergedMap.values());
+
+        // 使用 productsRef 進行狀態比對，防止後端同步延遲導致的狀態回彈
+        const mergedProducts = rawMergedList.map(newItem => {
+          const existing = productsRef.current.find(p => p.id === newItem.id);
+          if (existing && existing.status !== 'pending' && newItem.status === 'pending') {
+            return existing;
+          }
+          return newItem;
+        }).sort((a, b) => {
           if (a.id.startsWith('virtual_') && !b.id.startsWith('virtual_')) return -1;
           if (!a.id.startsWith('virtual_') && b.id.startsWith('virtual_')) return 1;
           if (a.id.startsWith('virtual_') && b.id.startsWith('virtual_')) return Number(b.id.split('_')[1]) - Number(a.id.split('_')[1]);
@@ -282,16 +311,42 @@ export default function ProductsScreen() {
 
     loadSavedProducts(true);
 
+    // 🛠️ 加入 WebSocket 即時監聽功能
+    const connectWebSocket = () => {
+      console.log('使用者端正在建立即時刷新 WebSocket 連線...');
+      const ws = new WebSocket(WS_URL);
+      wsRef.current = ws;
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          // 當接收到管理端審核完成或資料更新的訊號時，立即刷新
+          if (data.type === 'REFRESH_DATA') {
+            console.log('收到即時更新指令，正在刷新商品狀態...');
+            loadSavedProducts(true); 
+          }
+        } catch (err) {
+          console.log('WS 數據解析失敗', err);
+        }
+      };
+
+      ws.onerror = (e) => console.log('WS 發生錯誤:', e);
+      ws.onclose = () => {
+        console.log('WS 連線已中斷，將在 5 秒後自動重新連線...');
+        setTimeout(() => connectWebSocket(), 5000);
+      };
+    };
+
+    connectWebSocket();
+
     const intervalId = setInterval(() => {
-      const hasActivePending = productsRef.current.some(
-        item => item.status === 'pending' || item.id.startsWith('virtual_')
-      );
-      if (hasActivePending) {
-        loadSavedProducts(true);
-      }
+      loadSavedProducts(true);
     }, 3000); 
 
-    return () => clearInterval(intervalId);
+    return () => {
+      if (wsRef.current) wsRef.current.close();
+      clearInterval(intervalId);
+    };
   }, []); 
 
   useEffect(() => {
