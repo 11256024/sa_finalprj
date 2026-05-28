@@ -284,9 +284,10 @@ export default function AdminReviewScreen() {
 
   const handleExecuteAction = async () => {
     if (!selectedItem) return;
+    
+    // 先備份資料，不要立刻 null 掉 selectedItem，避免 Modal 關閉動畫時內容跳轉
+    const { id, action, name, unit } = selectedItem; 
     setConfirmModalVisible(false);
-    const { id, action, name, unit } = selectedItem;
-    setSelectedItem(null);
 
     const targetStatus = action === 'approve' ? 'approved' : 'rejected';
     setAllProducts(prev => prev.map(p => p.id === id ? { ...p, status: targetStatus } : p));
@@ -303,6 +304,9 @@ export default function AdminReviewScreen() {
       if (response.ok) await fetchGlobalProducts(true);
     } catch (e) {
       console.log(e);
+    } finally {
+      // 等一切處理完（或 Modal 動畫結束後）再清除狀態
+      setSelectedItem(null);
     }
   };
 
@@ -475,7 +479,7 @@ export default function AdminReviewScreen() {
       <Modal animationType="fade" transparent={true} visible={confirmModalVisible} onRequestClose={() => setConfirmModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
-            {selectedItem?.action === 'approve' ? (
+            {selectedItem && (selectedItem.action === 'approve' ? (
               <>
                 <Text style={[styles.alertTitle, { color: '#10B981' }]}>📋 確認入庫</Text>
                 <Text style={styles.alertMessageText}>
@@ -505,7 +509,7 @@ export default function AdminReviewScreen() {
                   </TouchableOpacity>
                 </View>
               </>
-            )}
+            ))}
           </View>
         </View>
       </Modal>
