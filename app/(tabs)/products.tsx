@@ -20,19 +20,20 @@ const parseApiResponse = async (response: any) => {
   try {
     return text ? JSON.parse(text) : {};
   } catch (error) {
-    throw new Error(`後端回傳不是 JSON，HTTP ${response.status}：${text.slice(0, 180)}`);
+    throw new Error(`後端回傳格式非 JSON (${response.status})`);
   }
 };
 
 const mapProductFromApi = (item: any): Product => {
-  // 強化 Creator ID 提取邏輯，支援直接 ID 或巢狀物件格式
   let cId = '';
-  if (item.creator_id !== undefined && item.creator_id !== null) {
+  if (item.creator_id !== null && item.creator_id !== undefined) {
     cId = String(item.creator_id);
   } else if (item.creator && typeof item.creator === 'object' && item.creator.id !== undefined) {
     cId = String(item.creator.id);
-  } else if (item.creator !== undefined && item.creator !== null) {
+  } else if (item.creator !== null && item.creator !== undefined) {
     cId = String(item.creator);
+  } else if (item.member !== null && item.member !== undefined) {
+    cId = String(item.member);
   }
 
   return {
@@ -45,46 +46,31 @@ const mapProductFromApi = (item: any): Product => {
   };
 };
 
-// 全頁面配置物件
 const pageLanguageConfig = {
   appName: '食半功倍',
   pageTitle: '新 增 / 刪 除 商 品',
   tabProductList: '商品列表',      
   tabAuditHistory: '審核紀錄',     
-  subTabApproved: '您的已通過商品', 
-  subTabRejected: '您的未通過商品', 
+  subTabPending: '待審核', 
+  subTabApproved: '已通過審核', 
+  subTabRejected: '未通過審核', 
   addButtonText: '+ 新 增',
   searchPlaceholder: '🔍   輸 入 商 品 名 稱',
   searchCancel: '取 消',
   recentSearchLabel: '近 期 資 料', 
   calorieLabelPrefix: '熱量（',
   calorieLabelSuffix: ' 大卡）',
-  deleteButtonText: '- 刪除',
-  confirmDeleteButtonText: '確認並刪除', 
-  emptyResultText: '找不到相關商品',
+  emptyResultText: '找不到相關商品（請確認後台是否有審核通過的資料）',
   
-  // 警示框文字
-  deleteAlertTitle: '是否刪除商品？',
-  clearRejectedAlertTitle: '確認清除此筆未通過商品？', 
-  cancelAddAlertTitle: '是否要取消商品？',
   alertWarningTitle: '提示',
   alertMissingFields: '請填寫完整的商品名稱、單位與熱量！',
-  alertInvalidCalorie: '熱量請輸入正確的數字！',
   
-  // 審核機制提示文字
   alertSubmitSuccessTitle: '商品已送出審核',
-  alertSubmitSuccessMessage: '管理員審核通過後將會正式入庫供大眾搜尋。在此之前，您可以直接使用它來計算您的每日熱量！',
+  alertSubmitSuccessMessage: '管理員審核通過後將會正式入庫供大眾搜尋。在此之前，您可以至「審核紀錄 ＞ 待審核」查看狀態並直接使用它來計算熱量！',
   
-  // 狀態標籤文字
   statusPending: ' （審核中，可用於計算）', 
 
-  // 警示對話框按鈕
-  btnCancel: '取消',
   btnConfirm: '確定',
-  btnNo: '否',
-  btnYes: '是',
-
-  // 正方形新增商品介面文字
   modalTitle: '新 增 商 品',
   labelName: '商 品 名 稱',
   labelUnit: '單 位',
@@ -99,23 +85,19 @@ const pageLanguageConfig = {
 export default function ProductsScreen() {
   const txt = pageLanguageConfig;
 
-  // 分頁狀態控制
   const [activeTab, setActiveTab] = useState<'list' | 'audit'>('list'); 
-  const [auditSubTab, setAuditSubTab] = useState<'approved' | 'rejected'>('approved'); 
+  const [auditSubTab, setAuditSubTab] = useState<'pending' | 'approved' | 'rejected'>('pending'); 
 
   const [searchQuery, setSearchQuery] = useState('');
   const [products, setProducts] = useState<Product[]>([]); 
-  const [currentUserId, setCurrentUserId] = useState('guest'); 
-  const lastFetchAtRef = useRef(0);
+  const [currentUserId, setCurrentUserId] = useState(''); 
   const wsRef = useRef<WebSocket | null>(null);
-  const isFetchingRef = useRef(false);
   
+  const isFetchingRef = useRef(false);
   const productsRef = useRef<Product[]>([]);
   useEffect(() => {
     productsRef.current = products;
   }, [products]);
-
-  const prevPendingIdsRef = useRef<string[]>([]);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newProductName, setNewProductName] = useState('');
@@ -123,386 +105,261 @@ export default function ProductsScreen() {
   const [unitType, setUnitType] = useState<'g' | 'ml'>('g');
   const [newProductCalorie, setNewProductCalorie] = useState('');
 
-  const [submittedInfo, setSubmittedInfo] = useState({ name: '', unit: '' });
-
   const amountInputRef = useRef<TextInput>(null);
   const calorieInputRef = useRef<TextInput>(null);
 
   const formatDisplayInfo = (name: string, unit: string) => {
     let cleanName = name ? name.trim() : '';
     let cleanUnit = unit ? unit.trim() : '';
-
-    if (cleanName.includes('/') || (cleanUnit && cleanName.includes(cleanUnit))) {
+    if (cleanName.includes('/') || cleanName.includes(cleanUnit)) {
       const parts = cleanName.split('/');
       if (parts.length > 1) {
         cleanName = parts[0].trim();
-      } else if (cleanUnit && cleanName.endsWith(cleanUnit)) {
+      } else if (cleanName.endsWith(cleanUnit)) {
         cleanName = cleanName.substring(0, cleanName.length - cleanUnit.length).trim();
       }
     }
-
-    if (cleanUnit.includes('/')) {
-      const unitParts = cleanUnit.split('/');
-      if (unitParts[0].trim() === unitParts[1].trim()) {
-        cleanUnit = unitParts[0].trim();
-      }
-    }
-
     return cleanUnit ? `${cleanName} / ${cleanUnit}` : cleanName;
   };
 
   const getCurrentMemberId = async () => {
     try {
       const userStr = await AsyncStorage.getItem('user');
-      const user = userStr ? JSON.parse(userStr) : null;
-
-      const id =
-        user?.id?.toString?.() ||
-        (await AsyncStorage.getItem('current_user_id')) ||
-        (await AsyncStorage.getItem('member_id')) ||
-        '';
-
-      return /^\d+$/.test(id) ? id : 'guest';
-    } catch (error) {
-      console.error('取得目前會員 ID 失敗:', error);
-      return 'guest';
+      const currentUser = userStr ? JSON.parse(userStr) : null;
+      const savedId = currentUser?.id?.toString?.() || await AsyncStorage.getItem('current_user_id') || '';
+      return /^\d+$/.test(savedId) ? savedId : '';
+    } catch {
+      return '';
     }
   };
 
-  const getProductCacheKey = (memberId: string) => `${memberId}_products_cache_v4`;
-
   const fetchProductsByUrl = async (url: string) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-    
-    // 🛠️ 加入防快取時間戳記
-    const separator = url.includes('?') ? '&' : '?';
-    const cacheBustUrl = `${url}${separator}t=${Date.now()}`;
-
     try {
-      const response = await fetch(cacheBustUrl, { 
-        signal: controller.signal,
-        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } 
-      });
+      const response = await fetch(url);
       const data = await parseApiResponse(response);
-
-      if (!response.ok) {
-        throw new Error(data.message || `讀取商品資料失敗，HTTP ${response.status}`);
+      if (Array.isArray(data)) {
+        return data.map(mapProductFromApi);
       }
-
-      return Array.isArray(data) ? data.map(mapProductFromApi) : [];
-    } finally {
-      clearTimeout(timer);
+      return [];
+    } catch (e) {
+      console.error(`連線失敗網址: ${url}`, e);
+      return [];
     }
   };
 
   const loadSavedProducts = async (force = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
     try {
       const savedUserId = await getCurrentMemberId();
-      const cacheKey = getProductCacheKey(savedUserId);
-      let cachedProducts: Product[] = [];
+      if (currentUserId !== savedUserId) setCurrentUserId(savedUserId);
 
-      const cachedRaw = await AsyncStorage.getItem(cacheKey);
-      if (cachedRaw) {
-        try {
-          cachedProducts = JSON.parse(cachedRaw);
-          if (Array.isArray(cachedProducts) && productsRef.current.length === 0) {
-            setProducts(cachedProducts);
-          }
-        } catch (e) {
-          cachedProducts = [];
+      const [approvedData, pendingData, rejectedData] = await Promise.all([
+        fetchProductsByUrl(`${API_URL}/products/`),
+        fetchProductsByUrl(`${API_URL}/products/pending/`),
+        fetchProductsByUrl(`${API_URL}/products/rejected/`),
+      ]);
+
+      const mergedMap = new Map<string, Product>();
+      pendingData.forEach(p => mergedMap.set(p.id, p));
+      rejectedData.forEach(p => mergedMap.set(p.id, p));
+      approvedData.forEach(p => mergedMap.set(p.id, p));
+
+      productsRef.current.forEach(p => {
+        if (p.id.startsWith('virtual_')) {
+          const matched = [...approvedData, ...pendingData].find(f => f.name === p.name && f.unit === p.unit);
+          if (!matched) mergedMap.set(p.id, p);
         }
-      }
+      });
 
-      const now = Date.now();
-      if (!force && isFetchingRef.current) return;
-      if (!force && cachedProducts.length > 0 && now - lastFetchAtRef.current < 15000) return;
+      // 🌟 精準排序邏輯：讓新送出的商品或待審核商品永遠排在最頂端
+      const sortedProducts = Array.from(mergedMap.values()).sort((a, b) => {
+        // 1. 如果其中一個是 pending（審核中），另一個不是，pending 必須排在最前面
+        if (a.status === 'pending' && b.status !== 'pending') return -1;
+        if (b.status === 'pending' && a.status !== 'pending') return 1;
 
-      isFetchingRef.current = true;
-      lastFetchAtRef.current = now;
-
-      const requests = [
-        fetchProductsByUrl(`${API_URL}/products/`).catch(() => []),
-        fetchProductsByUrl(`${API_URL}/products/pending/`).catch(() => []),
-        fetchProductsByUrl(`${API_URL}/products/rejected/`).catch(() => []),
-      ];
-
-      const results = await Promise.all(requests);
-      const [approvedData, pendingData, rejectedData] = results;
-
-      if (fetchedProducts.length > 0 || cachedProducts.length > 0) {
-        const mergedMap = new Map<string, Product>();
-        cachedProducts.forEach(product => {
-          if (product?.id && !product.id.startsWith('virtual_')) mergedMap.set(product.id, product);
-        });
-
-        // 🛠️ 關鍵修正：順序很重要！讓最終狀態 (Approved/Rejected) 覆蓋中間狀態 (Pending)
-        pendingData.forEach((p: Product) => mergedMap.set(p.id, p));
-        rejectedData.forEach((p: Product) => mergedMap.set(p.id, p));
-        approvedData.forEach((p: Product) => mergedMap.set(p.id, p));
-
-        // ⚠️【終極防重防閃安全防線】
-        // 檢查當前畫面的虛擬物件，如果在後端抓回來的正式列表裡「已經存在相同內容的商品」，就直接略過不加入
-        productsRef.current.forEach(product => {
-          if (product.id.startsWith('virtual_') && !mergedMap.has(product.id)) {
-            const isAlreadyInFetched = fetchedProducts.some(
-              f => f.name === product.name && f.unit === product.unit && f.calories === product.calories
-            );
-            // 只有當後端正式列表還抓不到它時，才保留這個前端虛擬物件
-            if (!isAlreadyInFetched) {
-              mergedMap.set(product.id, product);
-            }
-          }
-        });
-
-        const rawMergedList = Array.from(mergedMap.values());
-
-        // 使用 productsRef 進行狀態比對，防止後端同步延遲導致的狀態回彈
-        const mergedProducts = rawMergedList.map(newItem => {
-          const existing = productsRef.current.find(p => p.id === newItem.id);
-          if (existing && existing.status !== 'pending' && newItem.status === 'pending') {
-            return existing;
-          }
-          return newItem;
-        }).sort((a, b) => {
-          if (a.id.startsWith('virtual_') && !b.id.startsWith('virtual_')) return -1;
-          if (!a.id.startsWith('virtual_') && b.id.startsWith('virtual_')) return 1;
-          if (a.id.startsWith('virtual_') && b.id.startsWith('virtual_')) return Number(b.id.split('_')[1]) - Number(a.id.split('_')[1]);
-          return Number(b.id) - Number(a.id);
-        });
-
-        if (prevPendingIdsRef.current.length > 0) {
-          for (const pId of prevPendingIdsRef.current) {
-            const currentProductState = mergedProducts.find(item => item.id === pId);
-            if (currentProductState && currentProductState.creatorId === savedUserId) {
-              if (currentProductState.status === 'approved') {
-                setActiveTab('audit');
-                setAuditSubTab('approved');
-                break; 
-              } else if (currentProductState.status === 'rejected') {
-                setActiveTab('audit');
-                setAuditSubTab('rejected');
-                break; 
-              }
-            }
-          }
-        }
-
-        const currentPendingIds = mergedProducts
-          .filter(item => item.creatorId === savedUserId && item.status === 'pending')
-          .map(item => item.id);
+        // 2. 如果兩個狀態相同，則比對 ID（處理 virtual_ 時間戳字串與數值 ID，由新排到舊）
+        const idA = a.id.startsWith('virtual_') ? Number(a.id.replace('virtual_', '')) : Number(a.id);
+        const idB = b.id.startsWith('virtual_') ? Number(b.id.replace('virtual_', '')) : Number(b.id);
         
-        prevPendingIdsRef.current = currentPendingIds;
+        return idB - idA;
+      });
 
-        setProducts(mergedProducts);
-        await AsyncStorage.setItem(cacheKey, JSON.stringify(mergedProducts.filter(p => !p.id.startsWith('virtual_'))));
+      const currentJson = JSON.stringify(productsRef.current);
+      const nextJson = JSON.stringify(sortedProducts);
+      
+      if (currentJson !== nextJson) {
+        requestAnimationFrame(() => {
+          setProducts(sortedProducts);
+        });
       }
-    } catch (e: any) {
-      console.error('讀取商品資料失敗:', e);
+    } catch (e) {
+      console.error('刷新發生錯誤:', e);
     } finally {
       isFetchingRef.current = false;
     }
   };
 
+  // 初始化與 WebSocket 機制
   useEffect(() => {
     getCurrentMemberId().then(id => {
       setCurrentUserId(id);
+      loadSavedProducts(true);
     });
 
-    loadSavedProducts(true);
-
-    // 🛠️ 加入 WebSocket 即時監聽功能
-    const connectWebSocket = () => {
-      console.log('使用者端正在建立即時刷新 WebSocket 連線...');
-      const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          // 當接收到管理端審核完成或資料更新的訊號時，立即刷新
-          if (data.type === 'REFRESH_DATA') {
-            console.log('收到即時更新指令，正在刷新商品狀態...');
-            loadSavedProducts(true); 
-          }
-        } catch (err) {
-          console.log('WS 數據解析失敗', err);
-        }
-      };
-
-      ws.onerror = (e) => console.log('WS 發生錯誤:', e);
-      ws.onclose = () => {
-        console.log('WS 連線已中斷，將在 5 秒後自動重新連線...');
-        setTimeout(() => connectWebSocket(), 5000);
-      };
+    const ws = new WebSocket(WS_URL);
+    wsRef.current = ws;
+    ws.onmessage = () => {
+      setTimeout(() => loadSavedProducts(true), 100);
     };
-
-    connectWebSocket();
-
-    const intervalId = setInterval(() => {
-      loadSavedProducts(true);
-    }, 3000); 
 
     return () => {
       if (wsRef.current) wsRef.current.close();
-      clearInterval(intervalId);
     };
-  }, []); 
-
-  useEffect(() => {
-    if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const handleWindowFocus = () => loadSavedProducts(true);
-      window.addEventListener('focus', handleWindowFocus);
-      return () => {
-        window.removeEventListener('focus', handleWindowFocus);
-      };
-    }
   }, []);
 
+  // 🌟 關鍵新增功能：針對「已通過審核」與「未通過審核」分頁，每 3 秒背景定時自動刷新機制
+  useEffect(() => {
+    let intervalId: NodeJS.Timeout | null = null;
+
+    // 只有當使用者切換到「審核紀錄」分頁，且選中「已通過」或「未通過」子標籤時，才開啟計時器
+    if (activeTab === 'audit' && (auditSubTab === 'approved' || auditSubTab === 'rejected')) {
+      intervalId = setInterval(() => {
+        loadSavedProducts(true); 
+      }, 3000);
+    }
+
+    // 當狀態切換或元件卸載時，自動清除計時器，絕不浪費效能與手機電力
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [activeTab, auditSubTab]);
+
   useFocusEffect(
-    useCallback(() => {
-      loadSavedProducts(true);
+    useCallback(() => { 
+      loadSavedProducts(true); 
     }, [])
   );
-
-  const handleTabChange = (tab: 'list' | 'audit') => {
-    setActiveTab(tab);
-    setSearchQuery('');
-    loadSavedProducts(true);
-  };
-
-  const handleSubTabChange = (subTab: 'approved' | 'rejected') => {
-    setAuditSubTab(subTab);
-    setSearchQuery('');
-    loadSavedProducts(true);
-  };
 
   const getFilteredDisplayProducts = () => {
     let baseList: Product[] = [];
 
     if (activeTab === 'list') {
-      baseList = products.filter(item => {
-        if (item.status === 'approved') return true;
-        if (item.status === 'pending' && item.creatorId === currentUserId) return true;
-        return false; 
-      });
+      baseList = products.filter(item => item.status === 'approved');
     } else {
-      if (auditSubTab === 'approved') {
-        baseList = products.filter(item => item.creatorId === currentUserId && item.status === 'approved');
+      if (auditSubTab === 'pending') {
+        baseList = products.filter(item => item.status === 'pending' && item.creatorId === currentUserId);
+      } else if (auditSubTab === 'approved') {
+        baseList = products.filter(item => item.status === 'approved' && item.creatorId === currentUserId);
       } else {
-        baseList = products.filter(item => item.creatorId === currentUserId && item.status === 'rejected');
+        baseList = products.filter(item => item.status === 'rejected' && item.creatorId === currentUserId);
       }
     }
 
     if (searchQuery.trim() !== '') {
       baseList = baseList.filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()));
     }
-
     return baseList;
   };
 
-  const handleAmountChange = (text: string) => {
-    setNewProductAmount(text.replace(/[^0-9]/g, ''));
-  };
-
-  const handleCalorieChange = (text: string) => {
-    setNewProductCalorie(text.replace(/[^0-9]/g, ''));
-  };
-
-  const [customAlert, setCustomAlert] = useState<{
-    visible: boolean; title: string; message: string; onConfirm: () => void; cancelText?: string; confirmText?: string;
+  const [customAlert, setCustomAlert] = useState<{ 
+    visible: boolean; 
+    title: string; 
+    message: string; 
+    onConfirm: () => void; 
+    confirmText?: string;
+    showCancel?: boolean;
+    onCancel?: () => void;
   }>({ visible: false, title: '', message: '', onConfirm: () => {} });
 
-  const showCustomAlert = (title: string, message: string, onConfirm: () => void, cancelText = txt.btnCancel, confirmText = txt.btnConfirm) => {
-    setCustomAlert({ visible: true, title, message, onConfirm, cancelText, confirmText });
-  };
-
-  const openAddModal = () => {
-    setNewProductName(''); setNewProductAmount(''); setUnitType('g'); setNewProductCalorie('');
-    setIsModalVisible(true);
+  const clearForm = () => {
+    setNewProductName('');
+    setNewProductAmount('');
+    setUnitType('g');
+    setNewProductCalorie('');
   };
 
   const handleCancelAdd = () => {
-    if (!newProductName.trim() && !newProductAmount.trim() && !newProductCalorie.trim()) {
-      setIsModalVisible(false);
+    if (newProductName.trim() || newProductAmount.trim() || newProductCalorie.trim()) {
+      setCustomAlert({
+        visible: true,
+        title: '取消新增',
+        message: '您輸入的資料尚未儲存，確定要放棄並關閉視窗嗎？',
+        confirmText: '確定放棄',
+        showCancel: true,
+        onConfirm: () => {
+          clearForm();
+          setIsModalVisible(false);
+        },
+        onCancel: () => {}
+      });
     } else {
-      showCustomAlert(txt.cancelAddAlertTitle, '', () => { setIsModalVisible(false); }, txt.btnNo, txt.btnYes);
+      clearForm();
+      setIsModalVisible(false);
     }
   };
 
   const handleConfirmAdd = async () => {
     if (!newProductName.trim() || !newProductAmount.trim() || !newProductCalorie.trim()) {
-      showCustomAlert(txt.alertWarningTitle, txt.alertMissingFields, () => {}, '', txt.btnConfirm);
-      return;
-    }
-
-    const calorieNum = parseInt(newProductCalorie, 10);
-    if (isNaN(calorieNum)) {
-      showCustomAlert(txt.alertWarningTitle, txt.alertInvalidCalorie, () => {}, '', txt.btnConfirm);
+      setCustomAlert({ 
+        visible: true, 
+        title: txt.alertWarningTitle, 
+        message: txt.alertMissingFields, 
+        onConfirm: () => {}, 
+        confirmText: txt.btnConfirm,
+        showCancel: false 
+      });
       return;
     }
 
     const formattedUnit = `${newProductAmount}${unitType === 'g' ? '克' : 'ml'}`;
     const savedUserId = await getCurrentMemberId();
 
-    if (savedUserId === 'guest') {
-      showCustomAlert('新增失敗', '找不到登入會員 ID，請重新登入後再試一次。', () => {}, '', txt.btnConfirm);
-      return;
-    }
-
-    setSubmittedInfo({
-      name: newProductName.trim(),
-      unit: formattedUnit
-    });
-
+    // 🌟 產生的虛擬 ID 格式如 virtual_1716900000000，排序時能精確轉回數字排列在頂端
     const virtualId = `virtual_${Date.now()}`;
     const virtualProduct: Product = {
       id: virtualId,
       name: newProductName.trim(),
       unit: formattedUnit,
-      calories: calorieNum,
+      calories: parseInt(newProductCalorie, 10),
       status: 'pending',
       creatorId: savedUserId,
     };
 
-    // ⚡ 0.1 秒極速上架虛擬物件
-    setProducts(prevProducts => [virtualProduct, ...prevProducts]);
+    setProducts(prev => [virtualProduct, ...prev]);
     setIsModalVisible(false);
     
-    showCustomAlert(
-      txt.alertSubmitSuccessTitle, 
-      `商品「${newProductName.trim()} / ${formattedUnit}」已成功提交！${txt.alertSubmitSuccessMessage}`, 
-      () => {}, 
-      '', 
-      txt.btnConfirm
-    );
+    setActiveTab('audit');
+    setAuditSubTab('pending');
+
+    setCustomAlert({
+      visible: true,
+      title: txt.alertSubmitSuccessTitle,
+      message: `商品「${newProductName.trim()} / ${formattedUnit}」${txt.alertSubmitSuccessMessage}`,
+      onConfirm: () => {},
+      confirmText: txt.btnConfirm,
+      showCancel: false
+    });
+
+    clearForm();
 
     try {
-      const response = await fetch(`${API_URL}/products/add/`, {
+      await fetch(`${API_URL}/products/add/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: newProductName.trim(),
           unit: formattedUnit,
-          calories: calorieNum,
+          calories: parseInt(newProductCalorie, 10),
           member: Number(savedUserId),
         }),
       });
-
-      const data = await parseApiResponse(response);
-      
-      if (response.ok && data && data.id) {
-        const realProduct = mapProductFromApi(data);
-        // ⚡ 直接用正式物件覆蓋該虛擬物件，防止重複與閃爍
-        setProducts(prevProducts => 
-          prevProducts.map(item => item.id === virtualId ? realProduct : item)
-        );
-      } else {
-        await loadSavedProducts(true);
-      }
-    } catch (e) {
-      console.log('新增商品要求失敗', e);
-      setProducts(prevProducts => prevProducts.filter(item => item.id !== virtualId));
+      loadSavedProducts(true);
+    } catch {
+      setProducts(prev => prev.filter(item => item.id !== virtualId));
     }
   };
 
@@ -516,179 +373,110 @@ export default function ProductsScreen() {
           <View style={styles.cardHeader}>
             <View style={styles.titleTabRow}>
               <Text style={styles.pageTitle}>{txt.pageTitle}</Text>
-              
-              <TouchableOpacity 
-                style={[styles.mainTabButton, activeTab === 'list' && styles.mainTabButtonActive]}
-                onPress={() => handleTabChange('list')}
-              >
-                <Text style={[styles.mainTabLabel, activeTab === 'list' && styles.mainTabLabelActive]}>
-                  {txt.tabProductList}
-                </Text>
+              <TouchableOpacity style={[styles.mainTabButton, activeTab === 'list' && styles.mainTabButtonActive]} onPress={() => { setActiveTab('list'); setSearchQuery(''); }}>
+                <Text style={[styles.mainTabLabel, activeTab === 'list' && styles.mainTabLabelActive]}>{txt.tabProductList}</Text>
               </TouchableOpacity>
-
-              <TouchableOpacity 
-                style={[styles.mainTabButton, activeTab === 'audit' && styles.mainTabButtonActive]}
-                onPress={() => handleTabChange('audit')}
-              >
-                <Text style={[styles.mainTabLabel, activeTab === 'audit' && styles.mainTabLabelActive]}>
-                  {txt.tabAuditHistory}
-                </Text>
+              <TouchableOpacity style={[styles.mainTabButton, activeTab === 'audit' && styles.mainTabButtonActive]} onPress={() => { setActiveTab('audit'); setAuditSubTab('pending'); setSearchQuery(''); }}>
+                <Text style={[styles.mainTabLabel, activeTab === 'audit' && styles.mainTabLabelActive]}>{txt.tabAuditHistory}</Text>
               </TouchableOpacity>
             </View>
-
-            {activeTab === 'list' && (
-              <TouchableOpacity onPress={openAddModal}>
-                <Text style={styles.addText}>{txt.addButtonText}</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity onPress={() => setIsModalVisible(true)}><Text style={styles.addText}>{txt.addButtonText}</Text></TouchableOpacity>
           </View>
 
           {activeTab === 'audit' && (
             <View style={styles.subTabToggleContainer}>
-              <TouchableOpacity 
-                style={[styles.subTabItem, auditSubTab === 'approved' && styles.subTabItemActive]}
-                onPress={() => handleSubTabChange('approved')}
-              >
-                <Text style={[styles.subTabLinkText, auditSubTab === 'approved' && styles.subTabLinkTextActive]}>
-                  {txt.subTabApproved}
-                </Text>
+              <TouchableOpacity style={[styles.subTabItem, auditSubTab === 'pending' && styles.subTabItemActive]} onPress={() => setAuditSubTab('pending')}>
+                <Text style={[styles.subTabLinkText, auditSubTab === 'pending' && styles.subTabLinkTextActive]}>{txt.subTabPending}</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={[styles.subTabItem, auditSubTab === 'rejected' && styles.subTabItemActive]}
-                onPress={() => handleSubTabChange('rejected')}
-              >
-                <Text style={[styles.subTabLinkText, auditSubTab === 'rejected' && styles.subTabLinkTextActive]}>
-                  {txt.subTabRejected}
-                </Text>
+              <TouchableOpacity style={[styles.subTabItem, auditSubTab === 'approved' && styles.subTabItemActive]} onPress={() => setAuditSubTab('approved')}>
+                <Text style={[styles.subTabLinkText, auditSubTab === 'approved' && styles.subTabLinkTextActive]}>{txt.subTabApproved}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.subTabItem, auditSubTab === 'rejected' && styles.subTabItemActive]} onPress={() => setAuditSubTab('rejected')}>
+                <Text style={[styles.subTabLinkText, auditSubTab === 'rejected' && styles.subTabLinkTextActive]}>{txt.subTabRejected}</Text>
               </TouchableOpacity>
             </View>
           )}
 
           <View style={styles.searchRowContainer}>
             <View style={styles.searchBoxWrapper}>
-              <TextInput 
-                style={styles.searchInput}
-                placeholder={txt.searchPlaceholder}
-                placeholderTextColor="#999"
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-              />
+              <TextInput style={styles.searchInput} placeholder={txt.searchPlaceholder} placeholderTextColor="#999" value={searchQuery} onChangeText={setSearchQuery} />
             </View>
-            {searchQuery.length > 0 && (
-              <TouchableOpacity style={styles.searchCancelButton} onPress={() => setSearchQuery('')}>
-                <Text style={styles.searchCancelText}>{txt.searchCancel}</Text>
-              </TouchableOpacity>
-            )}
           </View>
 
           <Text style={styles.recentText}>{txt.recentSearchLabel}</Text>
 
           <View style={styles.listContainer}>
-            <ScrollView showsVerticalScrollIndicator={true} contentContainerStyle={styles.scrollListContent}>
-              {displayProducts.map((item) => {
-                const isMyOwnProduct = item.creatorId === currentUserId;
-
-                return (
-                  <View key={item.id} style={styles.productRow}>
-                    <View style={styles.nameAndStatusWrapper}>
-                      <Text style={styles.productName} numberOfLines={1}>
-                        {formatDisplayInfo(item.name, item.unit)}
-                        {activeTab === 'list' && isMyOwnProduct && item.status === 'pending' && (
-                          <Text style={styles.pendingStatusTag}>{txt.statusPending}</Text>
-                        )}
-                      </Text>
-                    </View>
-                    
-                    <Text style={styles.productCalorie}>
-                      {txt.calorieLabelPrefix}{item.calories}{txt.calorieLabelSuffix}
+            <ScrollView showsVerticalScrollIndicator={true}>
+              {displayProducts.map((item) => (
+                <View key={item.id} style={styles.productRow}>
+                  <View style={styles.nameAndStatusWrapper}>
+                    <Text style={styles.productName} numberOfLines={1}>
+                      {formatDisplayInfo(item.name, item.unit)}
+                      {auditSubTab === 'pending' && item.status === 'pending' && (
+                        <Text style={styles.pendingStatusTag}>{txt.statusPending}</Text>
+                      )}
                     </Text>
                   </View>
-                );
-              })}
-              {displayProducts.length === 0 && (
-                <Text style={styles.emptyText}>{txt.emptyResultText}</Text>
-              )}
+                  <Text style={styles.productCalorie}>{txt.calorieLabelPrefix}{item.calories}{txt.calorieLabelSuffix}</Text>
+                </View>
+              ))}
+              {displayProducts.length === 0 && <Text style={styles.emptyText}>{txt.emptyResultText}</Text>}
             </ScrollView>
           </View>
 
         </View>
       </View>
 
+      {/* 新增商品彈窗 */}
       <Modal animationType="fade" transparent={true} visible={isModalVisible} onRequestClose={handleCancelAdd}>
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPressOut={handleCancelAdd}>
           <TouchableOpacity activeOpacity={1} style={styles.squareModalContent}>
             <Text style={styles.orangeModalTitle}>{txt.modalTitle}</Text>
-            
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>{txt.labelName}</Text>
-              <TextInput
-                style={styles.underlineInput} value={newProductName} onChangeText={setNewProductName}
-                placeholder={txt.namePlaceholder} placeholderTextColor="#A9A9A9" autoFocus={true}
-                returnKeyType="next" blurOnSubmit={false} onSubmitEditing={() => amountInputRef.current?.focus()} 
-              />
+              <TextInput style={styles.underlineInput} value={newProductName} onChangeText={setNewProductName} placeholder={txt.namePlaceholder} placeholderTextColor="#A9A9A9" autoFocus={true} returnKeyType="next" onSubmitEditing={() => amountInputRef.current?.focus()} />
             </View>
-
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>{txt.labelUnit}</Text>
               <View style={styles.unitRowFlexContainer}>
-                <TextInput
-                  ref={amountInputRef} style={[styles.underlineInput, styles.amountInputInput]}
-                  value={newProductAmount} onChangeText={handleAmountChange} keyboardType="numeric"
-                  placeholder={txt.amountPlaceholder} placeholderTextColor="#A9A9A9" returnKeyType="next"
-                  blurOnSubmit={false} onSubmitEditing={() => calorieInputRef.current?.focus()} 
-                />
+                <TextInput ref={amountInputRef} style={[styles.underlineInput, styles.amountInputInput]} value={newProductAmount} onChangeText={t => setNewProductAmount(t.replace(/[^0-9]/g, ''))} keyboardType="numeric" placeholder={txt.amountPlaceholder} placeholderTextColor="#A9A9A9" returnKeyType="next" onSubmitEditing={() => calorieInputRef.current?.focus()} />
                 <View style={styles.capsuleToggleGroup}>
-                  <TouchableOpacity activeOpacity={0.8} style={[styles.capsuleItem, unitType === 'g' && styles.capsuleItemActive]} onPress={() => setUnitType('g')}>
-                    <Text style={[styles.capsuleText, unitType === 'g' && styles.capsuleTextActive]}>克</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity activeOpacity={0.8} style={[styles.capsuleItem, unitType === 'ml' && styles.capsuleItemActive]} onPress={() => setUnitType('ml')}>
-                    <Text style={[styles.capsuleText, unitType === 'ml' && styles.capsuleTextActive]}>ml</Text>
-                  </TouchableOpacity>
+                  <TouchableOpacity style={[styles.capsuleItem, unitType === 'g' && styles.capsuleItemActive]} onPress={() => setUnitType('g')}><Text style={[styles.capsuleText, unitType === 'g' && styles.capsuleTextActive]}>克</Text></TouchableOpacity>
+                  <TouchableOpacity style={[styles.capsuleItem, unitType === 'ml' && styles.capsuleItemActive]} onPress={() => setUnitType('ml')}><Text style={[styles.capsuleText, unitType === 'ml' && styles.capsuleTextActive]}>ml</Text></TouchableOpacity>
                 </View>
               </View>
             </View>
-
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>{txt.labelCalorie}</Text>
-              <TextInput
-                ref={calorieInputRef} style={styles.underlineInput} value={newProductCalorie}
-                onChangeText={handleCalorieChange} keyboardType="numeric" placeholder={txt.caloriePlaceholder}
-                placeholderTextColor="#A9A9A9" returnKeyType="done" onSubmitEditing={handleConfirmAdd} 
-              />
+              <TextInput ref={calorieInputRef} style={styles.underlineInput} value={newProductCalorie} onChangeText={t => setNewProductCalorie(t.replace(/[^0-9]/g, ''))} keyboardType="numeric" placeholder={txt.caloriePlaceholder} placeholderTextColor="#A9A9A9" returnKeyType="done" onSubmitEditing={handleConfirmAdd} />
             </View>
-
             <View style={styles.orangeRowButtonGroup}>
-              <TouchableOpacity style={styles.orangeCancelBtn} onPress={handleCancelAdd}>
-                <Text style={styles.orangeCancelBtnText}>{txt.modalCancel}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.orangeConfirmBtn} onPress={handleConfirmAdd}>
-                <Text style={styles.orangeConfirmBtnText}>{txt.modalConfirm}</Text>
-              </TouchableOpacity>
+              <TouchableOpacity style={styles.orangeCancelBtn} onPress={handleCancelAdd}><Text style={styles.orangeCancelBtnText}>{txt.modalCancel}</Text></TouchableOpacity>
+              <TouchableOpacity style={styles.orangeConfirmBtn} onPress={handleConfirmAdd}><Text style={styles.orangeConfirmBtnText}>{txt.modalConfirm}</Text></TouchableOpacity>
             </View>
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
 
+      {/* 提示 Alert 彈窗 */}
       <Modal animationType="fade" transparent={true} visible={customAlert.visible} onRequestClose={() => setCustomAlert(prev => ({ ...prev, visible: false }))}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
             <Text style={styles.alertTitle}>{customAlert.title}</Text>
             {customAlert.message ? <Text style={styles.alertMessage}>{customAlert.message}</Text> : null}
             <View style={styles.modalButtonGroup}>
-              {customAlert.cancelText && (
-                <TouchableOpacity style={[styles.modalBtn, styles.modalBtnCancel]} onPress={() => setCustomAlert(prev => ({ ...prev, visible: false }))}>
-                  <Text style={styles.modalBtnCancelText}>{customAlert.cancelText}</Text>
+              {customAlert.showCancel && (
+                <TouchableOpacity style={[styles.modalBtn, styles.grayAlertBtn, { marginRight: 15 }]} onPress={() => { setCustomAlert(prev => ({ ...prev, visible: false })); if(customAlert.onCancel) customAlert.onCancel(); }}>
+                  <Text style={styles.modalBtnCancelText}>繼續輸入</Text>
                 </TouchableOpacity>
               )}
-              <TouchableOpacity style={[styles.modalBtn, styles.orangeAlertBtn]} onPress={() => { customAlert.onConfirm(); setCustomAlert(prev => ({ ...prev, visible: false })); }}>
-                <Text style={styles.modalBtnConfirmText}>{customAlert.confirmText}</Text>
+              <TouchableOpacity style={[styles.modalBtn, styles.orangeAlertBtn]} onPress={() => { setCustomAlert(prev => ({ ...prev, visible: false })); customAlert.onConfirm(); }}>
+                <Text style={styles.modalBtnConfirmText}>{customAlert.confirmText || txt.btnConfirm}</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
-
     </SafeAreaView>
   );
 }
@@ -696,12 +484,8 @@ export default function ProductsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F6EFE5' },
   mainContent: { flex: 1, paddingHorizontal: 80, paddingTop: 30, paddingBottom: 20 },
-  cardContainer: {
-    flex: 1, backgroundColor: '#FFF', borderRadius: 30, paddingHorizontal: 40, paddingTop: 35, paddingBottom: 15,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 10, elevation: 5,
-  },
+  cardContainer: { flex: 1, backgroundColor: '#FFF', borderRadius: 30, paddingHorizontal: 40, paddingTop: 35, paddingBottom: 15, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.05, shadowRadius: 10, elevation: 5 },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 5, alignItems: 'center', marginBottom: 15 },
-  
   titleTabRow: { flexDirection: 'row', alignItems: 'center' },
   pageTitle: { fontSize: 28, fontWeight: 'bold', color: '#333', letterSpacing: 2, marginRight: 30 },
   mainTabButton: { paddingVertical: 6, paddingHorizontal: 16, borderRadius: 20, marginRight: 10 },
@@ -709,46 +493,28 @@ const styles = StyleSheet.create({
   mainTabLabel: { fontSize: 16, color: '#666', fontWeight: '600' },
   mainTabLabelActive: { color: '#FFF' },
   addText: { fontSize: 16, color: '#4A90E2', fontWeight: 'bold' },
-
   subTabToggleContainer: { flexDirection: 'row', marginBottom: 20, borderBottomWidth: 1, borderBottomColor: '#E0E0E0', paddingBottom: 5 },
   subTabItem: { paddingVertical: 8, paddingHorizontal: 20, marginRight: 15, borderBottomWidth: 3, borderBottomColor: 'transparent' },
   subTabItemActive: { borderBottomColor: '#FFAA77' },
   subTabLinkText: { fontSize: 15, color: '#888', fontWeight: '500' },
   subTabLinkTextActive: { color: '#FFAA77', fontWeight: 'bold' },
-  
   searchRowContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 15, width: '100%' },
-  searchBoxWrapper: { flex: 1, backgroundColor: '#EBEBEB', borderRadius: 25, paddingHorizontal: 20, height: 46, justifyContent: 'center', overflow: 'hidden' },
-  searchInput: { 
-    fontSize: 15,
-    color: '#333',
-    width: '100%',
-    height: '100%',
-    paddingVertical: 0,
-    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}),
-  },
-  searchCancelButton: { paddingLeft: 15, paddingVertical: 10, justifyContent: 'center' },
-  searchCancelText: { fontSize: 16, color: '#666', fontWeight: '500' },
+  searchBoxWrapper: { flex: 1, backgroundColor: '#EBEBEB', borderRadius: 25, paddingHorizontal: 20, height: 46, justifyContent: 'center' },
+  searchInput: { fontSize: 15, color: '#333', width: '100%', height: '100%', ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}) },
   recentText: { fontSize: 14, color: '#A0A0A0', marginBottom: 15, paddingLeft: 5, letterSpacing: 1 },
-  
   listContainer: { flex: 1, width: '100%' },
-  scrollListContent: { paddingBottom: 10 },
   productRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#F0F0F0', paddingVertical: 20, paddingHorizontal: 5 },
   nameAndStatusWrapper: { flex: 2, justifyContent: 'center' },
   productName: { fontSize: 16, color: '#333', fontWeight: '500' },
-  pendingStatusTag: { fontSize: 14, color: '#E67E22', fontWeight: '500' }, 
-
+  pendingStatusTag: { fontSize: 14, color: '#E67E22', fontWeight: 'bold' },
   productCalorie: { flex: 1.5, fontSize: 15, color: '#888', textAlign: 'right', paddingRight: 10 },
-
   emptyText: { textAlign: 'center', color: '#999', marginTop: 30, fontSize: 15 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
-  squareModalContent: { 
-    backgroundColor: '#FFDDBB', width: 440, height: 440, paddingHorizontal: 40, justifyContent: 'center', borderRadius: 24, 
-    shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.12, shadowRadius: 12, elevation: 8 
-  },
+  squareModalContent: { backgroundColor: '#FFDDBB', width: 440, height: 440, paddingHorizontal: 40, justifyContent: 'center', borderRadius: 24 },
   orangeModalTitle: { fontSize: 26, fontWeight: 'bold', color: '#000', letterSpacing: 3, textAlign: 'center', marginBottom: 25 },
   inputGroup: { marginBottom: 20, width: '100%' },
   inputLabel: { fontSize: 16, fontWeight: '600', color: '#000', marginBottom: 5 },
-  underlineInput: { borderBottomWidth: 1, borderBottomColor: '#666', fontSize: 15, color: '#333', height: 35, paddingVertical: 0, paddingHorizontal: 2, width: '100%' },
+  underlineInput: { borderBottomWidth: 1, borderBottomColor: '#666', fontSize: 15, color: '#333', height: 35, width: '100%' },
   unitRowFlexContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', width: '100%' },
   amountInputInput: { flex: 1, marginRight: 25 },
   capsuleToggleGroup: { flexDirection: 'row', borderWidth: 1.5, borderColor: '#9EBAA4', borderRadius: 8, overflow: 'hidden', height: 34, width: 105, backgroundColor: '#FFF' },
@@ -757,17 +523,17 @@ const styles = StyleSheet.create({
   capsuleText: { fontSize: 14, color: '#95B09B', fontWeight: '700' },
   capsuleTextActive: { color: '#FFF' },
   orangeRowButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 25, paddingHorizontal: 10 },
-  orangeCancelBtn: { backgroundColor: '#EAEAEA', borderWidth: 1.5, borderColor: '#000', width: '45%', height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 3, elevation: 2 },
+  orangeCancelBtn: { backgroundColor: '#EAEAEA', borderWidth: 1.5, borderColor: '#000', width: '45%', height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
   orangeCancelBtnText: { color: '#000', fontSize: 18, fontWeight: 'bold', letterSpacing: 2 },
-  orangeConfirmBtn: { backgroundColor: '#FFAA77', borderWidth: 1.5, borderColor: '#000', width: '45%', height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 3, elevation: 3 },
+  orangeConfirmBtn: { backgroundColor: '#FFAA77', borderWidth: 1.5, borderColor: '#000', width: '45%', height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' },
   orangeConfirmBtnText: { color: '#000', fontSize: 18, fontWeight: 'bold', letterSpacing: 2 },
-  alertContent: { backgroundColor: '#FFF', width: 380, padding: 25, borderRadius: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 10, elevation: 10 },
+  alertContent: { backgroundColor: '#FFF', width: 380, padding: 25, borderRadius: 20 },
   alertTitle: { fontSize: 19, fontWeight: 'bold', color: '#333', marginBottom: 12, textAlign: 'center' },
   alertMessage: { fontSize: 14, color: '#666', lineHeight: 20, marginBottom: 20, textAlign: 'center' },
-  modalButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
-  modalBtn: { flex: 1, height: 45, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginHorizontal: 5 },
-  modalBtnCancel: { backgroundColor: '#F5F5F5' },
-  modalBtnCancelText: { color: '#666', fontSize: 15, fontWeight: '500' },
-  orangeAlertBtn: { backgroundColor: '#FFAA77' }, 
-  modalBtnConfirmText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' }
+  modalButtonGroup: { flexDirection: 'row', justifyContent: 'center', marginTop: 10 },
+  modalBtn: { paddingHorizontal: 30, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+  orangeAlertBtn: { backgroundColor: '#FFAA77' },
+  grayAlertBtn: { backgroundColor: '#E0E0E0' },
+  modalBtnConfirmText: { color: '#000', fontSize: 16, fontWeight: 'bold' },
+  modalBtnCancelText: { color: '#666', fontSize: 16, fontWeight: 'bold' }
 });
