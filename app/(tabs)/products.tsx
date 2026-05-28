@@ -61,6 +61,7 @@ const pageLanguageConfig = {
   calorieLabelPrefix: '熱量（',
   calorieLabelSuffix: ' 大卡）',
   emptyResultText: '找不到相關商品（請確認後台是否有審核通過的資料）',
+  loadingText: '載入中，請稍後', 
   
   alertWarningTitle: '提示',
   alertMissingFields: '請填寫完整的商品名稱、單位與熱量！',
@@ -93,7 +94,9 @@ export default function ProductsScreen() {
   const [currentUserId, setCurrentUserId] = useState(''); 
   const wsRef = useRef<WebSocket | null>(null);
   
-  // 建立各個端點快取，避免分頁切換時因為等待請求而出現短暫空白
+  // 🌟 新增全域載入狀態控制旗標，初始預設為 true
+  const [isLoading, setIsLoading] = useState(true);
+
   const cacheMapRef = useRef<Map<string, Product[]>>(new Map());
   const isFetchingRef = useRef(false);
   const productsRef = useRef<Product[]>([]);
@@ -145,18 +148,16 @@ export default function ProductsScreen() {
       const data = await parseApiResponse(response);
       if (Array.isArray(data)) {
         const mapped = data.map(mapProductFromApi);
-        cacheMapRef.current.set(url, mapped); // 更新本端點的極速記憶快取
+        cacheMapRef.current.set(url, mapped); 
         return mapped;
       }
       return [];
     } catch (e) {
       console.error(`連線失敗網址: ${url}`, e);
-      // 網路斷線或失敗時，優先拿上次快取的舊資料擋著，畫面絕對不卡住
       return cacheMapRef.current.get(url) || [];
     }
   };
 
-  // 🌟 極速核心：只更新目前分頁對應的後端端點
   const loadSavedProducts = async (force = false) => {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
@@ -165,7 +166,6 @@ export default function ProductsScreen() {
       const savedUserId = await getCurrentMemberId();
       if (currentUserId !== savedUserId) setCurrentUserId(savedUserId);
 
-      // 精準判定當前只需要抓取哪一個端點
       let targetUrl = `${API_URL}/products/`;
       if (activeTabRef.current === 'audit') {
         if (auditSubTabRef.current === 'pending') {
@@ -175,20 +175,15 @@ export default function ProductsScreen() {
         }
       }
 
-      // 非同步只抓取一個 API
       const fetchedData = await fetchProductsByUrl(targetUrl);
 
-      // 把其他存在快取裡的分頁資料與最新抓到的資料全部融合成一個 Map
       const mergedMap = new Map<string, Product>();
       
-      // 先灌入所有快取的歷史資料
       cacheMapRef.current.forEach((productList) => {
         productList.forEach(p => mergedMap.set(p.id, p));
       });
-      // 覆蓋上最新抓取的即時資料
       fetchedData.forEach(p => mergedMap.set(p.id, p));
 
-      // 保留本地建立的虛擬預覽物件（預防送出審核時的短暫閃爍）
       productsRef.current.forEach(p => {
         if (p.id.startsWith('virtual_')) {
           const matched = Array.from(mergedMap.values()).find(f => f.name === p.name && f.unit === p.unit);
@@ -196,7 +191,6 @@ export default function ProductsScreen() {
         }
       });
 
-      // 進行高效 O(N log N) 指針排序
       const sortedProducts = Array.from(mergedMap.values()).sort((a, b) => {
         if (a.status === 'pending' && b.status !== 'pending') return -1;
         if (b.status === 'pending' && a.status !== 'pending') return 1;
@@ -206,7 +200,6 @@ export default function ProductsScreen() {
         return idB - idA;
       });
 
-      // 比對資料是否有實質變化，無變化則不觸發 React 重新渲染
       if (JSON.stringify(productsRef.current) !== JSON.stringify(sortedProducts)) {
         requestAnimationFrame(() => {
           setProducts(sortedProducts);
@@ -216,6 +209,7 @@ export default function ProductsScreen() {
       console.error('刷新發生錯誤:', e);
     } finally {
       isFetchingRef.current = false;
+      setIsLoading(false); // 🌟 當前 API 載入完畢，關閉載入狀態
     }
   };
 
@@ -237,7 +231,7 @@ export default function ProductsScreen() {
     };
   }, []);
 
-  // 🌟 全域高頻 1 秒自動背景同步計時器
+  // 全域高頻 1 秒自動背景同步計時器
   useEffect(() => {
     const intervalId = setInterval(() => {
       loadSavedProducts(true); 
@@ -246,8 +240,11 @@ export default function ProductsScreen() {
     return () => clearInterval(intervalId);
   }, []); 
 
-  // 當使用者「按分頁」時，0 毫秒瞬間切換，並順便發動一次背景靜默更新
+  // 當使用者「按分頁」時切換
   const handleTabChange = (tab: 'list' | 'audit', subTab?: 'pending' | 'approved' | 'rejected') => {
+    // 🌟 切換分頁時立即把載入狀態拉回 true，避免顯示上一頁留下來的空資料文字
+    setIsLoading(true); 
+
     requestAnimationFrame(() => {
       if (tab === 'list') {
         setActiveTab('list');
@@ -257,7 +254,6 @@ export default function ProductsScreen() {
       }
       setSearchQuery('');
       
-      // 用微型延遲確保 React 狀態已寫入 Ref 後立即執行更新
       setTimeout(() => {
         loadSavedProducts(true);
       }, 0);
@@ -266,6 +262,7 @@ export default function ProductsScreen() {
 
   useFocusEffect(
     useCallback(() => { 
+      setIsLoading(true); // 🌟 頁面 Focus 進來時也先進入載入狀態
       loadSavedProducts(true); 
     }, [])
   );
@@ -357,7 +354,6 @@ export default function ProductsScreen() {
     setProducts(prev => [virtualProduct, ...prev]);
     setIsModalVisible(false);
     
-    // 送出成功時使用全新極速切換機制
     handleTabChange('audit', 'pending');
 
     setCustomAlert({
@@ -445,7 +441,15 @@ export default function ProductsScreen() {
                   <Text style={styles.productCalorie}>{txt.calorieLabelPrefix}{item.calories}{txt.calorieLabelSuffix}</Text>
                 </View>
               ))}
-              {displayProducts.length === 0 && <Text style={styles.emptyText}>{txt.emptyResultText}</Text>}
+              
+              {/* 🌟 核心修改邏輯：區分載入中與真正無資料 */}
+              {displayProducts.length === 0 && (
+                isLoading ? (
+                  <Text style={styles.loadingText}>{txt.loadingText}</Text>
+                ) : (
+                  <Text style={styles.emptyText}>{txt.emptyResultText}</Text>
+                )
+              )}
             </ScrollView>
           </View>
 
@@ -534,6 +538,7 @@ const styles = StyleSheet.create({
   pendingStatusTag: { fontSize: 14, color: '#E67E22', fontWeight: 'bold' },
   productCalorie: { flex: 1.5, fontSize: 15, color: '#888', textAlign: 'right', paddingRight: 10 },
   emptyText: { textAlign: 'center', color: '#999', marginTop: 30, fontSize: 15 },
+  loadingText: { textAlign: 'center', color: '#95B09B', marginTop: 30, fontSize: 15, fontWeight: '500' }, // 🌟 載入中文字樣式
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
   squareModalContent: { backgroundColor: '#FFDDBB', width: 440, height: 440, paddingHorizontal: 40, justifyContent: 'center', borderRadius: 24 },
   orangeModalTitle: { fontSize: 26, fontWeight: 'bold', color: '#000', letterSpacing: 3, textAlign: 'center', marginBottom: 25 },
