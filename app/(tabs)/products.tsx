@@ -57,7 +57,7 @@ const pageLanguageConfig = {
   addButtonText: '+ 新 增',
   searchPlaceholder: '🔍   輸 入 商 品 名 稱',
   searchCancel: '取 消',
-  recentSearchLabel: '近 期 資 料', 
+  recentSearchLabel: '近 期 資 資料', 
   calorieLabelPrefix: '熱量（',
   calorieLabelSuffix: ' 大卡）',
   emptyResultText: '找不到相關商品（請確認後台是否有審核通過的資料）',
@@ -93,11 +93,17 @@ export default function ProductsScreen() {
   const [currentUserId, setCurrentUserId] = useState(''); 
   const wsRef = useRef<WebSocket | null>(null);
   
+  // 建立各個端點快取，避免分頁切換時因為等待請求而出現短暫空白
+  const cacheMapRef = useRef<Map<string, Product[]>>(new Map());
   const isFetchingRef = useRef(false);
   const productsRef = useRef<Product[]>([]);
-  useEffect(() => {
-    productsRef.current = products;
-  }, [products]);
+  
+  const activeTabRef = useRef(activeTab);
+  const auditSubTabRef = useRef(auditSubTab);
+
+  useEffect(() => { productsRef.current = products; }, [products]);
+  useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  useEffect(() => { auditSubTabRef.current = auditSubTab; }, [auditSubTab]);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [newProductName, setNewProductName] = useState('');
@@ -138,15 +144,19 @@ export default function ProductsScreen() {
       const response = await fetch(url);
       const data = await parseApiResponse(response);
       if (Array.isArray(data)) {
-        return data.map(mapProductFromApi);
+        const mapped = data.map(mapProductFromApi);
+        cacheMapRef.current.set(url, mapped); // 更新本端點的極速記憶快取
+        return mapped;
       }
       return [];
     } catch (e) {
       console.error(`連線失敗網址: ${url}`, e);
-      return [];
+      // 網路斷線或失敗時，優先拿上次快取的舊資料擋著，畫面絕對不卡住
+      return cacheMapRef.current.get(url) || [];
     }
   };
 
+  // 🌟 極速核心：只更新目前分頁對應的後端端點
   const loadSavedProducts = async (force = false) => {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
@@ -155,41 +165,49 @@ export default function ProductsScreen() {
       const savedUserId = await getCurrentMemberId();
       if (currentUserId !== savedUserId) setCurrentUserId(savedUserId);
 
-      const [approvedData, pendingData, rejectedData] = await Promise.all([
-        fetchProductsByUrl(`${API_URL}/products/`),
-        fetchProductsByUrl(`${API_URL}/products/pending/`),
-        fetchProductsByUrl(`${API_URL}/products/rejected/`),
-      ]);
+      // 精準判定當前只需要抓取哪一個端點
+      let targetUrl = `${API_URL}/products/`;
+      if (activeTabRef.current === 'audit') {
+        if (auditSubTabRef.current === 'pending') {
+          targetUrl = `${API_URL}/products/pending/`;
+        } else if (auditSubTabRef.current === 'rejected') {
+          targetUrl = `${API_URL}/products/rejected/`;
+        }
+      }
 
+      // 非同步只抓取一個 API
+      const fetchedData = await fetchProductsByUrl(targetUrl);
+
+      // 把其他存在快取裡的分頁資料與最新抓到的資料全部融合成一個 Map
       const mergedMap = new Map<string, Product>();
-      pendingData.forEach(p => mergedMap.set(p.id, p));
-      rejectedData.forEach(p => mergedMap.set(p.id, p));
-      approvedData.forEach(p => mergedMap.set(p.id, p));
+      
+      // 先灌入所有快取的歷史資料
+      cacheMapRef.current.forEach((productList) => {
+        productList.forEach(p => mergedMap.set(p.id, p));
+      });
+      // 覆蓋上最新抓取的即時資料
+      fetchedData.forEach(p => mergedMap.set(p.id, p));
 
+      // 保留本地建立的虛擬預覽物件（預防送出審核時的短暫閃爍）
       productsRef.current.forEach(p => {
         if (p.id.startsWith('virtual_')) {
-          const matched = [...approvedData, ...pendingData].find(f => f.name === p.name && f.unit === p.unit);
+          const matched = Array.from(mergedMap.values()).find(f => f.name === p.name && f.unit === p.unit);
           if (!matched) mergedMap.set(p.id, p);
         }
       });
 
-      // 🌟 精準排序邏輯：讓新送出的商品或待審核商品永遠排在最頂端
+      // 進行高效 O(N log N) 指針排序
       const sortedProducts = Array.from(mergedMap.values()).sort((a, b) => {
-        // 1. 如果其中一個是 pending（審核中），另一個不是，pending 必須排在最前面
         if (a.status === 'pending' && b.status !== 'pending') return -1;
         if (b.status === 'pending' && a.status !== 'pending') return 1;
 
-        // 2. 如果兩個狀態相同，則比對 ID（處理 virtual_ 時間戳字串與數值 ID，由新排到舊）
         const idA = a.id.startsWith('virtual_') ? Number(a.id.replace('virtual_', '')) : Number(a.id);
         const idB = b.id.startsWith('virtual_') ? Number(b.id.replace('virtual_', '')) : Number(b.id);
-        
         return idB - idA;
       });
 
-      const currentJson = JSON.stringify(productsRef.current);
-      const nextJson = JSON.stringify(sortedProducts);
-      
-      if (currentJson !== nextJson) {
+      // 比對資料是否有實質變化，無變化則不觸發 React 重新渲染
+      if (JSON.stringify(productsRef.current) !== JSON.stringify(sortedProducts)) {
         requestAnimationFrame(() => {
           setProducts(sortedProducts);
         });
@@ -211,7 +229,7 @@ export default function ProductsScreen() {
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
     ws.onmessage = () => {
-      setTimeout(() => loadSavedProducts(true), 100);
+      setTimeout(() => loadSavedProducts(true), 30);
     };
 
     return () => {
@@ -219,24 +237,32 @@ export default function ProductsScreen() {
     };
   }, []);
 
-  // 🌟 關鍵新增功能：針對「已通過審核」與「未通過審核」分頁，每 3 秒背景定時自動刷新機制
+  // 🌟 全域高頻 1 秒自動背景同步計時器
   useEffect(() => {
-    let intervalId: NodeJS.Timeout | null = null;
+    const intervalId = setInterval(() => {
+      loadSavedProducts(true); 
+    }, 1000); 
 
-    // 只有當使用者切換到「審核紀錄」分頁，且選中「已通過」或「未通過」子標籤時，才開啟計時器
-    if (activeTab === 'audit' && (auditSubTab === 'approved' || auditSubTab === 'rejected')) {
-      intervalId = setInterval(() => {
-        loadSavedProducts(true); 
-      }, 3000);
-    }
+    return () => clearInterval(intervalId);
+  }, []); 
 
-    // 當狀態切換或元件卸載時，自動清除計時器，絕不浪費效能與手機電力
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
+  // 當使用者「按分頁」時，0 毫秒瞬間切換，並順便發動一次背景靜默更新
+  const handleTabChange = (tab: 'list' | 'audit', subTab?: 'pending' | 'approved' | 'rejected') => {
+    requestAnimationFrame(() => {
+      if (tab === 'list') {
+        setActiveTab('list');
+      } else {
+        setActiveTab('audit');
+        if (subTab) setAuditSubTab(subTab);
       }
-    };
-  }, [activeTab, auditSubTab]);
+      setSearchQuery('');
+      
+      // 用微型延遲確保 React 狀態已寫入 Ref 後立即執行更新
+      setTimeout(() => {
+        loadSavedProducts(true);
+      }, 0);
+    });
+  };
 
   useFocusEffect(
     useCallback(() => { 
@@ -318,7 +344,6 @@ export default function ProductsScreen() {
     const formattedUnit = `${newProductAmount}${unitType === 'g' ? '克' : 'ml'}`;
     const savedUserId = await getCurrentMemberId();
 
-    // 🌟 產生的虛擬 ID 格式如 virtual_1716900000000，排序時能精確轉回數字排列在頂端
     const virtualId = `virtual_${Date.now()}`;
     const virtualProduct: Product = {
       id: virtualId,
@@ -332,8 +357,8 @@ export default function ProductsScreen() {
     setProducts(prev => [virtualProduct, ...prev]);
     setIsModalVisible(false);
     
-    setActiveTab('audit');
-    setAuditSubTab('pending');
+    // 送出成功時使用全新極速切換機制
+    handleTabChange('audit', 'pending');
 
     setCustomAlert({
       visible: true,
@@ -373,10 +398,10 @@ export default function ProductsScreen() {
           <View style={styles.cardHeader}>
             <View style={styles.titleTabRow}>
               <Text style={styles.pageTitle}>{txt.pageTitle}</Text>
-              <TouchableOpacity style={[styles.mainTabButton, activeTab === 'list' && styles.mainTabButtonActive]} onPress={() => { setActiveTab('list'); setSearchQuery(''); }}>
+              <TouchableOpacity style={[styles.mainTabButton, activeTab === 'list' && styles.mainTabButtonActive]} onPress={() => handleTabChange('list')}>
                 <Text style={[styles.mainTabLabel, activeTab === 'list' && styles.mainTabLabelActive]}>{txt.tabProductList}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.mainTabButton, activeTab === 'audit' && styles.mainTabButtonActive]} onPress={() => { setActiveTab('audit'); setAuditSubTab('pending'); setSearchQuery(''); }}>
+              <TouchableOpacity style={[styles.mainTabButton, activeTab === 'audit' && styles.mainTabButtonActive]} onPress={() => handleTabChange('audit', 'pending')}>
                 <Text style={[styles.mainTabLabel, activeTab === 'audit' && styles.mainTabLabelActive]}>{txt.tabAuditHistory}</Text>
               </TouchableOpacity>
             </View>
@@ -385,13 +410,13 @@ export default function ProductsScreen() {
 
           {activeTab === 'audit' && (
             <View style={styles.subTabToggleContainer}>
-              <TouchableOpacity style={[styles.subTabItem, auditSubTab === 'pending' && styles.subTabItemActive]} onPress={() => setAuditSubTab('pending')}>
+              <TouchableOpacity style={[styles.subTabItem, auditSubTab === 'pending' && styles.subTabItemActive]} onPress={() => handleTabChange('audit', 'pending')}>
                 <Text style={[styles.subTabLinkText, auditSubTab === 'pending' && styles.subTabLinkTextActive]}>{txt.subTabPending}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.subTabItem, auditSubTab === 'approved' && styles.subTabItemActive]} onPress={() => setAuditSubTab('approved')}>
+              <TouchableOpacity style={[styles.subTabItem, auditSubTab === 'approved' && styles.subTabItemActive]} onPress={() => handleTabChange('audit', 'approved')}>
                 <Text style={[styles.subTabLinkText, auditSubTab === 'approved' && styles.subTabLinkTextActive]}>{txt.subTabApproved}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.subTabItem, auditSubTab === 'rejected' && styles.subTabItemActive]} onPress={() => setAuditSubTab('rejected')}>
+              <TouchableOpacity style={[styles.subTabItem, auditSubTab === 'rejected' && styles.subTabItemActive]} onPress={() => handleTabChange('audit', 'rejected')}>
                 <Text style={[styles.subTabLinkText, auditSubTab === 'rejected' && styles.subTabLinkTextActive]}>{txt.subTabRejected}</Text>
               </TouchableOpacity>
             </View>
@@ -412,7 +437,7 @@ export default function ProductsScreen() {
                   <View style={styles.nameAndStatusWrapper}>
                     <Text style={styles.productName} numberOfLines={1}>
                       {formatDisplayInfo(item.name, item.unit)}
-                      {auditSubTab === 'pending' && item.status === 'pending' && (
+                      {item.status === 'pending' && (
                         <Text style={styles.pendingStatusTag}>{txt.statusPending}</Text>
                       )}
                     </Text>
