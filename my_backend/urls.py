@@ -26,8 +26,14 @@ urlpatterns = [
     path('daily-logs/add/', views.add_daily_log, name='add_daily_log'),
     path('daily-logs/', views.daily_logs, name='daily_logs'),
 
+    # 每日紀錄頁專用：一次同步當天「體重 + 三餐」
+    path('daily/save/', views.save_daily, name='save_daily'),
+    # history 頁面：一次拿回最近 N 天彙整資料
+    path('daily/summary/', views.daily_summary, name='daily_summary'),
+
     # 成就相關
     path('achievements/', views.achievements, name='achievements'),
+    path('achievements/unlock/', views.unlock_achievement, name='unlock_achievement'),
 
     # 會員資料讀取 / 更新
     # 建議前端主要使用這個

@@ -4,7 +4,7 @@ import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-const API_URL = 'http://127.0.0.1:8001';
+const API_URL = 'http://127.0.0.1:8000';
 
 interface AchievementItem {
   id: string;
@@ -106,6 +106,33 @@ export default function AchievementsScreen() {
         }
       }
 
+      // 🌐 後端 DailyLogs 為主要資料源（換手機/重灌仍可累計）
+      if (/^\d+$/.test(finalUserId)) {
+        try {
+          const resp = await fetch(`${API_URL}/daily-logs/?member_id=${finalUserId}`);
+          if (resp.ok) {
+            const data = await resp.json();
+            if (Array.isArray(data)) {
+              const validRows = data
+                .filter((r: any) => r?.date && parseFloat(r.weight) > 0 && validDatesSet.has(r.date))
+                .sort((a: any, b: any) => (a.date < b.date ? 1 : -1));
+
+              const backendStreak = validRows.length;
+              if (backendStreak > loginStreak) loginStreak = backendStreak;
+
+              if (validRows.length > 0) {
+                const backendLatest = parseFloat(validRows[0].weight);
+                if (!isNaN(backendLatest) && backendLatest > 0) {
+                  latestActualWeight = backendLatest;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.log('成就頁從後端拿 daily-logs 失敗，沿用本機', e);
+        }
+      }
+
       let weightLoss = 0;
       let memberCenterWeight = 0;
       const memberProfileStr = await AsyncStorage.getItem('user_profile') || await AsyncStorage.getItem('user');
@@ -123,6 +150,22 @@ export default function AchievementsScreen() {
         memberCenterWeight = parseFloat(directWeight);
       }
 
+      // 🌐 也從後端拉一次會員 initial_weight，作為「起始體重」
+      if (/^\d+$/.test(finalUserId)) {
+        try {
+          const resp = await fetch(`${API_URL}/member/profile/${finalUserId}/`);
+          if (resp.ok) {
+            const data = await resp.json();
+            const iw = parseFloat(data?.member?.initial_weight);
+            if (!isNaN(iw) && iw > 0 && memberCenterWeight === 0) {
+              memberCenterWeight = iw;
+            }
+          }
+        } catch (e) {
+          console.log('成就頁從後端拿 member profile 失敗', e);
+        }
+      }
+
       if (memberCenterWeight > 0 && latestActualWeight !== null) {
         const diff = memberCenterWeight - latestActualWeight;
         weightLoss = diff > 0 ? Math.round(diff * 10) / 10 : 0;
@@ -132,23 +175,73 @@ export default function AchievementsScreen() {
       const cachedProductCountStr = await AsyncStorage.getItem(`${finalUserId}_cached_product_count`);
       let approvedProductCount = cachedProductCountStr ? parseInt(cachedProductCountStr, 10) : 0;
 
+      // 🌐 從後端拿「已解鎖成就」（DB 為唯一真來源，達過一次就永久保留）
+      const earnedCodeSet = new Set<string>();
+      if (/^\d+$/.test(finalUserId)) {
+        try {
+          const respA = await fetch(`${API_URL}/achievements/?member_id=${finalUserId}`);
+          if (respA.ok) {
+            const list = await respA.json();
+            if (Array.isArray(list)) {
+              for (const it of list) {
+                if (it?.code && it?.earned_at) earnedCodeSet.add(it.code);
+              }
+            }
+          }
+        } catch (e) {
+          console.log('拿已解鎖成就列表失敗，這次先用即時條件判定', e);
+        }
+      }
+
       // 🔄 先行封裝列表，直接結束 Loading 狀態渲染畫面！
-      const buildList = (pCount: number) => [
-        { id: 'l1', category: 'login', title: '初來乍到 (連續紀錄體重 1 天)', currentProgress: loginStreak, targetTotal: 1, unlocked: loginStreak >= 1, unit: '天' },
-        { id: 'l3', category: 'login', title: '養成習慣 (連續紀錄體重 3 天)', currentProgress: loginStreak, targetTotal: 3, unlocked: loginStreak >= 3, unit: '天' },
-        { id: 'l7', category: 'login', title: '持之以恆 (連續紀錄體重 7 天)', currentProgress: loginStreak, targetTotal: 7, unlocked: loginStreak >= 7, unit: '天' },
-        { id: 'l30', category: 'login', title: '自律達人 (連續紀錄體重 30 天)', currentProgress: loginStreak, targetTotal: 30, unlocked: loginStreak >= 30, unit: '天' },
+      const buildList = (pCount: number): AchievementItem[] => {
+        const raw: { id: string; category: 'login' | 'weight' | 'product'; title: string; currentProgress: number; targetTotal: number; condMet: boolean; unit: string }[] = [
+          { id: 'l1',  category: 'login',  title: '初來乍到 (連續紀錄體重 1 天)',  currentProgress: loginStreak, targetTotal: 1,   condMet: loginStreak >= 1,  unit: '天' },
+          { id: 'l3',  category: 'login',  title: '養成習慣 (連續紀錄體重 3 天)',  currentProgress: loginStreak, targetTotal: 3,   condMet: loginStreak >= 3,  unit: '天' },
+          { id: 'l7',  category: 'login',  title: '持之以恆 (連續紀錄體重 7 天)',  currentProgress: loginStreak, targetTotal: 7,   condMet: loginStreak >= 7,  unit: '天' },
+          { id: 'l30', category: 'login',  title: '自律達人 (連續紀錄體重 30 天)', currentProgress: loginStreak, targetTotal: 30,  condMet: loginStreak >= 30, unit: '天' },
+          { id: 'w05', category: 'weight', title: '輕盈起步 (體重減少 0.5 KG)',    currentProgress: weightLoss,  targetTotal: 0.5, condMet: weightLoss >= 0.5, unit: 'KG' },
+          { id: 'w1',  category: 'weight', title: '看見成效 (體重減少 1 KG)',      currentProgress: weightLoss,  targetTotal: 1,   condMet: weightLoss >= 1,   unit: 'KG' },
+          { id: 'w3',  category: 'weight', title: '煥然一新 (體重減少 3 KG)',      currentProgress: weightLoss,  targetTotal: 3,   condMet: weightLoss >= 3,   unit: 'KG' },
+          { id: 'w5',  category: 'weight', title: '完美蛻變 (體重減少 5 KG)',      currentProgress: weightLoss,  targetTotal: 5,   condMet: weightLoss >= 5,   unit: 'KG' },
+          { id: 'p1',  category: 'product', title: '誠信商家 (審核上架商品 1 件)',  currentProgress: pCount,      targetTotal: 1,   condMet: pCount >= 1,       unit: '件' },
+          { id: 'p3',  category: 'product', title: '精選賣家 (審核上架商品 3 件)',  currentProgress: pCount,      targetTotal: 3,   condMet: pCount >= 3,       unit: '件' },
+          { id: 'p5',  category: 'product', title: '琳瑯滿目 (審核上架商品 5 件)',  currentProgress: pCount,      targetTotal: 5,   condMet: pCount >= 5,       unit: '件' },
+          { id: 'p10', category: 'product', title: '超級商城 (審核上架商品 10 件)', currentProgress: pCount,      targetTotal: 10,  condMet: pCount >= 10,      unit: '件' },
+        ];
 
-        { id: 'w05', category: 'weight', title: '輕盈起步 (體重減少 0.5 KG)', currentProgress: weightLoss, targetTotal: 0.5, unlocked: weightLoss >= 0.5, unit: 'KG' },
-        { id: 'w1', category: 'weight', title: '看見成效 (體重減少 1 KG)', currentProgress: weightLoss, targetTotal: 1, unlocked: weightLoss >= 1, unit: 'KG' },
-        { id: 'w3', category: 'weight', title: '煥然一新 (體重減少 3 KG)', currentProgress: weightLoss, targetTotal: 3, unlocked: weightLoss >= 3, unit: 'KG' },
-        { id: 'w5', category: 'weight', title: '完美蛻變 (體重減少 5 KG)', currentProgress: weightLoss, targetTotal: 5, unlocked: weightLoss >= 5, unit: 'KG' },
+        const list: AchievementItem[] = raw.map(r => ({
+          id: r.id,
+          category: r.category,
+          title: r.title,
+          currentProgress: r.currentProgress,
+          targetTotal: r.targetTotal,
+          unit: r.unit,
+          // 解鎖 = 已寫進 DB ∪ 本次條件達成；不會因為條件回退而消失
+          unlocked: r.condMet || earnedCodeSet.has(r.id),
+        }));
 
-        { id: 'p1', category: 'product', title: '誠信商家 (審核上架商品 1 件)', currentProgress: pCount, targetTotal: 1, unlocked: pCount >= 1, unit: '件' },
-        { id: 'p3', category: 'product', title: '精選賣家 (審核上架商品 3 件)', currentProgress: pCount, targetTotal: 3, unlocked: pCount >= 3, unit: '件' },
-        { id: 'p5', category: 'product', title: '琳瑯滿目 (審核上架商品 5 件)', currentProgress: pCount, targetTotal: 5, unlocked: pCount >= 5, unit: '件' },
-        { id: 'p10', category: 'product', title: '超級商城 (審核上架商品 10 件)', currentProgress: pCount, targetTotal: 10, unlocked: pCount >= 10, unit: '件' },
-      ];
+        // 本次新達標但 DB 還沒紀錄的 → 背景 POST 寫回，下次進頁就成永久解鎖
+        if (/^\d+$/.test(finalUserId)) {
+          const newCodes = raw.filter(r => r.condMet && !earnedCodeSet.has(r.id)).map(r => r.id);
+          if (newCodes.length > 0) {
+            (async () => {
+              try {
+                await fetch(`${API_URL}/achievements/unlock/`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ member_id: Number(finalUserId), codes: newCodes }),
+                });
+                newCodes.forEach(c => earnedCodeSet.add(c));
+              } catch (err) {
+                console.log('解鎖成就寫入後端失敗（下次進頁會再試）', err);
+              }
+            })();
+          }
+        }
+
+        return list;
+      };
 
       setAchievements(buildList(approvedProductCount));
       setIsLoading(false); // 🔥 這裡直接關閉轉圈圈！畫面秒亮！

@@ -214,9 +214,16 @@ def get_admin_member_or_response(request):
 
 @api_view(['GET'])
 def products(request):
-    """一般商品查詢：只回傳已通過審核/正式上架的商品。"""
-    data = Products.objects.filter(status='approved').order_by('name')
-    serializer = ProductSerializer(data, many=True)
+    """一般商品查詢：只回傳已通過審核/正式上架的商品。
+    支援 ?creator_id=X 過濾出某位會員提交的商品。
+    """
+    qs = Products.objects.filter(status='approved')
+
+    creator_id = request.GET.get('creator_id')
+    if creator_id and str(creator_id).isdigit():
+        qs = qs.filter(creator_id=int(creator_id))
+
+    serializer = ProductSerializer(qs.order_by('name'), many=True)
     return Response(serializer.data)
 
 
@@ -408,8 +415,279 @@ def daily_logs(request):
     return Response(serializer.data)
 
 
+# 系統內建的成就清單；id 用前端硬編碼那組以便對齊
+# 條件 (category, threshold) 由前端計算進度，後端只負責記錄解鎖事件
+SEED_ACHIEVEMENTS = [
+    ('l1',  '初來乍到 (連續紀錄體重 1 天)',  'login',   1),
+    ('l3',  '養成習慣 (連續紀錄體重 3 天)',  'login',   3),
+    ('l7',  '持之以恒 (連續紀錄體重 7 天)',  'login',   7),
+    ('l30', '自律達人 (連續紀錄體重 30 天)', 'login',  30),
+    ('w05', '輕盈起步 (體重減少 0.5 KG)',          'weight',  0.5),
+    ('w1',  '看見成效 (體重減少 1 KG)',            'weight',  1),
+    ('w3',  '焕然一新 (體重減少 3 KG)',            'weight',  3),
+    ('w5',  '完美蜕變 (體重減少 5 KG)',            'weight',  5),
+    ('p1',  '誠信商家 (審核上架商品 1 件)',  'product', 1),
+    ('p3',  '精選賣家 (審核上架商品 3 件)',  'product', 3),
+    ('p5',  '琰瑯滿目 (審核上架商品 5 件)',  'product', 5),    ('p10', '超級商城 (審核上架商品 10 件)', 'product', 10),]
+
+
+def _ensure_seed_achievements():
+    """第一次查詢時自動把預設 11 條成就寫進 DB。如果標題變了也會跟著更新。"""
+    for code, title, _cat, _th in SEED_ACHIEVEMENTS:
+        Achievements.objects.update_or_create(
+            description=code,                # 用 description 欄裝 code (l1/w1/p3...)作為穩定識別碼
+            defaults={'title': title},
+        )
+
+
 @api_view(['GET'])
 def achievements(request):
-    data = Achievements.objects.all()
-    serializer = AchievementSerializer(data, many=True)
-    return Response(serializer.data)
+    """
+    GET /achievements/                 -> 所有成就定義
+    GET /achievements/?member_id=1     -> 加上該會員的 earned_at（未解鎖 = null）
+    """
+    _ensure_seed_achievements()
+
+    member_id = request.GET.get('member_id')
+    achievements_qs = Achievements.objects.all().order_by('id')
+
+    earned_map = {}
+    if member_id and member_id.isdigit():
+        for ma in MemberAchievements.objects.filter(member_id=int(member_id)).select_related('achievement'):
+            earned_map[ma.achievement_id] = ma.earned_at.isoformat()
+
+    result = []
+    for ach in achievements_qs:
+        result.append({
+            'id': ach.id,
+            'code': ach.description,    # 前端用這個對齊本機 UI id
+            'title': ach.title,
+            'earned_at': earned_map.get(ach.id),
+        })
+    return Response(result)
+
+
+@api_view(['POST'])
+def unlock_achievement(request):
+    """
+    POST /achievements/unlock/
+    body: { "member_id": 1, "codes": ["l1", "w05"] }
+    只寫入未解鎖的；已解鎖過的保留原 earned_at。
+    回傳這次「新」解鎖的 codes，讓前端能跳「恭喜達成」提示。
+    """
+    _ensure_seed_achievements()
+    member_id = request.data.get('member_id')
+    codes = request.data.get('codes') or []
+
+    if not member_id or not str(member_id).isdigit():
+        return Response({'detail': 'member_id 無效'}, status=status.HTTP_400_BAD_REQUEST)
+    if not isinstance(codes, list):
+        return Response({'detail': 'codes 需為陣列'}, status=status.HTTP_400_BAD_REQUEST)
+
+    member_id = int(member_id)
+    if not Members.objects.filter(id=member_id).exists():
+        return Response({'detail': '會員不存在'}, status=status.HTTP_404_NOT_FOUND)
+
+    achievements_by_code = {a.description: a for a in Achievements.objects.filter(description__in=codes)}
+    already = set(
+        MemberAchievements.objects
+        .filter(member_id=member_id, achievement__description__in=codes)
+        .values_list('achievement__description', flat=True)
+    )
+
+    newly_unlocked = []
+    for code in codes:
+        if code in already:
+            continue
+        ach = achievements_by_code.get(code)
+        if not ach:
+            continue
+        MemberAchievements.objects.create(member_id=member_id, achievement=ach)
+        newly_unlocked.append(code)
+
+    return Response({'newly_unlocked': newly_unlocked})
+
+
+# 中文 -> 英文 meal_type 對照（前端送繁中也接受）
+_MEAL_ZH_TO_EN = {
+    'breakfast': 'breakfast', 'lunch': 'lunch', 'dinner': 'dinner',
+    '早餐': 'breakfast', '午餐': 'lunch', '晚餐': 'dinner',
+}
+_MEAL_EN_TO_ZH = {'breakfast': '早餐', 'lunch': '午餐', 'dinner': '晚餐'}
+
+
+def _parse_float(value):
+    try:
+        if value is None or value == '':
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@api_view(['POST'])
+def save_daily(request):
+    """
+    一次儲存某會員某天的「體重 + 三餐」，後端會：
+    - upsert DailyLogs（同 member + date 只一筆）
+    - 刪掉該天舊的 DietRecords，再依前端送來的內容重建
+    request.data:
+    {
+      "member_id": 1,
+      "date": "2026-05-30",
+      "weight": "65.2"  (可空字串代表清除),
+      "meals": {
+        "breakfast": [{"name": "御飯糰/60克", "calories": 200}, ...],
+        "lunch": [...],
+        "dinner": [...]
+      }
+    }
+    """
+    member_id = request.data.get('member_id') or request.data.get('member')
+    date_str = request.data.get('date')
+    weight_raw = request.data.get('weight')
+    meals = request.data.get('meals') or {}
+
+    if not member_id or not date_str:
+        return Response({
+            "success": False,
+            "message": "缺少 member_id 或 date"
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        member = Members.objects.get(id=member_id)
+    except Members.DoesNotExist:
+        return Response({
+            "success": False,
+            "message": "找不到會員"
+        }, status=status.HTTP_404_NOT_FOUND)
+
+    weight_value = _parse_float(weight_raw)
+
+    # 1) Upsert DailyLogs
+    daily_log, _ = DailyLogs.objects.get_or_create(
+        member=member,
+        date=date_str,
+    )
+    daily_log.weight = weight_value
+    daily_log.save()  # save() 內部會自動算 BMI
+
+    # 1.5) 同步把會員資料的 initial_weight 也更新成最新體重，
+    # 讓會員中心 / 身體指數頁立即看到一致數字
+    if weight_value is not None:
+        member.initial_weight = weight_value
+        member.save(update_fields=['initial_weight'])
+
+    # 2) 重建當天 DietRecords
+    DietRecords.objects.filter(member=member, log_date=date_str).delete()
+
+    created_records = []
+    for raw_meal_type, items in meals.items():
+        meal_type = _MEAL_ZH_TO_EN.get(raw_meal_type)
+        if not meal_type or not isinstance(items, list):
+            continue
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = (item.get('name') or '').strip()
+            if not name:
+                continue
+            calories = _parse_float(item.get('calories')) or 0
+            serving_size = _parse_float(item.get('serving_size')) or 1
+
+            record = DietRecords.objects.create(
+                member=member,
+                meal_type=meal_type,
+                food_name=name,
+                unit=item.get('unit') or None,
+                calories=calories,
+                serving_size=serving_size,
+                log_date=date_str,
+            )
+            created_records.append(record)
+
+    return Response({
+        "success": True,
+        "message": "每日紀錄同步成功",
+        "daily_log": DailyLogSerializer(daily_log).data,
+        "diet_records": DietRecordSerializer(created_records, many=True).data,
+    })
+
+
+@api_view(['GET'])
+def daily_summary(request):
+    """
+    回傳會員最近 N 天（預設 30 天）的紀錄，方便 history 頁面一次取得。
+    回傳格式：
+    [
+      {
+        "date": "2026-05-30",
+        "weight": "65.2",
+        "bmi": "22.4",
+        "meals": {
+          "早餐": [{"id": 1, "name": "...", "calories": "200"}, ...],
+          "午餐": [...],
+          "晚餐": [...]
+        }
+      }, ...
+    ]
+    """
+    from datetime import timedelta
+    from django.utils import timezone as dj_tz
+
+    member_id = request.GET.get('member_id')
+    if not member_id:
+        return Response({
+            "success": False,
+            "message": "缺少 member_id"
+        }, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        days = int(request.GET.get('days') or 30)
+    except ValueError:
+        days = 30
+    days = max(1, min(days, 365))
+
+    today = dj_tz.localdate()
+    start_date = today - timedelta(days=days - 1)
+
+    logs = DailyLogs.objects.filter(
+        member_id=member_id, date__gte=start_date, date__lte=today
+    )
+    log_by_date = {log.date.isoformat(): log for log in logs}
+
+    diet_records = DietRecords.objects.filter(
+        member_id=member_id, log_date__gte=start_date, log_date__lte=today
+    ).order_by('id')
+
+    meals_by_date = {}
+    for r in diet_records:
+        d = r.log_date.isoformat()
+        bucket = meals_by_date.setdefault(d, {'早餐': [], '午餐': [], '晚餐': []})
+        zh = _MEAL_EN_TO_ZH.get(r.meal_type)
+        if not zh:
+            continue
+        bucket[zh].append({
+            "id": str(r.id),
+            "name": r.food_name or '',
+            "calories": str(int(r.calories)) if r.calories is not None else '0',
+        })
+
+    result = []
+    for i in range(days):
+        d = today - timedelta(days=i)
+        d_str = d.isoformat()
+        log = log_by_date.get(d_str)
+        result.append({
+            "date": d_str,
+            "weight": '' if not log or log.weight is None else str(log.weight),
+            "bmi": '' if not log or log.bmi is None else str(log.bmi),
+            "meals": meals_by_date.get(d_str, {'早餐': [], '午餐': [], '晚餐': []}),
+        })
+
+    return Response({
+        "success": True,
+        "days": days,
+        "records": result,
+    })

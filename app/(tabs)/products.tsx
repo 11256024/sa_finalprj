@@ -3,8 +3,8 @@ import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-const API_URL = 'http://127.0.0.1:8001';
-const WS_URL = 'ws://127.0.0.1:8001/ws/admin-reviews/'; 
+const API_URL = 'http://127.0.0.1:8000';
+const WS_URL = 'ws://127.0.0.1:8000/ws/admin-reviews/'; 
 
 interface Product {
   id: string;

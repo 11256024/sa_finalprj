@@ -4,6 +4,8 @@ import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
+const API_URL = 'http://127.0.0.1:8000';
+
 // 📋 配合每日紀錄的資料結構進行定義
 interface FoodItem {
   id: string;       
@@ -77,12 +79,44 @@ export default function HistoryScreen() {
     setIsLoading(true);
     setErrorMessage(null);
     try {
-      const savedUserId = await AsyncStorage.getItem('current_user_id') || 'guest';
+      // 優先從登入者抓 id，再退回舊 key，最後 guest
+      const userStr = await AsyncStorage.getItem('user');
+      const loggedInUser = userStr ? JSON.parse(userStr) : null;
+      const savedUserId =
+        loggedInUser?.id?.toString?.() ||
+        (await AsyncStorage.getItem('current_user_id')) ||
+        'guest';
       const globalHeight = await AsyncStorage.getItem(`${savedUserId}_user_height`) || await AsyncStorage.getItem('user_height_key') || await AsyncStorage.getItem('height') || '';
 
       const dayLabels = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
       const baseDate = new Date(); // 晚上 12 點一過，這裡的 baseDate 就會自動變成新的一天
-      
+
+      // -------------------------------------------------------------
+      // 先嘗試從後端一次抓 30 天彙整資料；失敗或登入者非有效會員時 fallback 本機
+      // -------------------------------------------------------------
+      let backendRecordsByDate: Record<string, { weight: string; bmi: string; meals: any }> = {};
+      const isRealMember = /^\d+$/.test(savedUserId);
+
+      if (isRealMember) {
+        try {
+          const resp = await fetch(`${API_URL}/daily/summary/?member_id=${savedUserId}&days=30`);
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data?.success && Array.isArray(data.records)) {
+              data.records.forEach((r: any) => {
+                backendRecordsByDate[r.date] = {
+                  weight: r.weight || '',
+                  bmi: r.bmi || '',
+                  meals: r.meals || { 早餐: [], 午餐: [], 晚餐: [] },
+                };
+              });
+            }
+          }
+        } catch (e) {
+          console.log('從後端抓 daily summary 失敗，改用本機快取:', e);
+        }
+      }
+
       const foodKeys: string[] = [];
       const independentWeightKeys: string[] = []; 
       const dateMetaList: { dateStr: string; displayStr: string; dayOfWeekStr: string }[] = [];
@@ -117,7 +151,7 @@ export default function HistoryScreen() {
         const rawWeightValue = weightValuePairs[index][1]; 
         
         let dayData = rawFoodValue ? JSON.parse(rawFoodValue) : null;
-        const currentMeals = dayData?.mealBlocks || { 早餐: [], 午餐: [], 晚餐: [] };
+        let currentMeals = dayData?.mealBlocks || { 早餐: [], 午餐: [], 晚餐: [] };
 
         let dayWeight = '';
         let dayBmi = '';
@@ -127,6 +161,27 @@ export default function HistoryScreen() {
           dayBmi = dayData.bmi || '';
         } else if (rawWeightValue && rawWeightValue.trim() !== '') {
           dayWeight = rawWeightValue;
+        }
+
+        // 後端有資料時以後端為準（換手機/重灌也看得到）
+        const fromBackend = backendRecordsByDate[meta.dateStr];
+        if (fromBackend) {
+          if (fromBackend.weight) dayWeight = fromBackend.weight;
+          if (fromBackend.bmi) dayBmi = fromBackend.bmi;
+
+          const backendMeals = fromBackend.meals || {};
+          const localEmpty =
+            currentMeals.早餐.length === 0 &&
+            currentMeals.午餐.length === 0 &&
+            currentMeals.晚餐.length === 0;
+          const backendHasAny =
+            (backendMeals['早餐']?.length || 0) +
+              (backendMeals['午餐']?.length || 0) +
+              (backendMeals['晚餐']?.length || 0) >
+            0;
+          if (localEmpty && backendHasAny) {
+            currentMeals = backendMeals;
+          }
         }
 
         if (dayWeight && (!dayBmi || dayBmi === '')) {

@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 // 🎯 統一 API 端口，解決部分頁面連不到後端的問題
-const API_URL = 'http://127.0.0.1:8001';
+const API_URL = 'http://127.0.0.1:8000';
 
 export default function RootLayout() {
   const router = useRouter();

@@ -3,7 +3,7 @@ import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-const API_URL = 'http://127.0.0.1:8001';
+const API_URL = 'http://127.0.0.1:8000';
 
 const parseApiResponse = async (response: Response) => {
   const text = await response.text();
@@ -74,6 +74,8 @@ export default function DailyRecordScreen() {
   const [inputUnitValue, setInputUnitValue] = useState(''); 
   const [selectedUnitType, setSelectedUnitType] = useState<'克' | 'ml'>('克'); 
   const [inputCalories, setInputCalories] = useState('');
+  // 不為 null 表示編輯既有品項；為 null 表示新增
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
   const [mealBlocks, setMealBlocks] = useState<{
     早餐: FoodItem[];
@@ -89,6 +91,9 @@ export default function DailyRecordScreen() {
   useEffect(() => {
     stateRef.current = { weight, bmi, bmiStatus, mealBlocks, currentDate, userId };
   }, [weight, bmi, bmiStatus, mealBlocks, currentDate, userId]);
+
+  // 體重打到後端的 debounce 計時器（邊打字也會送，但不會每按一鍵就送）
+  const weightSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const initUserAndLoad = async () => {
@@ -121,8 +126,25 @@ export default function DailyRecordScreen() {
   try {
     const savedDataStr = await AsyncStorage.getItem(`${currentUid}_food_record_${dateStr}`);
 
+    // 把任何舊資料 / 缺鍵 / 英文鍵都標準化成 { 早餐, 午餐, 晚餐 } 三條 array
+    const normalizeMeals = (raw: any) => {
+      const safe = raw && typeof raw === 'object' ? raw : {};
+      const pickArray = (...keys: string[]) => {
+        for (const k of keys) {
+          if (Array.isArray(safe[k])) return safe[k];
+        }
+        return [];
+      };
+      return {
+        早餐: pickArray('早餐', 'breakfast'),
+        午餐: pickArray('午餐', 'lunch'),
+        晚餐: pickArray('晚餐', 'dinner'),
+      };
+    };
+
     if (savedDataStr) {
       const parsed = JSON.parse(savedDataStr);
+      const normalizedMeals = normalizeMeals(parsed.mealBlocks);
 
       if (parsed.hasDailyWeight === true) {
         const savedWeight = parsed.weight || '';
@@ -131,26 +153,67 @@ export default function DailyRecordScreen() {
         setWeight(savedWeight);
         setBmi(bmiResult.calculatedBmi);
         setBmiStatus(bmiResult.calculatedStatus);
-
-        // 用會員中心最新身高重新產生 BMI，不回寫會員體重。
-        await saveDataToStorage(
-          savedWeight,
-          bmiResult.calculatedBmi,
-          bmiResult.calculatedStatus,
-          parsed.mealBlocks || { 早餐: [], 午餐: [], 晚餐: [] }
-        );
+        // 注意：載入時不要再呼叫 saveDataToStorage，避免使用舊的 userId 狀態
+        // 把資料寫到 guest 的 key 並把空 meals 同步到後端，造成餐點消失。
       } else {
         setWeight('');
         setBmi('—');
         setBmiStatus('');
       }
 
-      setMealBlocks(parsed.mealBlocks || { 早餐: [], 午餐: [], 晚餐: [] });
+      setMealBlocks(normalizedMeals);
     } else {
       setWeight('');
       setBmi('—');
       setBmiStatus('');
       setMealBlocks({ 早餐: [], 午餐: [], 晚餐: [] });
+    }
+
+    // 背景再從後端拉一次當天資料，補齊本機可能缺漏的餐點
+    if (/^\d+$/.test(currentUid)) {
+      try {
+        const resp = await fetch(`${API_URL}/daily/summary/?member_id=${currentUid}&days=30`);
+        if (resp.ok) {
+          const data = await resp.json();
+          const todayRow = Array.isArray(data?.records)
+            ? data.records.find((r: any) => r?.date === dateStr)
+            : null;
+          if (todayRow) {
+            const backendMeals = normalizeMeals(todayRow.meals);
+            const backendHasAny =
+              backendMeals.早餐.length + backendMeals.午餐.length + backendMeals.晚餐.length > 0;
+
+            if (backendHasAny) {
+              setMealBlocks((prev) => {
+                const merged = {
+                  早餐: prev.早餐.length ? prev.早餐 : backendMeals.早餐,
+                  午餐: prev.午餐.length ? prev.午餐 : backendMeals.午餐,
+                  晚餐: prev.晚餐.length ? prev.晚餐 : backendMeals.晚餐,
+                };
+                // 把補回來的餐點寫回本機，避免下次再缺
+                saveDataToStorage(
+                  stateRef.current.weight,
+                  stateRef.current.bmi,
+                  stateRef.current.bmiStatus,
+                  merged,
+                );
+                return merged;
+              });
+            }
+
+            // 如果本機沒體重但後端有，也順便補上
+            if (todayRow.weight && (!stateRef.current.weight || stateRef.current.weight === '')) {
+              const backendWeight = String(todayRow.weight);
+              const bmiResult = calculateBmiByHeight(backendWeight, heightForBmi);
+              setWeight(backendWeight);
+              setBmi(bmiResult.calculatedBmi);
+              setBmiStatus(bmiResult.calculatedStatus);
+            }
+          }
+        }
+      } catch (e) {
+        console.log('從後端補當天紀錄失敗:', e);
+      }
     }
   } catch (e) {
     console.error('載入失敗', e);
@@ -164,6 +227,11 @@ export default function DailyRecordScreen() {
   currentMeals: typeof mealBlocks
 ) => {
   try {
+    // 用 stateRef 取得最新的 userId / currentDate，避免 React 還沒 propagate 狀態時
+    // 把資料寫到 guest 或舊日期的 key
+    const effectiveUserId = stateRef.current.userId || userId;
+    const effectiveDate = stateRef.current.currentDate || currentDate;
+
     const hasDailyWeight = currentWeight.trim() !== '';
 
     const dataToSave = {
@@ -175,14 +243,52 @@ export default function DailyRecordScreen() {
     };
 
     await AsyncStorage.setItem(
-      `${userId}_food_record_${currentDate}`,
+      `${effectiveUserId}_food_record_${effectiveDate}`,
       JSON.stringify(dataToSave)
     );
+
+    // 背景同步到後端，失敗也不影響本機體驗
+    syncDayToBackend(currentWeight, currentMeals, effectiveUserId, effectiveDate);
 
   } catch (e) {
     console.error('同步失敗', e);
   }
 };
+
+  // 把當天「體重 + 三餐」一次送到後端，後端會 upsert DailyLog 並覆寫 DietRecords
+  const syncDayToBackend = async (
+    currentWeight: string,
+    currentMeals: typeof mealBlocks,
+    targetUserId?: string,
+    targetDate?: string,
+  ) => {
+    try {
+      const effectiveUserId = targetUserId || stateRef.current.userId || userId;
+      const effectiveDate = targetDate || stateRef.current.currentDate || currentDate;
+
+      if (!effectiveUserId || effectiveUserId === 'guest') return;
+      if (!/^\d+$/.test(effectiveUserId)) return;
+
+      const meals = {
+        breakfast: currentMeals.早餐.map((it) => ({ name: it.name, calories: it.calories })),
+        lunch: currentMeals.午餐.map((it) => ({ name: it.name, calories: it.calories })),
+        dinner: currentMeals.晚餐.map((it) => ({ name: it.name, calories: it.calories })),
+      };
+
+      await fetch(`${API_URL}/daily/save/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          member_id: Number(effectiveUserId),
+          date: effectiveDate,
+          weight: currentWeight,
+          meals,
+        }),
+      });
+    } catch (e) {
+      console.log('每日紀錄同步到後端失敗（已存本機）:', e);
+    }
+  };
 
   const getBmiStatusLabel = (bmiValue: number) => {
     if (bmiValue < 18.5) return '體重過輕';
@@ -412,6 +518,12 @@ export default function DailyRecordScreen() {
     const weightNum = parseFloat(cleanedText);
     if (!isNaN(weightNum) && weightNum >= 30 && weightNum <= 200) {
       updateMemberWeightLocalCache(cleanedText);
+
+      // debounce 600ms 再送後端，避免邊打字邊發 request
+      if (weightSyncTimerRef.current) clearTimeout(weightSyncTimerRef.current);
+      weightSyncTimerRef.current = setTimeout(() => {
+        updateMemberWeightToBackend(cleanedText);
+      }, 600);
     }
   };
 
@@ -486,16 +598,29 @@ export default function DailyRecordScreen() {
     }
 
     const finalFullName = `${trimmedItemName}/${trimmedUnitValue}${selectedUnitType}`;
-    const newItem: FoodItem = {
-      id: Date.now().toString(),
-      name: finalFullName,
-      calories: trimmedCalories,
-    };
 
-    const updatedMeals = {
-      ...mealBlocks,
-      [currentBlockCategory]: [...mealBlocks[currentBlockCategory], newItem]
-    };
+    let updatedMeals: typeof mealBlocks;
+    if (editingItemId) {
+      // 編輯模式：覆寫指定 id 的品項，保留原 id
+      updatedMeals = {
+        ...mealBlocks,
+        [currentBlockCategory]: mealBlocks[currentBlockCategory].map((it) =>
+          it.id === editingItemId
+            ? { ...it, name: finalFullName, calories: trimmedCalories }
+            : it
+        ),
+      };
+    } else {
+      const newItem: FoodItem = {
+        id: Date.now().toString(),
+        name: finalFullName,
+        calories: trimmedCalories,
+      };
+      updatedMeals = {
+        ...mealBlocks,
+        [currentBlockCategory]: [...mealBlocks[currentBlockCategory], newItem],
+      };
+    }
 
     setMealBlocks(updatedMeals);
     saveDataToStorage(weight, bmi, bmiStatus, updatedMeals);
@@ -503,12 +628,47 @@ export default function DailyRecordScreen() {
     setAddModalVisible(false);
   };
 
+  const openEditModalForItem = (
+    category: '早餐' | '午餐' | '晚餐',
+    item: FoodItem
+  ) => {
+    // 把 "名稱/份量單位" 拆回三欄；找最後一個 '/' 以避免名稱含 '/'
+    const lastSlash = item.name.lastIndexOf('/');
+    let nameOnly = item.name;
+    let unitValue = '';
+    let unitType: '克' | 'ml' = '克';
+    if (lastSlash !== -1) {
+      nameOnly = item.name.slice(0, lastSlash);
+      const unitPart = item.name.slice(lastSlash + 1);
+      const m = unitPart.match(/^(\d+)(克|ml)$/);
+      if (m) {
+        unitValue = m[1];
+        unitType = m[2] as '克' | 'ml';
+      } else {
+        // 無法解析時保留原始字串到名稱欄，避免使用者資料遺失
+        nameOnly = item.name;
+      }
+    }
+    setCurrentBlockCategory(category);
+    setInputItemName(nameOnly);
+    setInputUnitValue(unitValue);
+    setSelectedUnitType(unitType);
+    setInputCalories(item.calories);
+    setEditingItemId(item.id);
+    setAddModalVisible(true);
+  };
+
   const handleCancelAddItem = () => {
+    const isEditing = editingItemId !== null;
     if (inputItemName.trim() !== '' || inputUnitValue.trim() !== '' || inputCalories.trim() !== '') {
-      showConfirm('確認取消', '確定要取消新增嗎？內容將不會被儲存。', () => {
-        resetModalInputs();
-        setAddModalVisible(false);
-      });
+      showConfirm(
+        isEditing ? '確認取消' : '確認取消',
+        isEditing ? '確定要取消編輯嗎？修改將不會被儲存。' : '確定要取消新增嗎？內容將不會被儲存。',
+        () => {
+          resetModalInputs();
+          setAddModalVisible(false);
+        },
+      );
     } else {
       resetModalInputs();
       setAddModalVisible(false);
@@ -520,9 +680,11 @@ export default function DailyRecordScreen() {
     setInputUnitValue('');
     setSelectedUnitType('克');
     setInputCalories('');
+    setEditingItemId(null);
   };
 
   const openAddModalForCategory = (category: '早餐' | '午餐' | '晚餐') => {
+    resetModalInputs();
     setCurrentBlockCategory(category);
     setAddModalVisible(true);
   };
@@ -601,6 +763,9 @@ export default function DailyRecordScreen() {
                   <View style={{ flex: 1, alignItems: 'flex-end', marginRight: 15 }}>
                     <Text style={styles.tableTextContent}>{food.calories}</Text>
                   </View>
+                  <TouchableOpacity style={styles.editRowTextBtn} onPress={() => openEditModalForItem(category, food)}>
+                    <Text style={styles.editRowText}>編輯</Text>
+                  </TouchableOpacity>
                   <TouchableOpacity style={styles.deleteRowTextBtn} onPress={() => handleDeleteItem(category, food.id, food.name)}>
                     <Text style={styles.deleteRowText}>刪除</Text>
                   </TouchableOpacity>
@@ -624,7 +789,7 @@ export default function DailyRecordScreen() {
       <Modal animationType="fade" transparent={true} visible={addModalVisible} onRequestClose={handleCancelAddItem}>
         <View style={styles.modalOverlay}>
           <View style={styles.popupBox}>
-            <Text style={styles.popupTitle}>新增飲食紀錄</Text>
+            <Text style={styles.popupTitle}>{editingItemId ? '編輯飲食紀錄' : '新增飲食紀錄'}</Text>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>新增類別</Text>
               <View style={styles.disabledSelectBox}><Text style={styles.disabledSelectText}>{currentBlockCategory}</Text></View>
@@ -656,7 +821,7 @@ export default function DailyRecordScreen() {
                 <Text style={styles.modalBtnLeftText}>取消</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.modalBtnRight} onPress={handleConfirmAddItem}>
-                <Text style={styles.modalBtnRightText}>確認新增</Text>
+                <Text style={styles.modalBtnRightText}>{editingItemId ? '確認修改' : '確認新增'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -722,6 +887,8 @@ const styles = StyleSheet.create({
   thLabel: { fontSize: 18, fontWeight: '600', color: '#7F8C8D', textAlign: 'left' },
   tableRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   tableTextContent: { fontSize: 18, color: '#333', fontWeight: '500' },
+  editRowTextBtn: { paddingHorizontal: 12, paddingVertical: 6, marginLeft: 10, backgroundColor: '#D6E4D2', borderRadius: 8 },
+  editRowText: { fontSize: 15, color: '#3D6A4A', fontWeight: 'bold' },
   deleteRowTextBtn: { paddingHorizontal: 12, paddingVertical: 6, marginLeft: 10, backgroundColor: '#FADBD8', borderRadius: 8 },
   deleteRowText: { fontSize: 15, color: '#C0392B', fontWeight: 'bold' },
   totalCaloriesCard: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#FFF2E6', borderWidth: 1, borderColor: '#F3B07E', borderRadius: 20, paddingVertical: 20, paddingHorizontal: 30 },

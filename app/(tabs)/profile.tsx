@@ -5,7 +5,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import React, { useCallback, useState } from 'react';
 import { Alert, Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
-const API_URL = 'http://127.0.0.1:8001';
+const API_URL = 'http://127.0.0.1:8000';
 
 interface ProfileType {
   name: string;

@@ -4,6 +4,8 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Dimensions, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LineChart } from "react-native-chart-kit";
 
+const API_URL = 'http://127.0.0.1:8000';
+
 export default function WeightPicScreen() {
   const router = useRouter();
   const screenWidth = Dimensions.get("window").width;
@@ -94,6 +96,42 @@ export default function WeightPicScreen() {
       }
       setMemberHeight(currentHeight);
 
+      // 1.5 從後端拉 daily logs，做成「日期 → 體重」對應表（fallback 用本機）
+      const backendWeightByDate: Record<string, number> = {};
+      if (/^\d+$/.test(finalUserId)) {
+        try {
+          const resp = await fetch(`${API_URL}/daily-logs/?member_id=${finalUserId}`);
+          if (resp.ok) {
+            const data = await resp.json();
+            if (Array.isArray(data)) {
+              data.forEach((row: any) => {
+                if (!row?.date) return;
+                const w = parseFloat(row.weight);
+                if (!isNaN(w) && w > 0) {
+                  backendWeightByDate[row.date] = w;
+                }
+              });
+            }
+          }
+        } catch (e) {
+          console.log('weightpic 從後端取體重失敗，沿用本機', e);
+        }
+      }
+
+      const getWeightForDate = async (dateStr: string): Promise<number> => {
+        if (backendWeightByDate[dateStr]) return backendWeightByDate[dateStr];
+        const recordDataStr = await AsyncStorage.getItem(`${finalUserId}_food_record_${dateStr}`);
+        if (!recordDataStr) return 0;
+        try {
+          const parsedRecord = JSON.parse(recordDataStr);
+          if (parsedRecord.hasDailyWeight && parsedRecord.weight) {
+            const w = parseFloat(parsedRecord.weight);
+            return !isNaN(w) && w > 0 ? w : 0;
+          }
+        } catch {}
+        return 0;
+      };
+
       // 2. 初始化時間軸與體重容器
       let labels: string[] = [];
       let weights: number[] = [];
@@ -101,26 +139,10 @@ export default function WeightPicScreen() {
       if (period === '周') {
         const weekDataResult = getDynamicWeekData();
         labels = weekDataResult.labels;
-        
-        // 🔍 完美解包：循週循環去撈取飲食紀錄檔案
+
         for (let i = 0; i < weekDataResult.fullDates.length; i++) {
-          const targetDateStr = weekDataResult.fullDates[i]; // "2026-05-27"
-          
-          // 🎯 核心對接：精準命中 `${userId}_food_record_${dateStr}`
-          const recordDataStr = await AsyncStorage.getItem(`${finalUserId}_food_record_${targetDateStr}`);
-          
-          if (recordDataStr) {
-            const parsedRecord = JSON.parse(recordDataStr);
-            // 確認當時是否有勾選或填入每日體重
-            if (parsedRecord.hasDailyWeight && parsedRecord.weight) {
-              const w = parseFloat(parsedRecord.weight);
-              weights.push(!isNaN(w) ? w : 0);
-            } else {
-              weights.push(0);
-            }
-          } else {
-            weights.push(0); 
-          }
+          const targetDateStr = weekDataResult.fullDates[i];
+          weights.push(await getWeightForDate(targetDateStr));
         }
         
       } else if (period === '月') {
@@ -132,16 +154,10 @@ export default function WeightPicScreen() {
         let thisWeekCount = 0;
 
         for (let i = 0; i < weekDataResult.fullDates.length; i++) {
-          const recordDataStr = await AsyncStorage.getItem(`${finalUserId}_food_record_${weekDataResult.fullDates[i]}`);
-          if (recordDataStr) {
-            const parsedRecord = JSON.parse(recordDataStr);
-            if (parsedRecord.hasDailyWeight && parsedRecord.weight) {
-              const w = parseFloat(parsedRecord.weight);
-              if (!isNaN(w) && w > 0) {
-                thisWeekSum += w;
-                thisWeekCount += 1;
-              }
-            }
+          const w = await getWeightForDate(weekDataResult.fullDates[i]);
+          if (w > 0) {
+            thisWeekSum += w;
+            thisWeekCount += 1;
           }
         }
 
