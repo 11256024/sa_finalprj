@@ -278,103 +278,70 @@ export default function AchievementsScreen() {
     activeTab === 'unlocked' ? item.unlocked : !item.unlocked
   );
 
-  const getCategoryIconInfo = (category: 'login' | 'weight' | 'product', unlocked: boolean) => {
-    const color = unlocked ? '#FF9F6A' : '#999999';
-    switch (category) {
-      case 'login': return { name: 'calendar' as const, color };
-      case 'weight': return { name: 'activity' as const, color };
-      case 'product': return { name: 'shopping-bag' as const, color };
-      default: return { name: 'award' as const, color };
-    }
-  };
+  const unlockedCount = achievements.filter((item) => item.unlocked).length;
+  const totalCount = achievements.length;
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <View style={styles.container}>
-        
-        {/* 精美現代極簡標題區 */}
-        <View style={styles.titleContainer}>
-          <Text style={styles.headerTitle}>我的成就系統</Text>
-          <Text style={styles.headerSubtitle}>追蹤您的健康旅程里程碑</Text>
+    <SafeAreaView style={styles.container}>
+      <View style={styles.mainContent}>
+
+        <View style={styles.summaryCard}>
+          <Text style={styles.summaryTitle}>我 的 成 就 總 覽</Text>
+          <Text style={styles.summaryProgress}>已解鎖：{unlockedCount} / {totalCount}</Text>
         </View>
 
-        {/* 分頁按鈕 */}
         <View style={styles.tabContainer}>
           <TouchableOpacity
             style={[styles.tabButton, activeTab === 'locked' && styles.tabButtonActive]}
             onPress={() => setActiveTab('locked')}
           >
-            <Text style={[styles.tabText, activeTab === 'locked' && styles.tabTextActive]}>
-              未解鎖 ({achievements.filter((a) => !a.unlocked).length})
-            </Text>
+            <Text style={[styles.tabText, activeTab === 'locked' && styles.tabTextActive]}>未 解 鎖</Text>
           </TouchableOpacity>
+
           <TouchableOpacity
             style={[styles.tabButton, activeTab === 'unlocked' && styles.tabButtonActive]}
             onPress={() => setActiveTab('unlocked')}
           >
-            <Text style={[styles.tabText, activeTab === 'unlocked' && styles.tabTextActive]}>
-              已解鎖 ({achievements.filter((a) => a.unlocked).length})
-            </Text>
+            <Text style={[styles.tabText, activeTab === 'unlocked' && styles.tabTextActive]}>已 解 鎖</Text>
           </TouchableOpacity>
         </View>
 
-        {/* 灰白底卡片與進度條 */}
         <View style={styles.listContainer}>
           {isLoading ? (
-            <View style={styles.loadingContainer}>
+            <View style={styles.loadingBox}>
               <ActivityIndicator size="large" color="#FF9F6A" />
-              <Text style={styles.loadingText}>正在精算您的健康成就...</Text>
+              <Text style={styles.loadingText}>讀取實時資料中...</Text>
             </View>
-          ) : filteredAchievements.length === 0 ? (
-            <ScrollView contentContainerStyle={styles.emptyContainer}>
-              <Feather name="award" size={60} color="#E0E0E0" />
-              <Text style={styles.emptyText}>
-                {activeTab === 'unlocked' ? '目前還沒有解鎖的成就，繼續加油！' : '哇！所有成就都已經解鎖完畢！'}
-              </Text>
-            </ScrollView>
           ) : (
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollListContent}>
-              {filteredAchievements.map((item) => {
-                const iconInfo = getCategoryIconInfo(item.category, item.unlocked);
-                const progressPercentage = `${Math.round((item.currentProgress / item.targetTotal) * 100)}%`;
-
-                return (
+            <ScrollView showsVerticalScrollIndicator={true} contentContainerStyle={styles.scrollListContent}>
+              {filteredAchievements.length === 0 ? (
+                <View style={styles.emptyBox}>
+                  <Text style={styles.emptyText}>
+                    目前沒有{activeTab === 'unlocked' ? '已解鎖' : '未解鎖'}的成就項目。
+                  </Text>
+                </View>
+              ) : (
+                filteredAchievements.map((item) => (
                   <View key={item.id} style={styles.achievementCard}>
                     <View style={styles.achievementLeft}>
-                      
                       <View style={styles.iconContainer}>
-                        <Feather name={iconInfo.name} size={26} color={iconInfo.color} />
+                        <Feather
+                          name={item.unlocked ? 'award' : 'lock'}
+                          size={26}
+                          color={item.unlocked ? '#FF9F6A' : '#B0B0B0'}
+                        />
                       </View>
-                      
-                      <View>
-                        <Text style={[styles.achievementTitle, !item.unlocked && styles.lockedTitleText]}>
-                          {item.title}
-                        </Text>
-                        <Text style={styles.achievementCondition}>
-                          目標：達到 {item.targetTotal} {item.unit}
-                        </Text>
-                        
-                        {/* 嵌入型精美進度條 */}
-                        <View style={styles.progressBarBackground}>
-                          <View style={[styles.progressBarFill, { width: progressPercentage }]} />
-                        </View>
-                      </View>
-                    </View>
-                    
-                    {/* 右側達成狀態 */}
-                    <View style={styles.achievementRight}>
-                      <Text style={[styles.achievementProgress, item.unlocked && styles.unlockedProgressText]}>
-                        {item.currentProgress} / {item.targetTotal}
+                      <Text style={[styles.achievementTitle, !item.unlocked && styles.lockedTitleText]}>
+                        {item.title}
                       </Text>
-                      {item.unlocked && (
-                        <View style={styles.unlockedBadge}>
-                          <Text style={styles.unlockedBadgeText}>已達成</Text>
-                        </View>
-                      )}
                     </View>
+
+                    <Text style={styles.achievementProgress}>
+                      {item.currentProgress > item.targetTotal ? item.targetTotal : item.currentProgress} / {item.targetTotal} {item.unit}
+                    </Text>
                   </View>
-                );
-              })}
+                ))
+              )}
             </ScrollView>
           )}
         </View>
@@ -385,53 +352,26 @@ export default function AchievementsScreen() {
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#FAFAFA' },
-  container: { flex: 1, paddingHorizontal: 35, paddingTop: 30 },
-  titleContainer: { marginBottom: 30, paddingLeft: 5 },
-  headerTitle: { fontSize: 28, fontWeight: '900', color: '#222222', letterSpacing: 0.5, marginBottom: 6 },
-  headerSubtitle: { fontSize: 15, color: '#888888', fontWeight: '500' },
-  
+  container: { flex: 1, backgroundColor: '#F6EFE5' },
+  mainContent: { flex: 1, paddingHorizontal: 80, paddingTop: 10 },
+  summaryCard: { backgroundColor: '#FFF', borderRadius: 25, paddingVertical: 22, paddingHorizontal: 30, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 25, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 3 },
+  summaryTitle: { fontSize: 22, fontWeight: 'bold', color: '#333', letterSpacing: 2 },
+  summaryProgress: { fontSize: 17, color: '#555', fontWeight: '500', letterSpacing: 1 },
   tabContainer: { flexDirection: 'row', marginBottom: 20, paddingLeft: 10 },
   tabButton: { paddingVertical: 6, marginRight: 30, borderBottomWidth: 3, borderBottomColor: 'transparent' },
   tabButtonActive: { borderBottomColor: '#FF9F6A' },
-  tabText: { fontSize: 18, color: '#999999', fontWeight: '500', letterSpacing: 1 },
+  tabText: { fontSize: 18, color: '#999', fontWeight: '500', letterSpacing: 1 },
   tabTextActive: { color: '#FF9F6A', fontWeight: 'bold' },
-  
   listContainer: { flex: 1, width: '100%', marginBottom: 20, borderRadius: 25, overflow: 'hidden' },
   scrollListContent: { paddingVertical: 5, paddingHorizontal: 2 },
-  
-  achievementCard: { 
-    backgroundColor: '#FFFFFF', 
-    borderRadius: 22, 
-    paddingVertical: 20, 
-    paddingHorizontal: 30, 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
-    marginBottom: 14, 
-    shadowColor: '#000000', 
-    shadowOffset: { width: 0, height: 2 }, 
-    shadowOpacity: 0.03, 
-    shadowRadius: 5, 
-    elevation: 2 
-  },
+  achievementCard: { backgroundColor: '#FFF', borderRadius: 22, paddingVertical: 20, paddingHorizontal: 30, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.03, shadowRadius: 5, elevation: 2 },
   achievementLeft: { flexDirection: 'row', alignItems: 'center' },
   iconContainer: { marginRight: 20 },
-  achievementTitle: { fontSize: 17, color: '#333333', fontWeight: 'bold', letterSpacing: 0.5 },
-  lockedTitleText: { color: '#555555' },
-  achievementCondition: { fontSize: 13, color: '#AAAAAA', marginTop: 4, fontWeight: '500' },
-  
-  progressBarBackground: { width: 150, height: 6, backgroundColor: '#F0F0F0', borderRadius: 3, marginTop: 8, overflow: 'hidden' },
-  progressBarFill: { height: '100%', backgroundColor: '#FFBB96', borderRadius: 3 },
-  
-  achievementRight: { alignItems: 'flex-end', justifyContent: 'center' },
-  achievementProgress: { fontSize: 16, color: '#777777', fontWeight: '700', fontFamily: 'monospace' },
-  unlockedProgressText: { color: '#FF9F6A' },
-  unlockedBadge: { backgroundColor: '#FFF0E6', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 8, marginTop: 6 },
-  unlockedBadgeText: { color: '#FF9F6A', fontSize: 11, fontWeight: 'bold' },
-  
-  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loadingText: { marginTop: 15, fontSize: 16, color: '#666666', fontWeight: '500' },
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 100 },
-  emptyText: { marginTop: 20, fontSize: 16, color: '#999999', textAlign: 'center', paddingHorizontal: 40, lineHeight: 24, fontWeight: '500' }
+  achievementTitle: { fontSize: 17, color: '#333', fontWeight: 'bold', letterSpacing: 0.5 },
+  lockedTitleText: { color: '#777', fontWeight: '500' },
+  achievementProgress: { fontSize: 17, color: '#666', fontWeight: '600' },
+  loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center', height: 200 },
+  loadingText: { marginTop: 12, fontSize: 16, color: '#666', fontWeight: '500' },
+  emptyBox: { paddingVertical: 40, alignItems: 'center' },
+  emptyText: { fontSize: 16, color: '#999', fontWeight: '500' }
 });
