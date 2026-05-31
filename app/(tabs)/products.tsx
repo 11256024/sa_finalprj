@@ -159,7 +159,11 @@ export default function ProductsScreen() {
   };
 
   const loadSavedProducts = async (force = false) => {
-    if (isFetchingRef.current) return;
+    if (isFetchingRef.current) {
+      // 已有同時進行的請求；不要在這裡關掉 isLoading，否則畫面會先閃「找不到相關商品」。
+      // 等正在跑的那個請求結束，自然會把 isLoading 關掉。
+      return;
+    }
     isFetchingRef.current = true;
 
     try {
