@@ -1,7 +1,7 @@
 import { Feather } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
 const API_URL = 'http://127.0.0.1:8000';
@@ -16,348 +16,365 @@ interface AchievementItem {
   unit: string;
 }
 
-interface Product {
-  id: string;
-  name: string;
-  unit: string;
-  calories: number;
-  status: 'approved' | 'pending' | 'rejected';
-  creatorId?: string;
-}
-
 export default function AchievementsScreen() {
   const [activeTab, setActiveTab] = useState<'locked' | 'unlocked'>('locked');
   const [isLoading, setIsLoading] = useState(true);
   const [achievements, setAchievements] = useState<AchievementItem[]>([]);
 
+  // 取得基準營業日期 (台灣時間 00:00~23:59 算同一天)
   const getBaseBusinessDate = () => {
     const now = new Date();
     const utc = now.getTime() + now.getTimezoneOffset() * 60000;
-    const twDate = new Date(utc + 3600000 * 8);
-    const hours = twDate.getHours();
-    if (hours < 12) {
-      twDate.setDate(twDate.getDate() - 1);
-    }
-    return twDate;
+    return new Date(utc + 3600000 * 8); 
   };
 
-  const formatQueryDate = (targetDate: Date) => {
-    const year = targetDate.getFullYear();
-    const month = targetDate.getMonth() + 1;
-    const date = targetDate.getDate();
-    return `${year}-${month < 10 ? `0${month}` : month}-${date < 10 ? `0${date}` : date}`;
+  // ⚡ 效能優化：用字串拼接取代極慢的 Intl.DateTimeFormat，大迴圈不卡頓
+  const getTaiwanDateString = (dateObj: Date) => {
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   };
 
-  const mapProductFromApi = (item: any): Product => ({
-    id: String(item.id),
-    name: item.name || '',
-    unit: item.unit || '',
-    calories: Number(item.calories || 0),
-    status: item.status || 'approved',
-    creatorId: item.creator !== null && item.creator !== undefined
-      ? String(item.creator)
-      : (item.creator_id !== null && item.creator_id !== undefined ? String(item.creator_id) : ''),
-  });
-
-  // 🌐 【🚀 0秒閃現版】將本機與網路解耦
-  const checkAndLoadAchievements = async () => {
-    // 如果已經有資料，切換時就不要再顯示大轉圈圈，提升體感速度
-    if (achievements.length === 0) {
-      setIsLoading(true);
-    }
-    
+  const getCurrentMemberId = async () => {
     try {
-      // -----------------------------------------------------------------
-      // ⚖️ STEP 1: 優先極速處理本機快取 (耗時 < 2ms) -> 確保 1 秒內絕對出畫面
-      // -----------------------------------------------------------------
       const userStr = await AsyncStorage.getItem('user');
-      const user = userStr ? JSON.parse(userStr) : null;
-      const id = user?.id?.toString?.() || await AsyncStorage.getItem('current_user_id') || await AsyncStorage.getItem('member_id') || '';
-      const finalUserId = /^\d+$/.test(id) ? id : 'guest';
-
-      const baseBusinessDate = getBaseBusinessDate();
-      let loginStreak = 0;
-      let latestActualWeight: number | null = null;
-
-      const validDatesSet = new Set<string>();
-      for (let i = 0; i < 30; i++) {
-        const d = new Date(baseBusinessDate);
-        d.setDate(baseBusinessDate.getDate() - i);
-        validDatesSet.add(formatQueryDate(d));
-      }
-
-      const allKeys = await AsyncStorage.getAllKeys();
-      const targetKeys = allKeys.filter(key => {
-        const isTargetPattern = key.startsWith(`${finalUserId}_food_record_`) || key.startsWith('daily_record_') || key.startsWith('food_record_');
-        if (!isTargetPattern) return false;
-        const datePart = key.replace(`${finalUserId}_food_record_`, '').replace('daily_record_', '').replace('food_record_', '');
-        return validDatesSet.has(datePart);
-      });
-
-      if (targetKeys.length > 0) {
-        const keyValuePairs = await AsyncStorage.multiGet(targetKeys);
-        const records = keyValuePairs
-          .map(([_, val]) => (val ? JSON.parse(val) : null))
-          .filter(r => r && r.weight && parseFloat(r.weight) > 0);
-
-        loginStreak = records.length;
-        if (records.length > 0) {
-          latestActualWeight = parseFloat(records[0].weight);
-        }
-      }
-
-      // 🌐 後端 DailyLogs 為主要資料源（換手機/重灌仍可累計）
-      if (/^\d+$/.test(finalUserId)) {
-        try {
-          const resp = await fetch(`${API_URL}/daily-logs/?member_id=${finalUserId}`);
-          if (resp.ok) {
-            const data = await resp.json();
-            if (Array.isArray(data)) {
-              const validRows = data
-                .filter((r: any) => r?.date && parseFloat(r.weight) > 0 && validDatesSet.has(r.date))
-                .sort((a: any, b: any) => (a.date < b.date ? 1 : -1));
-
-              const backendStreak = validRows.length;
-              if (backendStreak > loginStreak) loginStreak = backendStreak;
-
-              if (validRows.length > 0) {
-                const backendLatest = parseFloat(validRows[0].weight);
-                if (!isNaN(backendLatest) && backendLatest > 0) {
-                  latestActualWeight = backendLatest;
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.log('成就頁從後端拿 daily-logs 失敗，沿用本機', e);
-        }
-      }
-
-      let weightLoss = 0;
-      let memberCenterWeight = 0;
-      const memberProfileStr = await AsyncStorage.getItem('user_profile') || await AsyncStorage.getItem('user');
-      const directWeight = await AsyncStorage.getItem(`${finalUserId}_user_weight`) || await AsyncStorage.getItem('weight');
-      
-      if (memberProfileStr) {
-        try {
-          const profile = JSON.parse(memberProfileStr);
-          if (profile && profile.weight) memberCenterWeight = parseFloat(profile.weight);
-        } catch {
-          if (!isNaN(Number(memberProfileStr))) memberCenterWeight = parseFloat(memberProfileStr);
-        }
-      }
-      if (memberCenterWeight === 0 && directWeight) {
-        memberCenterWeight = parseFloat(directWeight);
-      }
-
-      // 🌐 也從後端拉一次會員 initial_weight，作為「起始體重」
-      if (/^\d+$/.test(finalUserId)) {
-        try {
-          const resp = await fetch(`${API_URL}/member/profile/${finalUserId}/`);
-          if (resp.ok) {
-            const data = await resp.json();
-            const iw = parseFloat(data?.member?.initial_weight);
-            if (!isNaN(iw) && iw > 0 && memberCenterWeight === 0) {
-              memberCenterWeight = iw;
-            }
-          }
-        } catch (e) {
-          console.log('成就頁從後端拿 member profile 失敗', e);
-        }
-      }
-
-      if (memberCenterWeight > 0 && latestActualWeight !== null) {
-        const diff = memberCenterWeight - latestActualWeight;
-        weightLoss = diff > 0 ? Math.round(diff * 10) / 10 : 0;
-      }
-
-      // 先行讀取上次留存的商品數快取，達到 0 延遲
-      const cachedProductCountStr = await AsyncStorage.getItem(`${finalUserId}_cached_product_count`);
-      let approvedProductCount = cachedProductCountStr ? parseInt(cachedProductCountStr, 10) : 0;
-
-      // 🌐 從後端拿「已解鎖成就」（DB 為唯一真來源，達過一次就永久保留）
-      const earnedCodeSet = new Set<string>();
-      if (/^\d+$/.test(finalUserId)) {
-        try {
-          const respA = await fetch(`${API_URL}/achievements/?member_id=${finalUserId}`);
-          if (respA.ok) {
-            const list = await respA.json();
-            if (Array.isArray(list)) {
-              for (const it of list) {
-                if (it?.code && it?.earned_at) earnedCodeSet.add(it.code);
-              }
-            }
-          }
-        } catch (e) {
-          console.log('拿已解鎖成就列表失敗，這次先用即時條件判定', e);
-        }
-      }
-
-      // 🔄 先行封裝列表，直接結束 Loading 狀態渲染畫面！
-      const buildList = (pCount: number): AchievementItem[] => {
-        const raw: { id: string; category: 'login' | 'weight' | 'product'; title: string; currentProgress: number; targetTotal: number; condMet: boolean; unit: string }[] = [
-          { id: 'l1',  category: 'login',  title: '初來乍到 (連續紀錄體重 1 天)',  currentProgress: loginStreak, targetTotal: 1,   condMet: loginStreak >= 1,  unit: '天' },
-          { id: 'l3',  category: 'login',  title: '養成習慣 (連續紀錄體重 3 天)',  currentProgress: loginStreak, targetTotal: 3,   condMet: loginStreak >= 3,  unit: '天' },
-          { id: 'l7',  category: 'login',  title: '持之以恆 (連續紀錄體重 7 天)',  currentProgress: loginStreak, targetTotal: 7,   condMet: loginStreak >= 7,  unit: '天' },
-          { id: 'l30', category: 'login',  title: '自律達人 (連續紀錄體重 30 天)', currentProgress: loginStreak, targetTotal: 30,  condMet: loginStreak >= 30, unit: '天' },
-          { id: 'w05', category: 'weight', title: '輕盈起步 (體重減少 0.5 KG)',    currentProgress: weightLoss,  targetTotal: 0.5, condMet: weightLoss >= 0.5, unit: 'KG' },
-          { id: 'w1',  category: 'weight', title: '看見成效 (體重減少 1 KG)',      currentProgress: weightLoss,  targetTotal: 1,   condMet: weightLoss >= 1,   unit: 'KG' },
-          { id: 'w3',  category: 'weight', title: '煥然一新 (體重減少 3 KG)',      currentProgress: weightLoss,  targetTotal: 3,   condMet: weightLoss >= 3,   unit: 'KG' },
-          { id: 'w5',  category: 'weight', title: '完美蛻變 (體重減少 5 KG)',      currentProgress: weightLoss,  targetTotal: 5,   condMet: weightLoss >= 5,   unit: 'KG' },
-          { id: 'p1',  category: 'product', title: '誠信商家 (審核上架商品 1 件)',  currentProgress: pCount,      targetTotal: 1,   condMet: pCount >= 1,       unit: '件' },
-          { id: 'p3',  category: 'product', title: '精選賣家 (審核上架商品 3 件)',  currentProgress: pCount,      targetTotal: 3,   condMet: pCount >= 3,       unit: '件' },
-          { id: 'p5',  category: 'product', title: '琳瑯滿目 (審核上架商品 5 件)',  currentProgress: pCount,      targetTotal: 5,   condMet: pCount >= 5,       unit: '件' },
-          { id: 'p10', category: 'product', title: '超級商城 (審核上架商品 10 件)', currentProgress: pCount,      targetTotal: 10,  condMet: pCount >= 10,      unit: '件' },
-        ];
-
-        const list: AchievementItem[] = raw.map(r => ({
-          id: r.id,
-          category: r.category,
-          title: r.title,
-          currentProgress: r.currentProgress,
-          targetTotal: r.targetTotal,
-          unit: r.unit,
-          // 解鎖 = 已寫進 DB ∪ 本次條件達成；不會因為條件回退而消失
-          unlocked: r.condMet || earnedCodeSet.has(r.id),
-        }));
-
-        // 本次新達標但 DB 還沒紀錄的 → 背景 POST 寫回，下次進頁就成永久解鎖
-        if (/^\d+$/.test(finalUserId)) {
-          const newCodes = raw.filter(r => r.condMet && !earnedCodeSet.has(r.id)).map(r => r.id);
-          if (newCodes.length > 0) {
-            (async () => {
-              try {
-                await fetch(`${API_URL}/achievements/unlock/`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ member_id: Number(finalUserId), codes: newCodes }),
-                });
-                newCodes.forEach(c => earnedCodeSet.add(c));
-              } catch (err) {
-                console.log('解鎖成就寫入後端失敗（下次進頁會再試）', err);
-              }
-            })();
-          }
-        }
-
-        return list;
-      };
-
-      setAchievements(buildList(approvedProductCount));
-      setIsLoading(false); // 🔥 這裡直接關閉轉圈圈！畫面秒亮！
-
-      // -----------------------------------------------------------------
-      // 📦 STEP 2: 讓超級慢的 Django Fetch 在【背景】偷偷跑，絕不卡住前台
-      // -----------------------------------------------------------------
-      if (finalUserId !== 'guest') {
-        // 使用非阻塞的立即使行函數 (IIFE) 抽離網路請求
-        (async () => {
-          try {
-            const response = await fetch(`${API_URL}/products/?creator_id=${finalUserId}`);
-            const text = await response.text();
-            const data = text ? JSON.parse(text) : [];
-            
-            if (response.ok && Array.isArray(data)) {
-              const myApprovedProducts = data
-                .map(mapProductFromApi)
-                .filter(product => product.creatorId === finalUserId && product.status === 'approved');
-              
-              const freshCount = myApprovedProducts.length;
-              // 更新快取，下次進來更快
-              await AsyncStorage.setItem(`${finalUserId}_cached_product_count`, String(freshCount));
-              // 悄悄更新前台狀態
-              setAchievements(buildList(freshCount));
-            }
-          } catch (e) {
-            console.log('背景即時更新商品數失敗，沿用快取數據。', e);
-          }
-        })();
-      }
-
-    } catch (error) {
-      console.error('成就館載入失敗:', error);
-      setIsLoading(false);
+      const currentUser = userStr ? JSON.parse(userStr) : null;
+      const memberId =
+        currentUser?.id?.toString?.() ||
+        (await AsyncStorage.getItem('current_user_id')) ||
+        (await AsyncStorage.getItem('member_id')) ||
+        'guest';
+      return /^\d+$/.test(memberId) ? memberId : 'guest';
+    } catch {
+      return 'guest';
     }
   };
 
-  useEffect(() => {
-    checkAndLoadAchievements();
-  }, []);
+  // 核心數據計算邏輯 
+  const calculateAndRender = (
+    recordsPairs: [string, string | null][], 
+    memberProfileWeight: number, // 這邊傳入的是精準的初始登記體重
+    pList: any[], 
+    currentUid: string
+  ) => {
+    const baseDate = getBaseBusinessDate();
+    const last30Days: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      const d = new Date(baseDate.getTime());
+      d.setDate(baseDate.getDate() - i);
+      last30Days.push(getTaiwanDateString(d));
+    }
+
+    // 將二維陣列扁平化至 Lookup 快取物件中，實現 O(1) 查找速度
+    const recordsLookup: Record<string, string> = {};
+    const len = recordsPairs.length;
+    for (let i = 0; i < len; i++) {
+      if (recordsPairs[i][1]) {
+        recordsLookup[recordsPairs[i][0]] = recordsPairs[i][1]!;
+      }
+    }
+
+    // A. 連續紀錄體重天數統計
+    let loginStreak = 0;
+    for (let i = 0; i < 30; i++) {
+      const dateStr = last30Days[i];
+      const key = `${currentUid}_food_record_${dateStr}`;
+      const savedDataStr = recordsLookup[key];
+      let hasWeight = false;
+      
+      if (savedDataStr) {
+        try {
+          const parsed = JSON.parse(savedDataStr);
+          if (parsed.hasDailyWeight === true && parsed.weight && parsed.weight.toString().trim() !== '') {
+            hasWeight = true;
+          }
+        } catch {}
+      }
+      
+      if (hasWeight) {
+        loginStreak++;
+      } else {
+        break;
+      }
+    }
+
+    // B. 🎯 精準對齊公式：減重斤數 = 每日最新紀錄體重 - 會員初始登記體重
+    let latestDailyWeight = 0;
+    let foundLatest = false;
+
+    // 從今天往回尋找過去 30 天內最新的一筆每日體重紀錄
+    for (let i = 0; i < 30; i++) {
+      const dateStr = last30Days[i];
+      const key = `${currentUid}_food_record_${dateStr}`;
+      const savedDataStr = recordsLookup[key];
+      if (savedDataStr) {
+        try {
+          const parsed = JSON.parse(savedDataStr);
+          if (parsed.hasDailyWeight === true && parsed.weight && parsed.weight.toString().trim() !== '') {
+            const w = parseFloat(parsed.weight);
+            if (!isNaN(w) && w > 0) {
+              latestDailyWeight = w;
+              foundLatest = true;
+              break; 
+            }
+          }
+        } catch {}
+      }
+    }
+
+    // 依照您的要求校正：每日紀錄減去會員初始紀錄，並轉換為合理的減重正值
+    let weightLoss = 0;
+    if (memberProfileWeight > 0 && foundLatest && latestDailyWeight > 0) {
+      // 每日最新紀錄 - 會員初始紀錄
+      const rawDiff = latestDailyWeight - memberProfileWeight;
+      
+      // 如果每日最新比初始會員小，代表體重減輕了，差值為負，取絕對值當作減少的公斤數
+      if (rawDiff < 0) {
+        weightLoss = Math.abs(rawDiff);
+      } else {
+        // 如果最新體重變胖或沒變，減重數值計為 0
+        weightLoss = 0;
+      }
+    }
+    weightLoss = parseFloat(weightLoss.toFixed(1));
+
+    // C. 審核上架商品件數統計
+    let pCount = 0;
+    const targetUidStr = String(currentUid).trim();
+    const pLen = pList.length;
+    for (let i = 0; i < pLen; i++) {
+      const item = pList[i];
+      if (!item) continue;
+      let cId = '';
+      if (item.creator_id !== null && item.creator_id !== undefined) {
+        cId = String(item.creator_id);
+      } else if (item.creator && typeof item.creator === 'object' && item.creator.id !== undefined) {
+        cId = String(item.creator.id);
+      }
+      const itemStatus = item.status ? String(item.status).trim().toLowerCase() : '';
+
+      if (itemStatus === 'approved' && cId === targetUidStr) {
+        pCount++;
+      }
+    }
+
+    const rules = [
+      { id: 'l1',  category: 'login' as const, title: '初來乍到 (連續紀錄體重 1 天)',  currentProgress: loginStreak, targetTotal: 1,  unit: '天' },
+      { id: 'l3',  category: 'login' as const, title: '養成習慣 (連續紀錄體重 3 天)',  currentProgress: loginStreak, targetTotal: 3,  unit: '天' },
+      { id: 'l7',  category: 'login' as const, title: '持之以恆 (連續紀錄體重 7 天)',  currentProgress: loginStreak, targetTotal: 7,  unit: '天' },
+      { id: 'l30', category: 'login' as const, title: '自律達人 (連續紀錄體重 30 天)', currentProgress: loginStreak, targetTotal: 30, unit: '天' },
+      { id: 'w05', category: 'weight' as const, title: '輕盈起步 (體重減少 0.5 KG)',    currentProgress: weightLoss,  targetTotal: 0.5, unit: 'KG' },
+      { id: 'w1',  category: 'weight' as const, title: '看見成效 (體重減少 1 KG)',       currentProgress: weightLoss,  targetTotal: 1,   unit: 'KG' },
+      { id: 'w3',  category: 'weight' as const, title: '煥然一新 (體重減少 3 KG)',       currentProgress: weightLoss,  targetTotal: 3,   unit: 'KG' },
+      { id: 'w5',  category: 'weight' as const, title: '完美蛻變 (體重減少 5 KG)',       currentProgress: weightLoss,  targetTotal: 5,   unit: 'KG' },
+      { id: 'p1',  category: 'product' as const, title: '誠信商家 (審架商品 1 件)',      currentProgress: pCount,      targetTotal: 1,   unit: '件' },
+      { id: 'p3',  category: 'product' as const, title: '精選賣家 (審架商品 3 件)',      currentProgress: pCount,      targetTotal: 3,   unit: '件' },
+      { id: 'p5',  category: 'product' as const, title: '琳瑯滿目 (審架商品 5 件)',      currentProgress: pCount,      targetTotal: 5,   unit: '件' },
+      { id: 'p10', category: 'product' as const, title: '超級商城 (審架商品 10 件)',     currentProgress: pCount,      targetTotal: 10,  unit: '件' },
+    ];
+
+    return rules.map((r) => {
+      let progress = r.currentProgress;
+      if (progress > r.targetTotal) progress = r.targetTotal;
+      return {
+        id: r.id,
+        category: r.category,
+        title: r.title,
+        currentProgress: progress,
+        targetTotal: r.targetTotal,
+        unlocked: r.currentProgress >= r.targetTotal,
+        unit: r.unit,
+      };
+    });
+  };
 
   useFocusEffect(
     useCallback(() => {
-      checkAndLoadAchievements();
+      let isMounted = true;
+
+      const runCoreLogic = async () => {
+        try {
+          const currentUid = await getCurrentMemberId();
+
+          // 【秒開優化 1】讀取上一次儲存的整合快取，0 毫秒瞬間展開頁面
+          const fastCachedResults = await AsyncStorage.getItem(`${currentUid}_fast_cached_achievements`);
+          if (fastCachedResults && isMounted) {
+            setAchievements(JSON.parse(fastCachedResults));
+            setIsLoading(false);
+          }
+
+          const baseDate = getBaseBusinessDate();
+          const storageKeys: string[] = [];
+          for (let i = 0; i < 30; i++) {
+            const d = new Date(baseDate.getTime());
+            d.setDate(baseDate.getDate() - i);
+            storageKeys.push(`${currentUid}_food_record_${getTaiwanDateString(d)}`);
+          }
+
+          // 🎯 精準修正對齊：從 profile.tsx 使用的 Key `${currentUid}_user_weight` 載入初始體重
+          const [recordsPairs, cachedWeightStr, cachedProductsStr] = await Promise.all([
+            AsyncStorage.multiGet(storageKeys),
+            AsyncStorage.getItem(`${currentUid}_user_weight`), 
+            AsyncStorage.getItem(`cached_global_products`)
+          ]);
+
+          let initialWeight = cachedWeightStr ? parseFloat(cachedWeightStr) : 0;
+          let initialProducts: any[] = cachedProductsStr ? JSON.parse(cachedProductsStr) : [];
+
+          if (!fastCachedResults && isMounted) {
+            const initialResult = calculateAndRender(recordsPairs, initialWeight, initialProducts, currentUid);
+            setAchievements(initialResult);
+            setIsLoading(false);
+          }
+
+          // 【秒開優化 2】遠端網路 API 請求在背景運作
+          Promise.all([
+            fetch(`${API_URL}/member/profile/${currentUid}/`).then(res => res.ok ? res.json() : null).catch(() => null),
+            fetch(`${API_URL}/products/`).then(res => res.ok ? res.json() : null).catch(() => null)
+          ]).then(async ([profileData, productData]) => {
+            if (!isMounted) return;
+            let updated = false;
+
+            // 🎯 精準修正對齊：後端傳回的欄位是 member.initial_weight
+            if (profileData?.success && profileData?.member?.initial_weight) {
+              const netWeight = parseFloat(profileData.member.initial_weight);
+              if (netWeight !== initialWeight) {
+                initialWeight = netWeight;
+                updated = true;
+                await AsyncStorage.setItem(`${currentUid}_user_weight`, String(netWeight));
+              }
+            }
+
+            if (productData) {
+              const netProducts = Array.isArray(productData) ? productData : (productData?.products || []);
+              initialProducts = netProducts;
+              updated = true;
+              await AsyncStorage.setItem(`cached_global_products`, JSON.stringify(netProducts));
+            }
+
+            // 若背景獲取數值有變，安靜刷新 UI 並回填秒開快取
+            if (updated || !fastCachedResults) {
+              const finalResult = calculateAndRender(recordsPairs, initialWeight, initialProducts, currentUid);
+              if (isMounted) {
+                setAchievements(finalResult);
+              }
+              await AsyncStorage.setItem(`${currentUid}_fast_cached_achievements`, JSON.stringify(finalResult));
+            }
+          });
+
+        } catch (error) {
+          console.error(error);
+          if (isMounted) setIsLoading(false);
+        }
+      };
+
+      runCoreLogic();
+      return () => { isMounted = false; };
     }, [])
   );
 
-  const filteredAchievements = achievements.filter(item => 
+  const filteredAchievements = achievements.filter((item) =>
     activeTab === 'unlocked' ? item.unlocked : !item.unlocked
   );
 
-  const unlockedCount = achievements.filter(item => item.unlocked).length;
-  const totalCount = achievements.length;
+  const getCategoryIconInfo = (category: 'login' | 'weight' | 'product', unlocked: boolean) => {
+    const color = unlocked ? '#FF9F6A' : '#999999';
+    switch (category) {
+      case 'login': return { name: 'calendar' as const, color };
+      case 'weight': return { name: 'activity' as const, color };
+      case 'product': return { name: 'shopping-bag' as const, color };
+      default: return { name: 'award' as const, color };
+    }
+  };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.mainContent}>
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.container}>
         
-        <View style={styles.summaryCard}>
-          <Text style={styles.summaryTitle}>我 的 成 就 館</Text>
-          <Text style={styles.summaryProgress}>已解鎖 {unlockedCount} / {totalCount}</Text>
+        {/* 精美現代極簡標題區 */}
+        <View style={styles.titleContainer}>
+          <Text style={styles.headerTitle}>我的成就系統</Text>
+          <Text style={styles.headerSubtitle}>追蹤您的健康旅程里程碑</Text>
         </View>
 
+        {/* 分頁按鈕 */}
         <View style={styles.tabContainer}>
-          <TouchableOpacity 
-            style={[styles.tabButton, activeTab === 'locked' && styles.tabButtonActive]} 
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'locked' && styles.tabButtonActive]}
             onPress={() => setActiveTab('locked')}
           >
-            <Text style={[styles.tabText, activeTab === 'locked' && styles.tabTextActive]}>未 解 鎖</Text>
+            <Text style={[styles.tabText, activeTab === 'locked' && styles.tabTextActive]}>
+              未解鎖 ({achievements.filter((a) => !a.unlocked).length})
+            </Text>
           </TouchableOpacity>
-          
-          <TouchableOpacity 
-            style={[styles.tabButton, activeTab === 'unlocked' && styles.tabButtonActive]} 
+          <TouchableOpacity
+            style={[styles.tabButton, activeTab === 'unlocked' && styles.tabButtonActive]}
             onPress={() => setActiveTab('unlocked')}
           >
-            <Text style={[styles.tabText, activeTab === 'unlocked' && styles.tabTextActive]}>已 解 鎖</Text>
+            <Text style={[styles.tabText, activeTab === 'unlocked' && styles.tabTextActive]}>
+              已解鎖 ({achievements.filter((a) => a.unlocked).length})
+            </Text>
           </TouchableOpacity>
         </View>
 
+        {/* 灰白底卡片與進度條 */}
         <View style={styles.listContainer}>
           {isLoading ? (
-            <View style={styles.loadingBox}>
+            <View style={styles.loadingContainer}>
               <ActivityIndicator size="large" color="#FF9F6A" />
-              <Text style={styles.loadingText}>讀取實際數據校正中...</Text>
+              <Text style={styles.loadingText}>正在精算您的健康成就...</Text>
             </View>
+          ) : filteredAchievements.length === 0 ? (
+            <ScrollView contentContainerStyle={styles.emptyContainer}>
+              <Feather name="award" size={60} color="#E0E0E0" />
+              <Text style={styles.emptyText}>
+                {activeTab === 'unlocked' ? '目前還沒有解鎖的成就，繼續加油！' : '哇！所有成就都已經解鎖完畢！'}
+              </Text>
+            </ScrollView>
           ) : (
-            <ScrollView showsVerticalScrollIndicator={true} contentContainerStyle={styles.scrollListContent}>
-              {filteredAchievements.length === 0 ? (
-                <View style={styles.emptyBox}>
-                  <Text style={styles.emptyText}>
-                    目前沒有{activeTab === 'unlocked' ? '已解鎖' : '未解鎖'}的成就項目
-                  </Text>
-                </View>
-              ) : (
-                filteredAchievements.map((item) => (
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollListContent}>
+              {filteredAchievements.map((item) => {
+                const iconInfo = getCategoryIconInfo(item.category, item.unlocked);
+                const progressPercentage = `${Math.round((item.currentProgress / item.targetTotal) * 100)}%`;
+
+                return (
                   <View key={item.id} style={styles.achievementCard}>
                     <View style={styles.achievementLeft}>
+                      
                       <View style={styles.iconContainer}>
-                        <Feather 
-                          name={item.unlocked ? "award" : "lock"} 
-                          size={26} 
-                          color={item.unlocked ? "#FF9F6A" : "#B0B0B0"} 
-                        />
+                        <Feather name={iconInfo.name} size={26} color={iconInfo.color} />
                       </View>
-                      <Text style={[styles.achievementTitle, !item.unlocked && styles.lockedTitleText]}>
-                        {item.title}
-                      </Text>
+                      
+                      <View>
+                        <Text style={[styles.achievementTitle, !item.unlocked && styles.lockedTitleText]}>
+                          {item.title}
+                        </Text>
+                        <Text style={styles.achievementCondition}>
+                          目標：達到 {item.targetTotal} {item.unit}
+                        </Text>
+                        
+                        {/* 嵌入型精美進度條 */}
+                        <View style={styles.progressBarBackground}>
+                          <View style={[styles.progressBarFill, { width: progressPercentage }]} />
+                        </View>
+                      </View>
                     </View>
                     
-                    <Text style={styles.achievementProgress}>
-                      {item.currentProgress > item.targetTotal ? item.targetTotal : item.currentProgress} / {item.targetTotal} {item.unit}
-                    </Text>
+                    {/* 右側達成狀態 */}
+                    <View style={styles.achievementRight}>
+                      <Text style={[styles.achievementProgress, item.unlocked && styles.unlockedProgressText]}>
+                        {item.currentProgress} / {item.targetTotal}
+                      </Text>
+                      {item.unlocked && (
+                        <View style={styles.unlockedBadge}>
+                          <Text style={styles.unlockedBadgeText}>已達成</Text>
+                        </View>
+                      )}
+                    </View>
                   </View>
-                ))
-              )}
+                );
+              })}
             </ScrollView>
           )}
         </View>
@@ -368,26 +385,53 @@ export default function AchievementsScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F6EFE5' },
-  mainContent: { flex: 1, paddingHorizontal: 80, paddingTop: 10 },
-  summaryCard: { backgroundColor: '#FFF', borderRadius: 25, paddingVertical: 22, paddingHorizontal: 30, flexDirection: 'row', justifyBox: 'space-between', alignItems: 'center', marginTop: 25, marginBottom: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 3 },
-  summaryTitle: { fontSize: 22, fontWeight: 'bold', color: '#333', letterSpacing: 2 },
-  summaryProgress: { fontSize: 17, color: '#555', fontWeight: '500', letterSpacing: 1 },
+  safeArea: { flex: 1, backgroundColor: '#FAFAFA' },
+  container: { flex: 1, paddingHorizontal: 35, paddingTop: 30 },
+  titleContainer: { marginBottom: 30, paddingLeft: 5 },
+  headerTitle: { fontSize: 28, fontWeight: '900', color: '#222222', letterSpacing: 0.5, marginBottom: 6 },
+  headerSubtitle: { fontSize: 15, color: '#888888', fontWeight: '500' },
+  
   tabContainer: { flexDirection: 'row', marginBottom: 20, paddingLeft: 10 },
   tabButton: { paddingVertical: 6, marginRight: 30, borderBottomWidth: 3, borderBottomColor: 'transparent' },
   tabButtonActive: { borderBottomColor: '#FF9F6A' },
-  tabText: { fontSize: 18, color: '#999', fontWeight: '500', letterSpacing: 1 },
+  tabText: { fontSize: 18, color: '#999999', fontWeight: '500', letterSpacing: 1 },
   tabTextActive: { color: '#FF9F6A', fontWeight: 'bold' },
+  
   listContainer: { flex: 1, width: '100%', marginBottom: 20, borderRadius: 25, overflow: 'hidden' },
   scrollListContent: { paddingVertical: 5, paddingHorizontal: 2 },
-  achievementCard: { backgroundColor: '#FFF', borderRadius: 22, paddingVertical: 20, paddingHorizontal: 30, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.03, shadowRadius: 5, elevation: 2 },
+  
+  achievementCard: { 
+    backgroundColor: '#FFFFFF', 
+    borderRadius: 22, 
+    paddingVertical: 20, 
+    paddingHorizontal: 30, 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    marginBottom: 14, 
+    shadowColor: '#000000', 
+    shadowOffset: { width: 0, height: 2 }, 
+    shadowOpacity: 0.03, 
+    shadowRadius: 5, 
+    elevation: 2 
+  },
   achievementLeft: { flexDirection: 'row', alignItems: 'center' },
   iconContainer: { marginRight: 20 },
-  achievementTitle: { fontSize: 17, color: '#333', fontWeight: 'bold', letterSpacing: 0.5 },
-  lockedTitleText: { color: '#777', fontWeight: '500' },
-  achievementProgress: { fontSize: 17, color: '#666', fontWeight: '600' },
-  loadingBox: { flex: 1, justifyContent: 'center', alignItems: 'center', height: 200 },
-  loadingText: { marginTop: 12, fontSize: 16, color: '#666', fontWeight: '500' },
-  emptyBox: { paddingVertical: 40, alignItems: 'center' },
-  emptyText: { fontSize: 16, color: '#999', fontWeight: '500' }
+  achievementTitle: { fontSize: 17, color: '#333333', fontWeight: 'bold', letterSpacing: 0.5 },
+  lockedTitleText: { color: '#555555' },
+  achievementCondition: { fontSize: 13, color: '#AAAAAA', marginTop: 4, fontWeight: '500' },
+  
+  progressBarBackground: { width: 150, height: 6, backgroundColor: '#F0F0F0', borderRadius: 3, marginTop: 8, overflow: 'hidden' },
+  progressBarFill: { height: '100%', backgroundColor: '#FFBB96', borderRadius: 3 },
+  
+  achievementRight: { alignItems: 'flex-end', justifyContent: 'center' },
+  achievementProgress: { fontSize: 16, color: '#777777', fontWeight: '700', fontFamily: 'monospace' },
+  unlockedProgressText: { color: '#FF9F6A' },
+  unlockedBadge: { backgroundColor: '#FFF0E6', paddingHorizontal: 10, paddingVertical: 3, borderRadius: 8, marginTop: 6 },
+  unlockedBadgeText: { color: '#FF9F6A', fontSize: 11, fontWeight: 'bold' },
+  
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  loadingText: { marginTop: 15, fontSize: 16, color: '#666666', fontWeight: '500' },
+  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 100 },
+  emptyText: { marginTop: 20, fontSize: 16, color: '#999999', textAlign: 'center', paddingHorizontal: 40, lineHeight: 24, fontWeight: '500' }
 });
