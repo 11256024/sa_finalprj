@@ -417,89 +417,13 @@ export default function DailyRecordScreen() {
     return { calculatedBmi, calculatedStatus };
   };
 
-  const updateMemberWeightLocalCache = async (newWeight: string) => {
-    const cleanWeight = newWeight.trim();
-
-    if (!cleanWeight || isNaN(Number(cleanWeight))) {
-      return;
-    }
-
-    const memberId = await getCurrentMemberId();
-
-    if (!memberId || memberId === 'guest') {
-      console.log('找不到會員 ID，無法同步會員體重快取');
-      return;
-    }
-
-    // 先更新本機快取，讓切到會員中心時可以立刻看到最新體重
-    await AsyncStorage.setItem(`${memberId}_user_weight`, cleanWeight);
-
-    const profileRaw = await AsyncStorage.getItem(`${memberId}_user_profile`);
-    if (profileRaw) {
-      try {
-        const profile = JSON.parse(profileRaw);
-        profile.weight = cleanWeight;
-        profile.initial_weight = Number(cleanWeight);
-        await AsyncStorage.setItem(`${memberId}_user_profile`, JSON.stringify(profile));
-      } catch (e) {
-        console.log('更新會員體重快取失敗:', e);
-      }
-    }
-
-    const userRaw = await AsyncStorage.getItem('user');
-    if (userRaw) {
-      try {
-        const user = JSON.parse(userRaw);
-        if (String(user?.id) === memberId) {
-          user.initial_weight = Number(cleanWeight);
-          user.weight = cleanWeight;
-          await AsyncStorage.setItem('user', JSON.stringify(user));
-        }
-      } catch (e) {
-        console.log('更新登入使用者體重快取失敗:', e);
-      }
-    }
+  // 會員中心的體重不再與每日紀錄同步，這兩個函式保留為 no-op 以避免大規模改動呼叫點
+  const updateMemberWeightLocalCache = async (_newWeight: string) => {
+    return;
   };
 
-  const updateMemberWeightToBackend = async (newWeight: string) => {
-    try {
-      const cleanWeight = newWeight.trim();
-
-      if (!cleanWeight || isNaN(Number(cleanWeight))) {
-        return;
-      }
-
-      const memberId = await getCurrentMemberId();
-
-      if (!memberId || memberId === 'guest') {
-        console.log('找不到會員 ID，無法同步會員體重');
-        return;
-      }
-
-      // 先更新快取，再打後端。這樣切到會員中心時不會看到舊體重。
-      await updateMemberWeightLocalCache(cleanWeight);
-
-      const response = await fetch(`${API_URL}/members/${memberId}/profile/`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          initial_weight: Number(cleanWeight),
-        }),
-      });
-
-      const data = await parseApiResponse(response);
-
-      if (!response.ok || data.success === false) {
-        console.log('同步會員體重失敗:', data);
-        return;
-      }
-
-      console.log('會員體重已同步到後端:', cleanWeight);
-    } catch (e) {
-      console.error('同步會員體重錯誤:', e);
-    }
+  const updateMemberWeightToBackend = async (_newWeight: string) => {
+    return;
   };
 
   const handleWeightChange = (text: string) => {

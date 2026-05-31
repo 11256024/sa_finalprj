@@ -572,11 +572,8 @@ def save_daily(request):
     daily_log.weight = weight_value
     daily_log.save()  # save() 內部會自動算 BMI
 
-    # 1.5) 同步把會員資料的 initial_weight 也更新成最新體重，
-    # 讓會員中心 / 身體指數頁立即看到一致數字
-    if weight_value is not None:
-        member.initial_weight = weight_value
-        member.save(update_fields=['initial_weight'])
+    # 注意：每日紀錄的體重不再回寫 member.initial_weight，
+    # 會員中心的體重由會員中心自己維護，與每日紀錄分離。
 
     # 2) 重建當天 DietRecords
     DietRecords.objects.filter(member=member, log_date=date_str).delete()

@@ -71,7 +71,11 @@ DATABASES = {
         'PASSWORD': 'AVNS_jahsbq0dmFPQ7n9P7SX',
         'HOST': 'mysql-28e17ff3-kting1116-197f.f.aivencloud.com',
         'PORT': '27192',
+        # 持久連線：避免每次 request 都重新做 SSL 握手（對 Aiven 雲端 DB 影響最大）
+        'CONN_MAX_AGE': 600,
+        'CONN_HEALTH_CHECKS': True,
         'OPTIONS': {
+            'connect_timeout': 5,
             'ssl': {
                 'ca': str(BASE_DIR / 'ca.pem'),
             },

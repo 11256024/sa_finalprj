@@ -148,12 +148,12 @@ export default function ProfileScreen() {
       const singleHeightForInstant = await AsyncStorage.getItem(`${savedUserId}_user_height`);
       const singleWeightForInstant = await AsyncStorage.getItem(`${savedUserId}_user_weight`);
       const savedAvatarForInstant = await AsyncStorage.getItem(`${savedUserId}_user_avatar`);
-      const todayRecordWeight = await getTodayRecordWeight(savedUserId);
 
       const instantBirthday = parsedProfile.birthday || '';
       const instantName = singleNameForInstant || parsedProfile.name || '';
       const instantHeight = singleHeightForInstant || parsedProfile.height || '';
-      const instantWeight = todayRecordWeight || singleWeightForInstant || parsedProfile.weight || '';
+      // 會員中心的體重不再與每日紀錄同步，僅使用會員資料本身的體重
+      const instantWeight = singleWeightForInstant || parsedProfile.weight || '';
       const instantGender = parsedProfile.gender || '';
 
       const instantData = {
@@ -211,7 +211,7 @@ export default function ProfileScreen() {
         rawAvatar = dbProfile.avatar ? String(dbProfile.avatar) : '';
         rawBirthday = dbProfile.birthday ? String(dbProfile.birthday) : '';
         rawHeight = dbProfile.height !== null && dbProfile.height !== undefined ? String(dbProfile.height) : '';
-        rawWeight = todayRecordWeight || (dbProfile.initial_weight !== null && dbProfile.initial_weight !== undefined ? String(dbProfile.initial_weight) : '');
+        rawWeight = dbProfile.initial_weight !== null && dbProfile.initial_weight !== undefined ? String(dbProfile.initial_weight) : '';
         rawGender = dbProfile.gender ? String(dbProfile.gender) : '';
 
         await AsyncStorage.multiRemove([
@@ -227,7 +227,7 @@ export default function ProfileScreen() {
         rawAvatar = savedAvatar || parsedProfile.avatar || '';
         rawBirthday = parsedProfile.birthday || '';
         rawHeight = singleHeight || parsedProfile.height || '';
-        rawWeight = todayRecordWeight || singleWeight || parsedProfile.weight || '';
+        rawWeight = singleWeight || parsedProfile.weight || '';
         rawGender = parsedProfile.gender || '';
       }
 
