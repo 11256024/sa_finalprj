@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Slot, usePathname, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { DataProvider } from '../context/DataContext';
 
 // 🎯 統一 API 端口，解決部分頁面連不到後端的問題
 const API_URL = 'http://127.0.0.1:8000';
@@ -209,7 +210,8 @@ export default function RootLayout() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <DataProvider>
+      <SafeAreaView style={styles.container}>
       
       {/* 身份決定顯示「藍色」或「綠色」橫幅 */}
       {isAdminLoggedIn && isAdminPage ? (
@@ -334,6 +336,7 @@ export default function RootLayout() {
       </Modal>
 
     </SafeAreaView>
+    </DataProvider>
   );
 }
 

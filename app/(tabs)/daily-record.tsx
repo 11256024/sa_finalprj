@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useDataContext } from '../../context/DataContext';
 
 const API_URL = 'http://127.0.0.1:8000';
 
@@ -40,6 +41,7 @@ interface FoodItem {
 export default function DailyRecordScreen() {
   const router = useRouter();
   const pathname = usePathname(); 
+  const { updateDailyRecord, updateWeight, weightUpdateVersion, lastWeightValue } = useDataContext();
 
   const [userId, setUserId] = useState<string>('guest'); 
 
@@ -121,6 +123,22 @@ export default function DailyRecordScreen() {
     };
     initUserAndLoad();
   }, [pathname]);
+
+  // 🎯 監聽全域體重更新 (例如從會員中心傳來的修改)
+  useEffect(() => {
+    if (lastWeightValue && lastWeightValue !== weight) {
+      setWeight(lastWeightValue);
+      // 同步計算 BMI 確保 UI 完整
+      const { calculatedBmi, calculatedStatus } = calculateBmiByHeight(lastWeightValue, userHeight);
+      setBmi(calculatedBmi);
+      setBmiStatus(calculatedStatus);
+      
+      // 更新內部 Ref 避免存檔時抓到舊日期
+      stateRef.current.weight = lastWeightValue;
+      stateRef.current.bmi = calculatedBmi;
+      stateRef.current.bmiStatus = calculatedStatus;
+    }
+  }, [weightUpdateVersion]);
 
   const loadDataByDate = async (dateStr: string, currentUid: string = userId, heightForBmi: number | null = userHeight) => {
   try {
@@ -246,6 +264,14 @@ export default function DailyRecordScreen() {
       `${effectiveUserId}_food_record_${effectiveDate}`,
       JSON.stringify(dataToSave)
     );
+
+    // 如果有體重，同步到會員中心並觸發全局更新
+    if (hasDailyWeight && /^\d+$/.test(effectiveUserId)) {
+      // 🎯 重要：必須先更新 ${userId}_user_weight 才能被 achievements.tsx 讀取到
+      await AsyncStorage.setItem(`${effectiveUserId}_user_weight`, currentWeight);
+      updateWeight(currentWeight, effectiveUserId);
+      updateDailyRecord();
+    }
 
     // 背景同步到後端，失敗也不影響本機體驗
     syncDayToBackend(currentWeight, currentMeals, effectiveUserId, effectiveDate);
@@ -417,13 +443,34 @@ export default function DailyRecordScreen() {
     return { calculatedBmi, calculatedStatus };
   };
 
-  // 會員中心的體重不再與每日紀錄同步，這兩個函式保留為 no-op 以避免大規模改動呼叫點
   const updateMemberWeightLocalCache = async (_newWeight: string) => {
-    return;
+    try {
+      const effectiveUserId = stateRef.current.userId;
+      if (!effectiveUserId || effectiveUserId === 'guest') return;
+      
+      const profileRaw = await AsyncStorage.getItem(`${effectiveUserId}_user_profile`);
+      if (profileRaw) {
+        const profile = JSON.parse(profileRaw);
+        profile.weight = _newWeight;
+        await AsyncStorage.setItem(`${effectiveUserId}_user_profile`, JSON.stringify(profile));
+      }
+    } catch (e) {
+      console.log('同步到會員中心快取失敗:', e);
+    }
   };
 
   const updateMemberWeightToBackend = async (_newWeight: string) => {
-    return;
+    try {
+      const effectiveUserId = stateRef.current.userId;
+      if (!effectiveUserId || effectiveUserId === 'guest') return;
+      await fetch(`${API_URL}/member/profile/${effectiveUserId}/`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ initial_weight: _newWeight }),
+      });
+    } catch (e) {
+      console.log('同步到會員中心後端失敗:', e);
+    }
   };
 
   const handleWeightChange = (text: string) => {

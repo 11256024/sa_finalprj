@@ -78,6 +78,7 @@ export default function HistoryScreen() {
   const fetchDatabaseRecords = async () => {
     setIsLoading(true);
     setErrorMessage(null);
+    
     try {
       // 優先從登入者抓 id，再退回舊 key，最後 guest
       const userStr = await AsyncStorage.getItem('user');
@@ -90,32 +91,6 @@ export default function HistoryScreen() {
 
       const dayLabels = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
       const baseDate = new Date(); // 晚上 12 點一過，這裡的 baseDate 就會自動變成新的一天
-
-      // -------------------------------------------------------------
-      // 先嘗試從後端一次抓 30 天彙整資料；失敗或登入者非有效會員時 fallback 本機
-      // -------------------------------------------------------------
-      let backendRecordsByDate: Record<string, { weight: string; bmi: string; meals: any }> = {};
-      const isRealMember = /^\d+$/.test(savedUserId);
-
-      if (isRealMember) {
-        try {
-          const resp = await fetch(`${API_URL}/daily/summary/?member_id=${savedUserId}&days=30`);
-          if (resp.ok) {
-            const data = await resp.json();
-            if (data?.success && Array.isArray(data.records)) {
-              data.records.forEach((r: any) => {
-                backendRecordsByDate[r.date] = {
-                  weight: r.weight || '',
-                  bmi: r.bmi || '',
-                  meals: r.meals || { 早餐: [], 午餐: [], 晚餐: [] },
-                };
-              });
-            }
-          }
-        } catch (e) {
-          console.log('從後端抓 daily summary 失敗，改用本機快取:', e);
-        }
-      }
 
       const foodKeys: string[] = [];
       const independentWeightKeys: string[] = []; 
@@ -144,91 +119,113 @@ export default function HistoryScreen() {
       const foodValuePairs = await AsyncStorage.multiGet(foodKeys);
       const weightValuePairs = await AsyncStorage.multiGet(independentWeightKeys);
       
-      const records: DailyRecord[] = [];
+      // 定義一個處理合併與渲染的內部函式
+      const processAndSetRecords = (backendData: Record<string, any> = {}) => {
+        const records: DailyRecord[] = [];
 
-      dateMetaList.forEach((meta, index) => {
-        const rawFoodValue = foodValuePairs[index][1];
-        const rawWeightValue = weightValuePairs[index][1]; 
-        
-        let dayData = rawFoodValue ? JSON.parse(rawFoodValue) : null;
-        let currentMeals = dayData?.mealBlocks || { 早餐: [], 午餐: [], 晚餐: [] };
+        dateMetaList.forEach((meta, index) => {
+          const rawFoodValue = foodValuePairs[index][1];
+          const rawWeightValue = weightValuePairs[index][1]; 
+          
+          let dayData = rawFoodValue ? JSON.parse(rawFoodValue) : null;
+          let currentMeals = dayData?.mealBlocks || { 早餐: [], 午餐: [], 晚餐: [] };
 
-        let dayWeight = '';
-        let dayBmi = '';
+          let dayWeight = '';
+          let dayBmi = '';
 
-        if (dayData?.weight && dayData.weight.trim() !== '') {
-          dayWeight = dayData.weight;
-          dayBmi = dayData.bmi || '';
-        } else if (rawWeightValue && rawWeightValue.trim() !== '') {
-          dayWeight = rawWeightValue;
-        }
-
-        // 後端有資料時以後端為準（換手機/重灌也看得到）
-        const fromBackend = backendRecordsByDate[meta.dateStr];
-        if (fromBackend) {
-          if (fromBackend.weight) dayWeight = fromBackend.weight;
-          if (fromBackend.bmi) dayBmi = fromBackend.bmi;
-
-          const backendMeals = fromBackend.meals || {};
-          const localEmpty =
-            currentMeals.早餐.length === 0 &&
-            currentMeals.午餐.length === 0 &&
-            currentMeals.晚餐.length === 0;
-          const backendHasAny =
-            (backendMeals['早餐']?.length || 0) +
-              (backendMeals['午餐']?.length || 0) +
-              (backendMeals['晚餐']?.length || 0) >
-            0;
-          if (localEmpty && backendHasAny) {
-            currentMeals = backendMeals;
+          if (dayData?.weight && dayData.weight.trim() !== '') {
+            dayWeight = dayData.weight;
+            dayBmi = dayData.bmi || '';
+          } else if (rawWeightValue && rawWeightValue.trim() !== '') {
+            dayWeight = rawWeightValue;
           }
-        }
 
-        if (dayWeight && (!dayBmi || dayBmi === '')) {
-          if (globalHeight) {
-            const hMeter = parseFloat(globalHeight) / 100;
-            const wKg = parseFloat(dayWeight);
-            if (hMeter > 0 && wKg > 0) {
-              dayBmi = (wKg / (hMeter * hMeter)).toFixed(1);
+          // 如果有後端資料，則進行補齊/覆蓋
+          const fromBackend = backendData[meta.dateStr];
+          if (fromBackend) {
+            if (fromBackend.weight) dayWeight = fromBackend.weight;
+            if (fromBackend.bmi) dayBmi = fromBackend.bmi;
+
+            const backendMeals = fromBackend.meals || {};
+            const localEmpty =
+              currentMeals.早餐.length === 0 &&
+              currentMeals.午餐.length === 0 &&
+              currentMeals.晚餐.length === 0;
+            const backendHasAny =
+              (backendMeals['早餐']?.length || 0) +
+                (backendMeals['午餐']?.length || 0) +
+                (backendMeals['晚餐']?.length || 0) >
+              0;
+            if (localEmpty && backendHasAny) {
+              currentMeals = backendMeals;
             }
           }
-        }
 
-        records.push({
-          dateString: meta.dateStr,
-          displayDate: meta.displayStr,
-          dayOfWeek: meta.dayOfWeekStr,
-          weight: dayWeight, 
-          bmi: dayBmi,       
-          mealBlocks: {
-            早餐: Array.isArray(currentMeals.早餐) ? currentMeals.早餐 : [],
-            午餐: Array.isArray(currentMeals.午餐) ? currentMeals.午餐 : [],
-            晚餐: Array.isArray(currentMeals.晚餐) ? currentMeals.晚餐 : [],
+          if (dayWeight && (!dayBmi || dayBmi === '')) {
+            if (globalHeight) {
+              const hMeter = parseFloat(globalHeight) / 100;
+              const wKg = parseFloat(dayWeight);
+              if (hMeter > 0 && wKg > 0) {
+                dayBmi = (wKg / (hMeter * hMeter)).toFixed(1);
+              }
+            }
           }
-        });
-      });
 
-      setThirtyDaysRecords(records);
-      
-      // 晚上 12 點自動跨天時，把預設選取項重新指回最新的一天 (records[0])
-      setSelectedDate(records[0].dateString);
+          records.push({
+            dateString: meta.dateStr,
+            displayDate: meta.displayStr,
+            dayOfWeek: meta.dayOfWeekStr,
+            weight: dayWeight, 
+            bmi: dayBmi,       
+            mealBlocks: {
+              早餐: Array.isArray(currentMeals.早餐) ? currentMeals.早餐 : [],
+              午餐: Array.isArray(currentMeals.午餐) ? currentMeals.午餐 : [],
+              晚餐: Array.isArray(currentMeals.晚餐) ? currentMeals.晚餐 : [],
+            }
+          });
+        });
+
+        setThirtyDaysRecords(records);
+        if (!selectedDate) setSelectedDate(records[0].dateString);
+      };
+
+      // 第一步：立即處理本機資料，關閉 Loading (達成「一秒內載入」)
+      processAndSetRecords();
+      setIsLoading(false);
+
+      // 第二步：背景非同步去抓後端資料
+      const isRealMember = /^\d+$/.test(savedUserId);
+      if (isRealMember) {
+        fetch(`${API_URL}/daily/summary/?member_id=${savedUserId}&days=30`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            if (data?.success && Array.isArray(data.records)) {
+              const backendRecordsByDate: Record<string, any> = {};
+              data.records.forEach((r: any) => {
+                backendRecordsByDate[r.date] = {
+                  weight: r.weight || '',
+                  bmi: r.bmi || '',
+                  meals: r.meals || { 早餐: [], 午餐: [], 晚餐: [] },
+                };
+              });
+              // 背景更新 UI
+              processAndSetRecords(backendRecordsByDate);
+            }
+          })
+          .catch(e => console.log('背景同步後端資料失敗:', e));
+      }
 
       // 🧹 自動清理 30 天前的過期資料
-      const expiredKeys: string[] = [];
-      for (let j = 30; j <= 50; j++) { 
-        const expiredDate = new Date(baseDate);
-        expiredDate.setDate(baseDate.getDate() - j);
-        
-        const exYear = expiredDate.getFullYear();
-        const exMonth = String(expiredDate.getMonth() + 1).padStart(2, '0');
-        const exDate = String(expiredDate.getDate()).padStart(2, '0');
-        const expiredDateStr = `${exYear}-${exMonth}-${exDate}`;
-
-        expiredKeys.push(`${savedUserId}_food_record_${expiredDateStr}`);
-        expiredKeys.push(`${savedUserId}_weight_${expiredDateStr}`);
-      }
-      
-      AsyncStorage.multiRemove(expiredKeys).catch(err => console.log('滾動清理舊快取失敗:', err));
+      setTimeout(() => {
+        const expiredKeys: string[] = [];
+        for (let j = 30; j <= 50; j++) { 
+          const expiredDate = new Date(baseDate);
+          expiredDate.setDate(baseDate.getDate() - j);
+          const expiredDateStr = `${expiredDate.getFullYear()}-${String(expiredDate.getMonth() + 1).padStart(2, '0')}-${String(expiredDate.getDate()).padStart(2, '0')}`;
+          expiredKeys.push(`${savedUserId}_food_record_${expiredDateStr}`, `${savedUserId}_weight_${expiredDateStr}`);
+        }
+        AsyncStorage.multiRemove(expiredKeys).catch(() => {});
+      }, 1000);
 
     } catch (error: any) {
       console.error("撈取歷史紀錄失敗:", error);

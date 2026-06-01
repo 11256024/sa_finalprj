@@ -2,8 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { useFocusEffect, useRouter } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { useDataContext } from '../../context/DataContext';
 
 const API_URL = 'http://127.0.0.1:8000';
 
@@ -20,6 +21,7 @@ interface ProfileType {
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const { weightUpdateVersion, updateWeight, lastWeightValue } = useDataContext();
 
   // 狀態控制
   const [isEditing, setIsEditing] = useState(false);
@@ -104,6 +106,18 @@ export default function ProfileScreen() {
       loadProfileData();
     }, [])
   );
+
+  // 🎯 監聽每日紀錄的更新，自動同步到會員中心顯示
+  useEffect(() => {
+    const syncWeightFromDaily = async () => {
+      // 🎯 優先使用記憶體中的 lastWeightValue 達成秒同步
+      if (lastWeightValue && lastWeightValue !== profileData.weight) {
+        setProfileData(prev => ({ ...prev, weight: lastWeightValue }));
+        setTempData(prev => ({ ...prev, weight: lastWeightValue }));
+      }
+    };
+    syncWeightFromDaily();
+  }, [weightUpdateVersion]);
 
   const getCurrentMemberContext = async () => {
     const userStr = await AsyncStorage.getItem('user');
@@ -455,6 +469,48 @@ export default function ProfileScreen() {
       await AsyncStorage.setItem(`${savedUserId}_user_height`, updatedData.height);
       await AsyncStorage.setItem(`${savedUserId}_user_weight`, updatedData.weight);
 
+      // 🎯 雙向同步：將更新後的體重同步回今日的「每日紀錄」
+      const todayStr = getTodayDateString();
+      const todayKey = `${savedUserId}_food_record_${todayStr}`;
+      const dailyRaw = await AsyncStorage.getItem(todayKey);
+      let dailyData = dailyRaw ? JSON.parse(dailyRaw) : { mealBlocks: { 早餐: [], 午餐: [], 晚餐: [] } };
+      
+      dailyData.weight = updatedData.weight;
+      dailyData.hasDailyWeight = true;
+      
+      // 計算 BMI
+      if (updatedData.height && updatedData.weight) {
+        const h = parseFloat(updatedData.height) / 100;
+        const w = parseFloat(updatedData.weight);
+        dailyData.bmi = (w / (h * h)).toFixed(1);
+        dailyData.bmiStatus = ''; // 可視需求計算狀態
+      }
+      
+      await AsyncStorage.setItem(todayKey, JSON.stringify(dailyData));
+      
+      // 🎯 同步今日紀錄到後端，避免餐點資料遺失，我們把當前餐點也帶上
+      const mealsForBackend = {
+        breakfast: (dailyData.mealBlocks.早餐 || []).map((it: any) => ({ name: it.name, calories: it.calories })),
+        lunch: (dailyData.mealBlocks.午餐 || []).map((it: any) => ({ name: it.name, calories: it.calories })),
+        dinner: (dailyData.mealBlocks.晚餐 || []).map((it: any) => ({ name: it.name, calories: it.calories })),
+      };
+
+      try {
+        await fetch(`${API_URL}/daily/save/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            member_id: Number(savedUserId),
+            date: todayStr,
+            weight: updatedData.weight,
+            meals: mealsForBackend,
+          }),
+        });
+      } catch (e) { console.log('同步體重到每日紀錄後端失敗'); }
+
+      // 🎯 觸發體重更新信號，通知 achievements.tsx 實時同步
+      updateWeight(updatedData.weight, savedUserId);
+
       if (updatedData.age) {
         await AsyncStorage.setItem(`${savedUserId}_user_age`, updatedData.age);
       }
@@ -535,7 +591,7 @@ export default function ProfileScreen() {
     borderRadius: '8px',
     padding: '4px 10px',
     textAlign: 'right' as const,
-    width: '65%',
+    flex: 1,
     outline: 'none',
     cursor: 'pointer',
     touchAction: 'manipulation',
@@ -550,7 +606,7 @@ export default function ProfileScreen() {
     borderRadius: '8px',
     padding: '4px 10px',
     textAlign: 'right' as const,
-    width: '65%',
+    flex: 1,
     outline: 'none',
     cursor: 'pointer',
     fontFamily: 'inherit',
@@ -598,9 +654,11 @@ export default function ProfileScreen() {
             
             {/* 生日 */}
             <View style={styles.infoRow}>
-              <View style={styles.infoLabelContainer}>
-                <Text style={styles.infoLabelText}>生</Text>
-                <Text style={styles.infoLabelText}>日</Text>
+              <View style={styles.infoLabelArea}>
+                <View style={styles.infoLabelContainer}>
+                  <Text style={styles.infoLabelText}>生</Text>
+                  <Text style={styles.infoLabelText}>日</Text>
+                </View>
               </View>
               {isEditing ? (
                 Platform.OS === 'web' ? (
@@ -610,6 +668,7 @@ export default function ProfileScreen() {
                     min="1900-01-01"
                     max="2026-12-31"
                     onChange={(e) => setTempData({ ...tempData, birthday: e.target.value })}
+                    onClick={(e) => (e.target as any).showPicker?.()}
                     style={webCalendarStyle}
                   />
                 ) : (
@@ -633,12 +692,14 @@ export default function ProfileScreen() {
 
             {/* 身高 */}
             <View style={styles.infoRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View style={styles.infoLabelContainer}>
-                  <Text style={styles.infoLabelText}>身</Text>
-                  <Text style={styles.infoLabelText}>高</Text>
+              <View style={styles.infoLabelArea}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={styles.infoLabelContainer}>
+                    <Text style={styles.infoLabelText}>身</Text>
+                    <Text style={styles.infoLabelText}>高</Text>
+                  </View>
+                  <Text style={styles.infoLabelText}> (cm)</Text>
                 </View>
-                <Text style={styles.infoLabelText}> (cm)</Text>
               </View>
               {isEditing ? (
                 Platform.OS === 'web' ? (
@@ -669,12 +730,14 @@ export default function ProfileScreen() {
 
             {/* 體重 */}
             <View style={styles.infoRow}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View style={styles.infoLabelContainer}>
-                  <Text style={styles.infoLabelText}>體</Text>
-                  <Text style={styles.infoLabelText}>重</Text>
+              <View style={styles.infoLabelArea}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View style={styles.infoLabelContainer}>
+                    <Text style={styles.infoLabelText}>體</Text>
+                    <Text style={styles.infoLabelText}>重</Text>
+                  </View>
+                  <Text style={styles.infoLabelText}> (kg)</Text>
                 </View>
-                <Text style={styles.infoLabelText}> (kg)</Text>
               </View>
               {isEditing ? (
                 Platform.OS === 'web' ? (
@@ -705,11 +768,13 @@ export default function ProfileScreen() {
 
             {/* 性別 */}
             <View style={styles.infoRow}>
-              <View style={styles.infoLabelContainer}>
-                <Text style={styles.infoLabelText}>生</Text>
-                <Text style={styles.infoLabelText}>理</Text>
-                <Text style={styles.infoLabelText}>性</Text>
-                <Text style={styles.infoLabelText}>別</Text>
+              <View style={styles.infoLabelArea}>
+                <View style={styles.infoLabelContainer}>
+                  <Text style={styles.infoLabelText}>生</Text>
+                  <Text style={styles.infoLabelText}>理</Text>
+                  <Text style={styles.infoLabelText}>性</Text>
+                  <Text style={styles.infoLabelText}>別</Text>
+                </View>
               </View>
               {isEditing ? (
                 Platform.OS === 'web' ? (
@@ -739,9 +804,11 @@ export default function ProfileScreen() {
 
             {/* 帳號 */}
             <View style={styles.infoRow}>
-              <View style={styles.infoLabelContainer}>
-                <Text style={styles.infoLabelText}>帳</Text>
-                <Text style={styles.infoLabelText}>號</Text>
+              <View style={styles.infoLabelArea}>
+                <View style={styles.infoLabelContainer}>
+                  <Text style={styles.infoLabelText}>帳</Text>
+                  <Text style={styles.infoLabelText}>號</Text>
+                </View>
               </View>
               <Text style={[styles.infoValue, styles.readOnlyText, (!profileData.account || profileData.account.trim() === '') && styles.placeholderText]}>
                 {profileData.account && profileData.account.trim() !== '' ? profileData.account : '請輸入帳號'}
@@ -750,9 +817,11 @@ export default function ProfileScreen() {
 
             {/* 密碼 */}
             <View style={styles.infoRow}>
-              <View style={styles.infoLabelContainer}>
-                <Text style={styles.infoLabelText}>密</Text>
-                <Text style={styles.infoLabelText}>碼</Text>
+              <View style={styles.infoLabelArea}>
+                <View style={styles.infoLabelContainer}>
+                  <Text style={styles.infoLabelText}>密</Text>
+                  <Text style={styles.infoLabelText}>碼</Text>
+                </View>
               </View>
               <View style={styles.passwordContainer}>
                 <Text style={[styles.infoValue, styles.readOnlyText, (!profileData.password || profileData.password.trim() === '') && styles.placeholderText]}>
@@ -899,11 +968,12 @@ const styles = StyleSheet.create({
   editIconText: { fontSize: 16 },
   memberName: { fontSize: 24, fontWeight: 'bold', color: '#333' },
   placeholderText: { color: '#A9A9A9', fontWeight: 'normal', fontStyle: 'italic' },
-  nameInput: { fontSize: 20, fontWeight: 'bold', color: '#333', borderBottomWidth: 1, borderColor: '#ccc', textAlign: 'center', width: '80%', paddingVertical: 2 },
-  textInputRight: { fontSize: 16, color: '#333', backgroundColor: '#F9F9F9', borderRadius: 8, padding: 4, paddingHorizontal: 10, textAlign: 'right', width: '65%' },
+  nameInput: { fontSize: 18, color: '#333', backgroundColor: '#F9F9F9', borderRadius: 8, padding: 8, textAlign: 'center', width: '85%' },
+  textInputRight: { fontSize: 16, color: '#333', backgroundColor: '#F9F9F9', borderRadius: 8, padding: 4, paddingHorizontal: 10, textAlign: 'right', flex: 1 },
   divider: { width: 1, backgroundColor: '#EBEBEB', marginHorizontal: 40 },
   rightSection: { flex: 1.5, justifyContent: 'center' },
   infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18, borderBottomWidth: 1, borderBottomColor: '#F2F2F2', paddingBottom: 6 },
+  infoLabelArea: { width: 155 },
   infoLabelContainer: { width: 110, flexDirection: 'row', justifyContent: 'space-between' },
   infoLabelText: { fontSize: 18, color: '#333', fontWeight: '600' },
   infoValue: { fontSize: 18, color: '#666' },
