@@ -3,6 +3,7 @@ import { useIsFocused } from '@react-navigation/native';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useDataContext } from '../../context/DataContext';
 
 const API_URL = 'http://127.0.0.1:8000';
 
@@ -35,22 +36,37 @@ export default function HistoryScreen() {
   const [thirtyDaysRecords, setThirtyDaysRecords] = useState<DailyRecord[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const { recordUpdateVersion } = useDataContext();
+
+  const getBaseBusinessDate = () => {
+    const now = new Date();
+    const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+    return new Date(utc + 3600000 * 8); // 台灣時間
+  };
+
+  const getTaiwanDateString = (dateObj: Date) => {
+    const year = dateObj.getFullYear();
+    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    const day = String(dateObj.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
   // 🔄 處理進入頁面刷新與午夜 12 點自動刷新
   useEffect(() => {
-    let midnightTimer: NodeJS.Timeout | null = null;
+    let midnightTimer: ReturnType<typeof setTimeout> | null = null;
 
-    // 計算距離今天晚上 12 點 (00:00) 還有多少毫秒，並設定定時器
+    // 計算距離台灣時間今天晚上 12 點 (00:00) 還有多少毫秒，並設定定時器
     const setupMidnightRefresh = () => {
       const now = new Date();
-      const midnight = new Date(now);
+      const taiwanNow = getBaseBusinessDate();
+      const midnight = new Date(taiwanNow);
       
-      // 設定目標時間為明天的 00:00:00
-      midnight.setDate(now.getDate() + 1);
+      // 設定目標時間為台灣時間明天的 00:00:00
+      midnight.setDate(taiwanNow.getDate() + 1);
       midnight.setHours(0, 0, 0, 0);
 
       const timeToMidnight = midnight.getTime() - now.getTime();
-      console.log(`[自動刷新] 距離午夜 12 點還有 ${(timeToMidnight / 1000 / 60).toFixed(1)} 分鐘`);
+      console.log(`[自動刷新] 距離台灣午夜 12 點還有 ${(timeToMidnight / 1000 / 60).toFixed(1)} 分鐘`);
 
       // 設定倒數計時器
       midnightTimer = setTimeout(() => {
@@ -74,6 +90,12 @@ export default function HistoryScreen() {
     };
   }, [isFocused]);
 
+  useEffect(() => {
+    if (isFocused && recordUpdateVersion > 0) {
+      fetchDatabaseRecords();
+    }
+  }, [isFocused, recordUpdateVersion]);
+
   // 🌐 滾動式 30 天精準撈取與舊資料自動淘汰
   const fetchDatabaseRecords = async () => {
     setIsLoading(true);
@@ -90,7 +112,7 @@ export default function HistoryScreen() {
       const globalHeight = await AsyncStorage.getItem(`${savedUserId}_user_height`) || await AsyncStorage.getItem('user_height_key') || await AsyncStorage.getItem('height') || '';
 
       const dayLabels = ['週日', '週一', '週二', '週三', '週四', '週五', '週六'];
-      const baseDate = new Date(); // 晚上 12 點一過，這裡的 baseDate 就會自動變成新的一天
+      const baseDate = getBaseBusinessDate();
 
       const foodKeys: string[] = [];
       const independentWeightKeys: string[] = []; 
@@ -105,7 +127,7 @@ export default function HistoryScreen() {
         const month = String(d.getMonth() + 1).padStart(2, '0');
         const date = String(d.getDate()).padStart(2, '0');
         
-        const dateStr = `${year}-${month}-${date}`;       
+        const dateStr = getTaiwanDateString(d);       
         const displayStr = `${month}/${date}`;            
         const dayOfWeekStr = dayLabels[d.getDay()];       
 
@@ -219,9 +241,9 @@ export default function HistoryScreen() {
       setTimeout(() => {
         const expiredKeys: string[] = [];
         for (let j = 30; j <= 50; j++) { 
-          const expiredDate = new Date(baseDate);
+          const expiredDate = new Date(baseDate.getTime());
           expiredDate.setDate(baseDate.getDate() - j);
-          const expiredDateStr = `${expiredDate.getFullYear()}-${String(expiredDate.getMonth() + 1).padStart(2, '0')}-${String(expiredDate.getDate()).padStart(2, '0')}`;
+          const expiredDateStr = getTaiwanDateString(expiredDate);
           expiredKeys.push(`${savedUserId}_food_record_${expiredDateStr}`, `${savedUserId}_weight_${expiredDateStr}`);
         }
         AsyncStorage.multiRemove(expiredKeys).catch(() => {});

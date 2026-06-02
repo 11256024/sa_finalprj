@@ -2,7 +2,7 @@ import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Alert, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, Alert, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useDataContext } from '../../context/DataContext';
 
 const API_URL = 'http://127.0.0.1:8000';
@@ -32,18 +32,17 @@ export default function AchievementsScreen() {
   // 🎯 獲取全局體重更新信號
   const { weightUpdateVersion, lastWeightValue } = useDataContext();
 
-  // 快取數據以利實時刷新
   const [cachedRecords, setCachedRecords] = useState<[string, string | null][]>([]);
   const [cachedProducts, setCachedProducts] = useState<any[]>([]);
 
-  // 取得基準營業日期 (台灣時間 00:00~23:59 算同一天)
+  // 🎯 精準對齊 history.tsx 的台灣時間基準
   const getBaseBusinessDate = () => {
     const now = new Date();
     const utc = now.getTime() + now.getTimezoneOffset() * 60000;
     return new Date(utc + 3600000 * 8); 
   };
 
-  // ⚡ 效能優化：用字串拼接取代極慢的 Intl.DateTimeFormat，大迴圈不卡頓
+  // 🎯 精準對齊 history.tsx 的 YYYY-MM-DD 補零格式
   const getTaiwanDateString = (dateObj: Date) => {
     const year = dateObj.getFullYear();
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
@@ -66,13 +65,14 @@ export default function AchievementsScreen() {
     }
   };
 
-  // 核心數據計算邏輯 
+  // 核心數據計算邏輯 (完美融合本地與後端數據)
   const calculateAndRender = (
     recordsPairs: [string, string | null][], 
-    baseWeight: number, // 使用成就起跑體重作為基準
+    baseWeight: number, 
     pList: any[], 
     currentUid: string,
-    profileWeight: number // 🎯 新增：會員資料中的體重作為 fallback
+    profileWeight: number,
+    backendSummaryData: Record<string, any> = {} // 新增：承接後端30天同步對齊
   ) => {
     const baseDate = getBaseBusinessDate();
     const last30Days: string[] = [];
@@ -82,7 +82,7 @@ export default function AchievementsScreen() {
       last30Days.push(getTaiwanDateString(d));
     }
 
-    // 將二維陣列扁平化至 Lookup 快取物件中，實現 O(1) 查找速度
+    // 將所有 AsyncStorage 的 key-value 轉成 Lookup 物件
     const recordsLookup: Record<string, string> = {};
     const len = recordsPairs.length;
     for (let i = 0; i < len; i++) {
@@ -91,83 +91,121 @@ export default function AchievementsScreen() {
       }
     }
 
-    // A. 連續紀錄體重天數統計
+    // 1. 🎯 點名統計：融合本地與後端雙重管道檢測
     let loginStreak = 0;
     for (let i = 0; i < 30; i++) {
       const dateStr = last30Days[i];
-      const key = `${currentUid}_food_record_${dateStr}`;
-      const savedDataStr = recordsLookup[key];
-      let hasWeight = false;
+      const foodKey = `${currentUid}_food_record_${dateStr}`;
+      const weightKey = `${currentUid}_weight_${dateStr}`;
       
-      if (savedDataStr) {
+      const savedFoodStr = recordsLookup[foodKey];
+      const savedWeightStr = recordsLookup[weightKey];
+      
+      let hasWeightOrFood = false;
+
+      // 管道 A：檢查本地飲食紀錄物件
+      if (savedFoodStr) {
         try {
-          const parsed = JSON.parse(savedDataStr);
-          if (parsed.hasDailyWeight === true && parsed.weight && parsed.weight.toString().trim() !== '') {
-            hasWeight = true;
+          const parsed = JSON.parse(savedFoodStr);
+          if (parsed.weight && parsed.weight.toString().trim() !== '' && parseFloat(parsed.weight) > 0) {
+            hasWeightOrFood = true;
           }
         } catch {}
       }
-      
-      if (hasWeight) {
+
+      // 管道 B：檢查本地獨立體重紀錄欄位
+      if (!hasWeightOrFood && savedWeightStr && savedWeightStr.trim() !== '') {
+        const wVal = parseFloat(savedWeightStr);
+        if (!isNaN(wVal) && wVal > 0) {
+          hasWeightOrFood = true;
+        }
+      }
+
+      // 管道 C：整合檢查後端回傳的歷史數據（修正關鍵！）
+      const fromBackend = backendSummaryData[dateStr];
+      if (!hasWeightOrFood && fromBackend) {
+        if (fromBackend.weight && fromBackend.weight.toString().trim() !== '') {
+          hasWeightOrFood = true;
+        } else if (fromBackend.meals) {
+          const backendHasAny =
+            (fromBackend.meals['早餐']?.length || 0) +
+            (fromBackend.meals['午餐']?.length || 0) +
+            (fromBackend.meals['晚餐']?.length || 0) > 0;
+          if (backendHasAny) {
+            hasWeightOrFood = true;
+          }
+        }
+      }
+
+      if (hasWeightOrFood) {
         loginStreak++;
       } else {
-        break;
+        // 如果需要 30 天內有記就累積（不中斷），可以註解掉這行 break
+        break; 
       }
     }
 
-    // B. 🎯 精準對齊公式：減重斤數 = 每日最新紀錄體重 - 會員初始登記體重
+    // 2. 尋找最近一筆有效的體重數值（同步支援後端撈取）
     let latestDailyWeight = 0;
     let foundLatest = false;
 
-    // 從今天往回尋找過去 30 天內最新的一筆每日體重紀錄
     for (let i = 0; i < 30; i++) {
       const dateStr = last30Days[i];
-      const key = `${currentUid}_food_record_${dateStr}`;
-      const savedDataStr = recordsLookup[key];
-      if (savedDataStr) {
+      const foodKey = `${currentUid}_food_record_${dateStr}`;
+      const weightKey = `${currentUid}_weight_${dateStr}`;
+
+      const savedFoodStr = recordsLookup[foodKey];
+      const savedWeightStr = recordsLookup[weightKey];
+
+      if (savedFoodStr) {
         try {
-          const parsed = JSON.parse(savedDataStr);
-          if (parsed.hasDailyWeight === true && parsed.weight && parsed.weight.toString().trim() !== '') {
+          const parsed = JSON.parse(savedFoodStr);
+          if (parsed.weight && parsed.weight.toString().trim() !== '') {
             const w = parseFloat(parsed.weight);
             if (!isNaN(w) && w > 0) {
               latestDailyWeight = w;
               foundLatest = true;
-              break; 
+              break;
             }
           }
         } catch {}
       }
+
+      if (savedWeightStr && savedWeightStr.trim() !== '') {
+        const w = parseFloat(savedWeightStr);
+        if (!isNaN(w) && w > 0) {
+          latestDailyWeight = w;
+          foundLatest = true;
+          break;
+        }
+      }
+
+      const fromBackend = backendSummaryData[dateStr];
+      if (fromBackend && fromBackend.weight && parseFloat(fromBackend.weight) > 0) {
+        latestDailyWeight = parseFloat(fromBackend.weight);
+        foundLatest = true;
+        break;
+      }
     }
 
-    // 🎯 核心邏輯：成就進度使用 (當前體重 - 起跑體重) 的差距
-    // 對於新帳號，若無每日紀錄，則使用 profileWeight (會員中心體重) 作為計算基準
     const currentWeightForCalc = foundLatest ? latestDailyWeight : profileWeight;
 
     let weightLoss = 0;
     if (baseWeight > 0 && currentWeightForCalc > 0) {
-      // 計算差距
       const rawDiff = currentWeightForCalc - baseWeight;
-
-      // 如果當前體重比啟跑體重小，代表體重減輕了，差值為負，取絕對值當作減少的公斤數
       if (rawDiff < 0) {
         weightLoss = Math.abs(rawDiff);
-      } else {
-        // 如果體重變胖或沒變，減重成就進度計為 0
-        weightLoss = 0;
       }
     }
     weightLoss = parseFloat(weightLoss.toFixed(1));
 
-    // 🎯 同步更新目前體重狀態
     if (foundLatest) {
-      // 優先使用每日紀錄
       setCurrentWeight(latestDailyWeight);
     } else if (profileWeight > 0) {
-      // 如果沒有每日紀錄，參照會員資料檔
       setCurrentWeight(profileWeight);
     }
 
-    // C. 審核上架商品件數統計
+    // 商品審核數統計
     let pCount = 0;
     const targetUidStr = String(currentUid).trim();
     const pLen = pList.length;
@@ -217,7 +255,6 @@ export default function AchievementsScreen() {
     });
   };
 
-  // 🎯 新增：同步成就解鎖狀態到後端資料庫
   const syncAchievementsToBackend = async (currentUid: string, items: AchievementItem[]) => {
     if (currentUid === 'guest') return;
     const unlockedCodes = items.filter(it => it.unlocked).map(it => it.id);
@@ -227,10 +264,7 @@ export default function AchievementsScreen() {
       await fetch(`${API_URL}/achievements/unlock/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          member_id: currentUid,
-          codes: unlockedCodes
-        }),
+        body: JSON.stringify({ member_id: currentUid, codes: unlockedCodes }),
       });
     } catch (err) {
       console.log('同步成就解鎖到後端失敗:', err);
@@ -245,15 +279,13 @@ export default function AchievementsScreen() {
     }, [])
   );
 
-  // 封裝核心刷新邏輯，供多處調用
   const refreshAllData = async (isMounted: boolean) => {
     try {
       const currentUid = await getCurrentMemberId();
 
-      // 🎯 載入基準設定
       const [cachedStartWeightStr, cachedProfileWeightStr, fastCachedResults, cachedProductsStr] = await Promise.all([
         AsyncStorage.getItem(`${currentUid}_achievement_start_weight`),
-        AsyncStorage.getItem(`${currentUid}_user_weight`), // 🎯 獲取會員資料檔中的體重
+        AsyncStorage.getItem(`${currentUid}_user_weight`),
         AsyncStorage.getItem(`${currentUid}_fast_cached_achievements`),
         AsyncStorage.getItem(`cached_global_products`)
       ]);
@@ -262,56 +294,68 @@ export default function AchievementsScreen() {
       let profileWeight = cachedProfileWeightStr ? parseFloat(cachedProfileWeightStr) : 0;
       let initialProducts: any[] = cachedProductsStr ? JSON.parse(cachedProductsStr) : [];
 
-      // 秒開快取處理
       if (fastCachedResults && isMounted) {
         setAchievements(JSON.parse(fastCachedResults));
         setAchievementStartWeight(startWeight);
         setIsLoading(false);
       }
 
-      // 抓取最近 30 天每日紀錄
-      const baseDate = getBaseBusinessDate();
-      const storageKeys: string[] = [];
-      for (let i = 0; i < 30; i++) {
-        const d = new Date(baseDate.getTime());
-        d.setDate(baseDate.getDate() - i);
-        storageKeys.push(`${currentUid}_food_record_${getTaiwanDateString(d)}`);
-      }
-      const recordsPairs = await AsyncStorage.multiGet(storageKeys);
+      // 抓取全量本地快取進行首輪處理
+      const allKeys = await AsyncStorage.getAllKeys();
+      const matchedKeys = allKeys.filter(k => 
+        k.includes(`${currentUid}_food_record_`) || k.includes(`${currentUid}_weight_`)
+      );
+      const recordsPairs = await AsyncStorage.multiGet(matchedKeys);
 
       if (isMounted) {
         setCachedRecords(recordsPairs as [string, string | null][]);
         setCachedProducts(initialProducts);
         
-        const finalResult = calculateAndRender(recordsPairs as [string, string | null][], startWeight, initialProducts, currentUid, profileWeight);
-        setAchievements(finalResult);
+        const firstResult = calculateAndRender(recordsPairs as [string, string | null][], startWeight, initialProducts, currentUid, profileWeight);
+        setAchievements(firstResult);
         setAchievementStartWeight(startWeight);
-        syncAchievementsToBackend(currentUid, finalResult); // 同步解鎖狀態
         setIsLoading(false);
-        
-        await AsyncStorage.setItem(`${currentUid}_fast_cached_achievements`, JSON.stringify(finalResult));
       }
 
-      // 背景從後端更新
+      // 🎯 核心補強：完美複製 history.tsx 的 30天後端同步邏輯 
+      const isRealMember = /^\d+$/.test(currentUid);
+      if (isRealMember) {
+        fetch(`${API_URL}/daily/summary/?member_id=${currentUid}&days=30`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            if (data?.success && Array.isArray(data.records) && isMounted) {
+              const backendRecordsByDate: Record<string, any> = {};
+              data.records.forEach((r: any) => {
+                backendRecordsByDate[r.date] = {
+                  weight: r.weight || '',
+                  bmi: r.bmi || '',
+                  meals: r.meals || { 早餐: [], 午餐: [], 晚餐: [] },
+                };
+              });
+              
+              // 帶入後端三十天數據重新渲染！完美對齊 history 畫面！
+              const finalResult = calculateAndRender(recordsPairs as [string, string | null][], startWeight, initialProducts, currentUid, profileWeight, backendRecordsByDate);
+              setAchievements(finalResult);
+              syncAchievementsToBackend(currentUid, finalResult);
+              AsyncStorage.setItem(`${currentUid}_fast_cached_achievements`, JSON.stringify(finalResult));
+            }
+          })
+          .catch(e => console.log('成就系統背景同步後端飲食概要失敗:', e));
+      }
+
+      // 獲取個人體重出發點配置
       fetch(`${API_URL}/member/profile/${currentUid}/`)
         .then(res => res.ok ? res.json() : null)
         .then(async (profileData) => {
           if (!isMounted || !profileData?.success) return;
           
-          const backendAchieveStart = profileData.member.achievement_start_weight 
-            ? parseFloat(profileData.member.achievement_start_weight) : null;
-          const backendInitialWeight = profileData.member.initial_weight 
-            ? parseFloat(profileData.member.initial_weight) : null;
+          const backendAchieveStart = profileData.member.achievement_start_weight ? parseFloat(profileData.member.achievement_start_weight) : null;
+          const backendInitialWeight = profileData.member.initial_weight ? parseFloat(profileData.member.initial_weight) : null;
 
           let finalSyncWeight = startWeight;
-
-          // 🎯 修正邏輯：
-          // 1. 如果後端有專屬的成就起點欄位，以它為最高優先權
           if (backendAchieveStart !== null) {
             finalSyncWeight = backendAchieveStart;
-          } 
-          // 2. 如果本機與後端都沒有專屬起點(0)，才拿 initial_weight 當作「第一次」的初始值
-          else if (startWeight === 0 && backendInitialWeight !== null) {
+          } else if (startWeight === 0 && backendInitialWeight !== null) {
             finalSyncWeight = backendInitialWeight;
           }
 
@@ -321,7 +365,7 @@ export default function AchievementsScreen() {
               setAchievementStartWeight(finalSyncWeight);
               const reCalc = calculateAndRender(recordsPairs as [string, string | null][], finalSyncWeight, initialProducts, currentUid, profileWeight);
               setAchievements(reCalc);
-              syncAchievementsToBackend(currentUid, reCalc); // 同步解鎖狀態
+              syncAchievementsToBackend(currentUid, reCalc);
             }
           }
         }).catch(() => null);
@@ -332,19 +376,14 @@ export default function AchievementsScreen() {
     }
   };
 
-  // 🎯 監聽體重更新信號，實時重新計算所有成就
   useEffect(() => {
-    // 🎯 視覺優先：如果記憶體已有新數值，先更新目前體重看板，防止等待 API
     if (lastWeightValue) {
       const newW = parseFloat(lastWeightValue);
       if (!isNaN(newW)) setCurrentWeight(newW);
     }
-    
-    // 隨後才執行完整的背景資料校準
     refreshAllData(true); 
   }, [weightUpdateVersion]);
 
-  // 🎯 處理取消重設的防呆邏輯
   const handleCancelReset = () => {
     if (inputWeight.trim() !== '') {
       setCancelModalVisible(true);
@@ -361,35 +400,34 @@ export default function AchievementsScreen() {
   const unlockedCount = achievements.filter((item) => item.unlocked).length;
   const totalCount = achievements.length;
 
-  // 🎯 計算體重變化量 (目前體重 - 起跑體重)
-  // 如果目前體重較重，結果為正 (顯示 +)；如果目前體重較輕，結果為負 (顯示 -)
   const weightDiff = (currentWeight > 0 && achievementStartWeight > 0)
     ? parseFloat((currentWeight - achievementStartWeight).toFixed(1))
     : 0;
 
-  // 🎯 「套用今日體重」按鈕
   const handleApplyTodayWeight = async () => {
     try {
       const currentUid = await getCurrentMemberId();
       const baseDate = getBaseBusinessDate();
       const todayStr = getTaiwanDateString(baseDate);
-      const key = `${currentUid}_food_record_${todayStr}`;
-      const savedDataStr = await AsyncStorage.getItem(key);
-
+      
       let todayWeight = 0;
-      if (savedDataStr) {
+      const foodVal = await AsyncStorage.getItem(`${currentUid}_food_record_${todayStr}`);
+      const weightVal = await AsyncStorage.getItem(`${currentUid}_weight_${todayStr}`);
+
+      if (foodVal) {
         try {
-          const parsed = JSON.parse(savedDataStr);
-          if (parsed.hasDailyWeight === true && parsed.weight && parsed.weight.toString().trim() !== '') {
-            todayWeight = parseFloat(parsed.weight);
-          }
+          const parsed = JSON.parse(foodVal);
+          if (parsed.weight) todayWeight = parseFloat(parsed.weight);
         } catch {}
+      }
+      if (todayWeight === 0 && weightVal) {
+        const wVal = parseFloat(weightVal);
+        if (!isNaN(wVal)) todayWeight = wVal;
       }
 
       if (todayWeight > 0) {
         setInputWeight(String(todayWeight));
       } else {
-        const msg = Platform.OS === 'web' ? window.confirm : () => true;
         Alert.alert('提示', '今日尚無體重紀錄，請手動輸入');
       }
     } catch (error) {
@@ -397,7 +435,6 @@ export default function AchievementsScreen() {
     }
   };
 
-  // 🎯 「確認變更」按鈕
   const handleConfirmWeightChange = async () => {
     try {
       const newWeight = parseFloat(inputWeight);
@@ -412,14 +449,12 @@ export default function AchievementsScreen() {
         return;
       }
 
-      // 保存到本機快取
       await AsyncStorage.setItem(`${currentUid}_achievement_start_weight`, String(newWeight));
       setAchievementStartWeight(newWeight);
       
-      // 🎯 重新計算並立即更新 UI
       const updatedResult = calculateAndRender(cachedRecords, newWeight, cachedProducts, currentUid, currentWeight);
       setAchievements(updatedResult);
-      syncAchievementsToBackend(currentUid, updatedResult); // 同步解鎖狀態
+      syncAchievementsToBackend(currentUid, updatedResult);
       
       setModalVisible(false);
       setInputWeight('');
@@ -561,7 +596,6 @@ export default function AchievementsScreen() {
               您可以重新設定減重的出發點。系統將會以新設定的體重為基準，來計算您的減重成就。
             </Text>
 
-            {/* 選項 A：快速套用今日體重 */}
             <TouchableOpacity 
               style={styles.quickActionButton}
               onPress={handleApplyTodayWeight}
@@ -570,7 +604,6 @@ export default function AchievementsScreen() {
               <Text style={styles.quickActionButtonText}>套用今日體重</Text>
             </TouchableOpacity>
 
-            {/* 選項 B：手動輸入 */}
             <View style={styles.manualInputSection}>
               <Text style={styles.manualInputLabel}>或手動輸入體重：</Text>
               <TextInput
@@ -583,7 +616,6 @@ export default function AchievementsScreen() {
               />
             </View>
 
-            {/* 按鈕組 */}
             <View style={styles.modalButtonGroup}>
               <TouchableOpacity 
                 style={[styles.modalButton, styles.cancelButton]}
@@ -641,70 +673,17 @@ export default function AchievementsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F6EFE5' },
   mainContent: { flex: 1, paddingHorizontal: 80, paddingTop: 10 },
-
-  // 🎯 體重控制成就看板
-  weightControlCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 20,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    marginBottom: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  weightCardHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-  },
-  weightCardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#333',
-  },
-  resetButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  resetButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#E67E22',
-    marginLeft: 6,
-  },
-  weightStatsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  weightStatBox: {
-    flex: 1,
-    alignItems: 'center',
-  },
-  weightLossBox: {
-    // 移除背景色，改用邊框區隔
-  },
-  weightStatLabel: {
-    fontSize: 11,
-    fontWeight: '500',
-    color: '#888',
-    marginBottom: 2,
-  },
-  weightStatValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#333',
-  },
-  weightLossValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#3498DB',
-  },
-
+  weightControlCard: { backgroundColor: '#FFF', borderRadius: 20, paddingVertical: 14, paddingHorizontal: 20, marginBottom: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 6, elevation: 2 },
+  weightCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  weightCardTitle: { fontSize: 15, fontWeight: '700', color: '#333' },
+  resetButton: { flexDirection: 'row', alignItems: 'center' },
+  resetButtonText: { fontSize: 12, fontWeight: '600', color: '#E67E22', marginLeft: 6 },
+  weightStatsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 12 },
+  weightStatBox: { flex: 1, alignItems: 'center' },
+  weightLossBox: {},
+  weightStatLabel: { fontSize: 11, fontWeight: '500', color: '#888', marginBottom: 2 },
+  weightStatValue: { fontSize: 18, fontWeight: '700', color: '#333' },
+  weightLossValue: { fontSize: 18, fontWeight: '700', color: '#3498DB' },
   summaryCard: { backgroundColor: '#FFF', borderRadius: 25, paddingVertical: 15, paddingHorizontal: 30, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 0, marginBottom: 15, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.04, shadowRadius: 8, elevation: 3 },
   summaryTitle: { fontSize: 18, fontWeight: 'bold', color: '#333', letterSpacing: 1 },
   summaryProgress: { fontSize: 15, color: '#555', fontWeight: '500' },
@@ -725,104 +704,19 @@ const styles = StyleSheet.create({
   loadingText: { marginTop: 12, fontSize: 16, color: '#666', fontWeight: '500' },
   emptyBox: { paddingVertical: 40, alignItems: 'center' },
   emptyText: { fontSize: 16, color: '#999', fontWeight: '500' },
-
-  // 🎯 Modal 樣式
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  modalContent: {
-    backgroundColor: '#FFF',
-    borderRadius: 24,
-    paddingHorizontal: 28,
-    paddingVertical: 30,
-    width: '90%',
-    maxWidth: 420,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.15,
-    shadowRadius: 15,
-    elevation: 8,
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 12,
-    letterSpacing: 0.5,
-  },
-  modalDescription: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#666',
-    lineHeight: 20,
-    marginBottom: 20,
-  },
-  quickActionButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#3498DB',
-    borderRadius: 12,
-    paddingVertical: 12,
-    marginBottom: 16,
-  },
-  quickActionButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFF',
-    marginLeft: 8,
-    letterSpacing: 0.3,
-  },
-  manualInputSection: {
-    marginBottom: 20,
-  },
-  manualInputLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#333',
-    marginBottom: 8,
-  },
-  weightInput: {
-    borderWidth: 1.5,
-    borderColor: '#E0E0E0',
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    fontSize: 14,
-    fontWeight: '500',
-    backgroundColor: '#F9F7F4',
-  },
-  modalButtonGroup: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  modalButton: {
-    flex: 1,
-    borderRadius: 12,
-    paddingVertical: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#F0F0F0',
-  },
-  cancelButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#666',
-    letterSpacing: 0.3,
-  },
-  confirmButton: {
-    backgroundColor: '#E67E22',
-  },
-  confirmButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#FFF',
-    letterSpacing: 0.3,
-  },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.6)', justifyContent: 'center', alignItems: 'center' },
+  modalContent: { backgroundColor: '#FFF', borderRadius: 24, paddingHorizontal: 28, paddingVertical: 30, width: '90%', maxWidth: 420, shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.15, shadowRadius: 15, elevation: 8 },
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#333', marginBottom: 12, letterSpacing: 0.5 },
+  modalDescription: { fontSize: 13, fontWeight: '500', color: '#666', lineHeight: 20, marginBottom: 20 },
+  quickActionButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#3498DB', borderRadius: 12, paddingVertical: 12, marginBottom: 16, justifyContent: 'center' },
+  quickActionButtonText: { fontSize: 14, fontWeight: '700', color: '#FFF', marginLeft: 8, letterSpacing: 0.3 },
+  manualInputSection: { marginBottom: 20 },
+  manualInputLabel: { fontSize: 13, fontWeight: '600', color: '#333', marginBottom: 8 },
+  weightInput: { borderWidth: 1.5, borderColor: '#E0E0E0', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 11, fontSize: 14, fontWeight: '500', backgroundColor: '#F9F7F4' },
+  modalButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  modalButton: { flex: 1, borderRadius: 12, paddingVertical: 12, justifyContent: 'center', alignItems: 'center' },
+  cancelButton: { backgroundColor: '#F0F0F0' },
+  cancelButtonText: { fontSize: 14, fontWeight: '700', color: '#666', letterSpacing: 0.3 },
+  confirmButton: { backgroundColor: '#E67E22' },
+  confirmButtonText: { fontSize: 14, fontWeight: '700', color: '#FFF', letterSpacing: 0.3 },
 });
