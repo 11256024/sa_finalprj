@@ -424,6 +424,15 @@ export default function ProfileScreen() {
       if (cleanText.length === 0) { showWarningAlert('姓名不能全為空白或符號！'); return; }
 
       if (!tempData.birthday || tempData.birthday.trim() === '') { showWarningAlert('請選擇生日！'); return; }
+      
+      // 🎯 唯一改動：精準檢查生日是否大於今天（未來日期）
+      const selectedBirthDate = new Date(tempData.birthday);
+      const todayDate = new Date();
+      if (selectedBirthDate > todayDate) {
+        showWarningAlert('出生日期不能是未來日期！');
+        return;
+      }
+
       if (!tempData.height || tempData.height.trim() === '') { showWarningAlert('請選擇身高！'); return; }
       if (!tempData.weight || tempData.weight.trim() === '') { showWarningAlert('請選擇體重！'); return; }
       if (!tempData.gender || tempData.gender.trim() === '') { showWarningAlert('請選擇生理性別！'); return; }
