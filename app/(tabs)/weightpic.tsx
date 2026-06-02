@@ -18,7 +18,7 @@ export default function WeightPicScreen() {
   const [weightData, setWeightData] = useState<number[]>([]);
   const [bmiData, setBmiData] = useState<number[]>([]);
 
-  // 🕒 核心功能：計算動態週日期（維持與飲食紀錄相同的 YYYY-MM-DD 比對格式）
+  // 🕒 計算動態週日期
   const getDynamicWeekData = () => {
     const now = new Date();
     const utc = now.getTime() + now.getTimezoneOffset() * 60000;
@@ -46,10 +46,12 @@ export default function WeightPicScreen() {
       const month = nextDay.getMonth() + 1;
       const date = nextDay.getDate();
       
-      // 圖表 X 軸顯示 M/D
-      labels.push(`${month}/${date}`);
+      if (i === 6) {
+        labels.push(`${month}/${date}\n(日期)`);
+      } else {
+        labels.push(`${month}/${date}`);
+      }
       
-      // 完美對接：格式化為 YYYY-MM-DD
       const queryMonth = month < 10 ? `0${month}` : `${month}`;
       const queryDate = date < 10 ? `0${date}` : `${date}`;
       fullDates.push(`${year}-${queryMonth}-${queryDate}`);
@@ -58,7 +60,7 @@ export default function WeightPicScreen() {
     return { labels, fullDates };
   };
 
-  // 🧮 核心控制：依據體重與真實身高計算 BMI
+  // 🧮 依據體重與真實身高計算 BMI
   const calculateBmiDataset = (weights: number[], heightCm: number | null): number[] => {
     if (!heightCm || heightCm <= 0) return weights.map(() => 0);
     const heightMeters = heightCm / 100;
@@ -69,11 +71,10 @@ export default function WeightPicScreen() {
     });
   };
 
-  // 🌐 【精準對接】：撈取每日紀錄檔儲存的真實體重
+  // 🌐 撈取每日紀錄檔儲存的真實體重
   const fetchHistoryData = async (period: string) => {
     setIsLoading(true);
     try {
-      // 1. 完美對接：採用與每日紀錄完全相同的會員 ID 獲取邏輯
       const userStr = await AsyncStorage.getItem('user');
       const currentUser = userStr ? JSON.parse(userStr) : null;
       const savedCurrentUserId = await AsyncStorage.getItem('current_user_id');
@@ -87,7 +88,6 @@ export default function WeightPicScreen() {
       
       const finalUserId = /^\d+$/.test(userId) ? userId : 'guest';
 
-      // 讀取身高
       const savedHeightStr = await AsyncStorage.getItem(`${finalUserId}_user_height`);
       let currentHeight: number | null = null;
       if (savedHeightStr && savedHeightStr.trim() !== '') {
@@ -96,7 +96,6 @@ export default function WeightPicScreen() {
       }
       setMemberHeight(currentHeight);
 
-      // 1.5 從後端拉 daily logs，做成「日期 → 體重」對應表（fallback 用本機）
       const backendWeightByDate: Record<string, number> = {};
       if (/^\d+$/.test(finalUserId)) {
         try {
@@ -132,7 +131,6 @@ export default function WeightPicScreen() {
         return 0;
       };
 
-      // 2. 初始化時間軸與體重容器
       let labels: string[] = [];
       let weights: number[] = [];
 
@@ -146,9 +144,7 @@ export default function WeightPicScreen() {
         }
         
       } else if (period === '月') {
-        labels = ["W1", "W2", "W3", "W4"];
-        
-        // 月平均計算：同樣透過真實紀錄分析
+        labels = ["W1", "W2", "W3", "W4(週別)"];
         const weekDataResult = getDynamicWeekData();
         let thisWeekSum = 0;
         let thisWeekCount = 0;
@@ -160,16 +156,13 @@ export default function WeightPicScreen() {
             thisWeekCount += 1;
           }
         }
-
-        // 把當前這週的數據放入 W3 (模擬第三週位置)，其他週預設 0
         weights = [0, 0, thisWeekCount > 0 ? Math.round((thisWeekSum / thisWeekCount) * 10) / 10 : 0, 0];
 
       } else if (period === '年') {
-        labels = ["1-3月", "4-6月", "7-9月", "10-12月"];
+        labels = ["1-3月", "4-6月", "7-9月", "10-12月(季度)"];
         weights = [0, 0, 0, 0];
       }
 
-      // 3. 連動計算 BMI 數據集
       const computedBmis = weights.length > 0 ? calculateBmiDataset(weights, currentHeight) : [];
 
       setChartLabels(labels);
@@ -196,7 +189,6 @@ export default function WeightPicScreen() {
     return () => clearInterval(timer);
   }, [selectedPeriod]);
 
-  // 資料防護判定：只要當週有任何一天體重 > 0，就渲染折線
   const hasData = weightData.length > 0 && weightData.some(w => w > 0);
   const isDataEmpty = !hasData;
 
@@ -223,7 +215,7 @@ export default function WeightPicScreen() {
                     <Text style={styles.loadingText}>讀取資料庫中...</Text>
                   </View>
                 ) : chartLabels.length > 0 ? (
-                  <View style={{ alignItems: 'center' }}>
+                  <View style={{ alignItems: 'center', width: '100%' }}>
                     <LineChart
                       data={{
                         labels: chartLabels,
@@ -237,25 +229,48 @@ export default function WeightPicScreen() {
                             data: finalBmiData, 
                             color: (opacity = 1) => isDataEmpty ? `rgba(0,0,0,0)` : `rgba(243, 176, 126, ${opacity})`, 
                             strokeWidth: isDataEmpty ? 0 : 3 
+                          },
+                          {
+                            data: [30, 200],
+                            withDots: false,
+                            color: () => 'transparent',
+                            strokeWidth: 0,
                           }
                         ],
                       }}
                       width={Platform.OS === 'web' ? screenWidth * 0.45 : screenWidth * 0.75}
                       height={320}
+                      fromZero={false}
+                      yAxisSuffix=""
                       chartConfig={{
                         backgroundColor: "#ffffff", 
                         backgroundGradientFrom: "#ffffff", 
                         backgroundGradientTo: "#ffffff", 
-                        decimalPlaces: 1, 
+                        decimalPlaces: 0, 
                         color: (opacity = 1) => `rgba(210, 210, 210, ${opacity})`, 
                         labelColor: (opacity = 1) => `rgba(120, 120, 120, ${opacity})`, 
                         style: { borderRadius: 16 }, 
-                        propsForDots: { r: isDataEmpty ? "0" : "4", strokeWidth: "1" }, 
+                        propsForDots: { 
+                          r: isDataEmpty ? "0" : "5", 
+                          strokeWidth: "1" 
+                        }, 
                         fillShadowGradientFrom: "transparent", 
                         fillShadowGradientTo: "transparent",
                         fillShadowGradientFromOpacity: 0,
                         fillShadowGradientToOpacity: 0,
+                        formatYLabel: (yValue) => {
+                          const val = parseFloat(yValue);
+                          if (val <= 31) return "0";
+                          if (val > 31 && val < 80) return "50";
+                          if (val >= 80 && val < 130) return "100";
+                          if (val >= 130 && val < 170) return "150";
+                          return "200";
+                        }
                       }}
+                      getDotProps={(value) => ({
+                        r: value === 0 ? "0" : "5",
+                        strokeWidth: value === 0 ? "0" : "1.5"
+                      })}
                       bezier={!isDataEmpty} 
                       withInnerLines={true} 
                       withOuterLines={true} 
@@ -276,7 +291,7 @@ export default function WeightPicScreen() {
                   <View style={styles.legendItem}>
                     <View style={[styles.legendLine, { backgroundColor: '#4682B4' }]} />
                     <View style={[styles.legendDot, { backgroundColor: '#4682B4' }]} />
-                    <Text style={styles.legendText}>體重</Text>
+                    <Text style={styles.legendText}>體重 (kg)</Text>
                   </View>
                   <View style={styles.legendItem}>
                     <View style={[styles.legendLine, { backgroundColor: '#F3B07E' }]} />
@@ -302,6 +317,32 @@ export default function WeightPicScreen() {
                 ))}
               </View>
             </View>
+
+            {/* ✨ 新增：網頁專屬【數據明細觀測面板】 */}
+            {!isDataEmpty && (
+              <View style={styles.detailsContainer}>
+                <Text style={styles.detailsTitle}>📊 數據明細摘要</Text>
+                <View style={styles.detailsGrid}>
+                  {weightData.map((weight, index) => {
+                    // 如果這天沒有數據 (等於 0)，就優雅地跳過不顯示
+                    if (weight <= 0) return null;
+
+                    const cleanLabel = chartLabels[index]?.replace('\n(日期)', '');
+                    const currentBmi = bmiData[index];
+
+                    return (
+                      <View key={index} style={styles.detailCard}>
+                        <Text style={styles.detailDateText}>{cleanLabel}</Text>
+                        <View style={styles.detailValueRow}>
+                          <Text style={styles.detailWeightVal}>{weight} <Text style={{ fontSize: 11, color: '#888' }}>kg</Text></Text>
+                          <Text style={styles.detailBmiVal}>BMI: {currentBmi > 0 ? currentBmi : '--'}</Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
 
           </View>
         </View>
@@ -344,5 +385,56 @@ const styles = StyleSheet.create({
   sideDateMenu: { width: 60, alignItems: 'center', justifyContent: 'center', paddingVertical: 10 },
   dateUnitBtn: { paddingVertical: 16, width: '100%', alignItems: 'center' },
   dateUnitText: { fontSize: 22, color: '#B0B0B0', fontWeight: '500' },
-  dateUnitTextActive: { color: '#111111', fontWeight: 'bold', fontSize: 24 }
+  dateUnitTextActive: { color: '#111111', fontWeight: 'bold', fontSize: 24 },
+  
+  // ✨ 明細觀測面板專屬樣式
+  detailsContainer: {
+    marginTop: 35,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0',
+    paddingTop: 25,
+    width: '90%',
+    alignSelf: 'center',
+  },
+  detailsTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#444',
+    marginBottom: 15,
+  },
+  detailsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  detailCard: {
+    backgroundColor: '#F8F9FA',
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: '#EEF0F2',
+    minWidth: 110,
+    alignItems: 'center',
+  },
+  detailDateText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: 4,
+  },
+  detailValueRow: {
+    alignItems: 'center',
+  },
+  detailWeightVal: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#4682B4',
+  },
+  detailBmiVal: {
+    fontSize: 12,
+    color: '#E69153',
+    fontWeight: '500',
+    marginTop: 2,
+  },
 });
