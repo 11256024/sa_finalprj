@@ -303,26 +303,42 @@ export default function BodyMetricsScreen() {
       if (isZeroAge) {
         if (shouldValidate) showAlert('請輸入大等於1的歲數，不滿1足歲無法計算TDEE');
         setInitialProfile({ gender: cleanGender, age: '', height: cleanHeight, weight: cleanWeight });
-        setMetricsData(prev => ({
-          ...prev,
-          gender: cleanGender,
-          age: '',
-          height: cleanHeight,
-          weight: cleanWeight,
-          isCalculated: false,
-        }));
+        setMetricsData(prev => {
+          const areFieldsUnchanged =
+            prev.gender === cleanGender &&
+            prev.age === '' &&
+            prev.height === cleanHeight &&
+            prev.weight === cleanWeight;
+
+          return {
+            ...prev,
+            gender: cleanGender,
+            age: '',
+            height: cleanHeight,
+            weight: cleanWeight,
+            isCalculated: areFieldsUnchanged ? prev.isCalculated : false,
+          };
+        });
         return false;
       }
 
       setInitialProfile({ gender: cleanGender, age: finalAge, height: cleanHeight, weight: cleanWeight });
-      setMetricsData(prev => ({
-        ...prev,
-        gender: cleanGender,
-        age: finalAge,
-        height: cleanHeight,
-        weight: cleanWeight,
-        isCalculated: false,
-      }));
+      setMetricsData(prev => {
+        const areFieldsUnchanged =
+          prev.gender === cleanGender &&
+          prev.age === finalAge &&
+          prev.height === cleanHeight &&
+          prev.weight === cleanWeight;
+
+        return {
+          ...prev,
+          gender: cleanGender,
+          age: finalAge,
+          height: cleanHeight,
+          weight: cleanWeight,
+          isCalculated: areFieldsUnchanged ? prev.isCalculated : false,
+        };
+      });
 
       return true;
     };
