@@ -57,7 +57,7 @@ const pageLanguageConfig = {
   addButtonText: '+ 新 增',
   searchPlaceholder: '🔍   輸 入 商 品 名 稱',
   searchCancel: '取 消',
-  recentSearchLabel: '近 期 資 資料', 
+  recentSearchLabel: '近 期 資 料', 
   calorieLabelPrefix: '熱量（',
   calorieLabelSuffix: ' 大卡）',
   emptyResultText: '找不到相關商品',
