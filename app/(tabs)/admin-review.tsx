@@ -75,8 +75,10 @@ export default function AdminReviewScreen() {
   const [auditSubTab, setAuditSubTab] = useState<'admin_add' | 'approved' | 'rejected'>('admin_add');
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   
+  // 🕒 新增：控管全域載入狀態（預設第一趟進來為 true）
+  const [isLoading, setIsLoading] = useState(true);
+
   const [confirmModalVisible, setConfirmModalVisible] = useState(false);
-  // 🛠️ 擴充 selectedItem 結構，完整保存品名 (name) 與單位 (unit)
   const [selectedItem, setSelectedItem] = useState<{ id: string; name: string; unit: string; action: 'approve' | 'reject' } | null>(null);
   
   const [deleteModalVisible, setDeleteModalVisible] = useState(false);
@@ -131,6 +133,11 @@ export default function AdminReviewScreen() {
     if (isFetchingRef.current) return; 
     isFetchingRef.current = true;
 
+    // 如果不是背景靜態同步（例如初次進入、手動切換等），就顯示載入中
+    if (!isBackground) {
+      setIsLoading(true);
+    }
+
     try {
       const t = Date.now();
       const [approvedRes, pendingRes, rejectedRes] = await Promise.all([
@@ -146,16 +153,12 @@ export default function AdminReviewScreen() {
       if (!approvedRes.ok || !pendingRes.ok || !rejectedRes.ok) throw new Error('讀取失敗');
 
       const mergedMap = new Map<string, Product>();
-      // 🛠️ 同樣修正順序：Pending 先放，讓 Approved/Rejected 擁有最後決定權
       (Array.isArray(pendingData) ? pendingData : []).forEach(item => mergedMap.set(String(item.id), mapProductFromApi(item)));
       (Array.isArray(rejectedData) ? rejectedData : []).forEach(item => mergedMap.set(String(item.id), mapProductFromApi(item)));
       (Array.isArray(approvedData) ? approvedData : []).forEach(item => mergedMap.set(String(item.id), mapProductFromApi(item)));
 
       const mergedList = Array.from(mergedMap.values());
 
-      // 🛠️ 強化：防閃爍 (Anti-flicker) 邏輯
-      // 如果後端抓回來的狀態還是 'pending'，但本地已經標記為 'approved' 或 'rejected'，
-      // 則優先保留本地狀態。這能避免後端資料庫尚未同步完成前導致的「資料跳回」現象。
       setAllProducts(prev => {
         return mergedList.map(newItem => {
           const existing = prev.find(p => p.id === newItem.id);
@@ -170,16 +173,15 @@ export default function AdminReviewScreen() {
       if (!isBackground) showMessage('無法同步後端最新資料。');
     } finally {
       isFetchingRef.current = false;
+      // 🕒 更新結束：將載入狀態解除
+      setIsLoading(false);
     }
   };
 
-  // 🛠️ 核心修正：雙軌制即時監聽與動態刷新定時器
-  // 在待審核頁面且沒打開彈窗時，採用 0.1 秒極速輪詢刷新；同時維持 WebSocket 連線監聽
   useEffect(() => {
     getCurrentAdminId().then(id => { if (id) setCurrentUserId(id); });
     fetchGlobalProducts(false);
 
-    // 建立隨時通訊的 WebSocket
     const connectWebSocket = () => {
       console.log('正在建立即時刷新 WebSocket 連線...');
       const ws = new WebSocket(WS_URL);
@@ -205,8 +207,6 @@ export default function AdminReviewScreen() {
 
     connectWebSocket();
 
-    // 🕒 調整自動刷新頻率。因為已有 WebSocket 即時監聽，輪詢建議降至 3 秒一次。
-    // 避免過快頻率 (如 0.1秒) 在資料庫更新尚未完全反映時抓到舊資料，導致「消失後又出現」的閃爍現象。
     const refreshInterval = 3000;
 
     const pollingTimer = setInterval(() => {
@@ -217,7 +217,7 @@ export default function AdminReviewScreen() {
       if (wsRef.current) wsRef.current.close();
       clearInterval(pollingTimer);
     };
-  }, [activeTab]); // 僅在切換標籤時重新初始化，移除彈窗狀態依賴，防止操作後立即觸發刷新
+  }, [activeTab]);
 
   const getFilteredProducts = () => {
     const sortedProducts = [...allProducts].sort((a, b) => Number(b.id) - Number(a.id));
@@ -285,7 +285,6 @@ export default function AdminReviewScreen() {
   const handleExecuteAction = async () => {
     if (!selectedItem) return;
     
-    // 先備份資料，不要立刻 null 掉 selectedItem，避免 Modal 關閉動畫時內容跳轉
     const { id, action, name, unit } = selectedItem; 
     setConfirmModalVisible(false);
 
@@ -305,7 +304,6 @@ export default function AdminReviewScreen() {
     } catch (e) {
       console.log(e);
     } finally {
-      // 等一切處理完（或 Modal 動畫結束後）再清除狀態
       setSelectedItem(null);
     }
   };
@@ -380,7 +378,12 @@ export default function AdminReviewScreen() {
 
           <View style={styles.titleDivider} />
           
-          {displayedList.length === 0 ? (
+          {/* 🕒 核心修改點：優先判斷載入狀態，最後才顯示無資料 */}
+          {isLoading ? (
+            <View style={styles.emptyBox}>
+              <Text style={styles.emptyText}>載入中，請稍候...</Text>
+            </View>
+          ) : displayedList.length === 0 ? (
             <View style={styles.emptyBox}>
               <Text style={styles.emptyText}>🔍 沒有找到任何相關的商品資料</Text>
             </View>
@@ -407,7 +410,6 @@ export default function AdminReviewScreen() {
                   <View style={styles.btnGroup}>
                     {item.status === 'pending' ? (
                       <>
-                        {/* 🛠️ 點擊傳入完整的品名與單位 */}
                         <TouchableOpacity style={[styles.actionBtn, styles.rejectBtn]} onPress={() => { setSelectedItem({ id: item.id, name: displayName, unit: displayUnit, action: 'reject' }); setConfirmModalVisible(true); }}>
                           <Text style={styles.rejectBtnText}>拒絕退件</Text>
                         </TouchableOpacity>
@@ -475,7 +477,7 @@ export default function AdminReviewScreen() {
         </View>
       </Modal>
 
-      {/* 🛠️ 核心修改：動態整合審核彈窗（精準印出品名與單位） */}
+      {/* 審核彈窗 */}
       <Modal animationType="fade" transparent={true} visible={confirmModalVisible} onRequestClose={() => setConfirmModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
@@ -573,7 +575,6 @@ const styles = StyleSheet.create({
   deleteBtnText: { color: '#F43F5E', fontSize: 12, fontWeight: '600' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
   
-  // 🛠️ 稍微拓寬彈窗寬度到 440，確保品名、單位與「是否確認刪除（退回）？」能完美排版呈現
   alertContent: { backgroundColor: '#FFF', width: 440, padding: 25, borderRadius: 16, alignItems: 'center' },
   alertTitle: { fontSize: 18, fontWeight: 'bold' },
   alertMessageText: { fontSize: 16, marginVertical: 18, textAlign: 'center', lineHeight: 24, color: '#334155' },
