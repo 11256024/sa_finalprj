@@ -32,10 +32,35 @@ const getCurrentMemberId = async () => {
   }
 };
 
+const mapProductFromApi = (item: any): Product => {
+  return {
+    id: String(item.id),
+    name: String(item.name || ''),
+    unit: String(item.unit || ''),
+    calories: Number(item.calories || 0),
+    status: item.status || 'approved',
+    creatorId:
+      item.creator_id !== undefined && item.creator_id !== null
+        ? String(item.creator_id)
+        : item.creator
+        ? String(item.creator)
+        : undefined,
+  };
+};
+
 interface FoodItem {
   id: string;
   name: string;      
   calories: string;  
+}
+
+interface Product {
+  id: string;
+  name: string;
+  unit: string;
+  calories: number;
+  status: 'approved' | 'pending' | 'rejected';
+  creatorId?: string;
 }
 
 export default function DailyRecordScreen() {
@@ -76,6 +101,10 @@ export default function DailyRecordScreen() {
   const [inputUnitValue, setInputUnitValue] = useState(''); 
   const [selectedUnitType, setSelectedUnitType] = useState<'克' | 'ml'>('克'); 
   const [inputCalories, setInputCalories] = useState('');
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [productSuggestions, setProductSuggestions] = useState<Product[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(false);
+  const [isSuggestionDropdownOpen, setIsSuggestionDropdownOpen] = useState(false);
   // 不為 null 表示編輯既有品項；為 null 表示新增
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
@@ -139,6 +168,80 @@ export default function DailyRecordScreen() {
       stateRef.current.bmiStatus = calculatedStatus;
     }
   }, [weightUpdateVersion]);
+
+  const loadApprovedProducts = async () => {
+    try {
+      setIsLoadingProducts(true);
+      const resp = await fetch(`${API_URL}/products/`);
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (!Array.isArray(data)) return;
+      const mappedProducts = data.map(mapProductFromApi).filter((item) => item.status === 'approved');
+      setAllProducts(mappedProducts);
+    } catch (error) {
+      console.error('載入商品建議失敗', error);
+    } finally {
+      setIsLoadingProducts(false);
+    }
+  };
+
+  useEffect(() => {
+    loadApprovedProducts();
+  }, []);
+
+  useEffect(() => {
+    if (inputItemName.trim() !== '' && allProducts.length > 0) {
+      filterProductSuggestions(inputItemName);
+    }
+  }, [allProducts]);
+
+  const filterProductSuggestions = (keyword: string) => {
+    const trimmed = keyword.trim().toLowerCase();
+    if (!trimmed) {
+      setProductSuggestions([]);
+      return;
+    }
+    setProductSuggestions(
+      allProducts
+        .filter((product) => product.name.toLowerCase().includes(trimmed))
+        .slice(0, 6),
+    );
+  };
+
+  const parseProductUnit = (unit: string) => {
+    const normalized = String(unit || '').trim();
+    const match = normalized.match(/^(\d+(?:\.\d+)?)\s*(克|g|ml)$/i);
+    if (match) {
+      return {
+        value: match[1],
+        type: match[2].toLowerCase() === 'ml' ? 'ml' : '克',
+      } as const;
+    }
+    return {
+      value: '',
+      type: /ml/i.test(normalized) ? 'ml' : '克',
+    } as const;
+  };
+
+  const handleInputItemNameChange = (text: string) => {
+    setInputItemName(text);
+    setIsSuggestionDropdownOpen(text.trim() !== '');
+    filterProductSuggestions(text);
+  };
+
+  const handleSelectProductSuggestion = (product: Product) => {
+    setInputItemName(product.name);
+    setInputCalories(String(product.calories));
+    const parsedUnit = parseProductUnit(product.unit);
+    setInputUnitValue(parsedUnit.value);
+    setSelectedUnitType(parsedUnit.type);
+    setProductSuggestions([]);
+    setIsSuggestionDropdownOpen(false);
+  };
+
+  const isSearchingProducts = inputItemName.trim() !== '' && isLoadingProducts;
+  const showNoProductFound = !isLoadingProducts && inputItemName.trim() !== '' && productSuggestions.length === 0;
+  const showSuggestionDropdown = isSuggestionDropdownOpen && (isSearchingProducts || productSuggestions.length > 0 || showNoProductFound);
 
   const loadDataByDate = async (dateStr: string, currentUid: string = userId, heightForBmi: number | null = userHeight) => {
   try {
@@ -652,6 +755,7 @@ export default function DailyRecordScreen() {
     setSelectedUnitType('克');
     setInputCalories('');
     setEditingItemId(null);
+    setProductSuggestions([]);
   };
 
   const openAddModalForCategory = (category: '早餐' | '午餐' | '晚餐') => {
@@ -767,7 +871,39 @@ export default function DailyRecordScreen() {
             </View>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>品項名稱</Text>
-              <TextInput style={styles.popupInput} placeholder="例如：御飯糰" placeholderTextColor="#A9A9A9" value={inputItemName} onChangeText={setInputItemName} />
+              <TextInput
+                style={[styles.popupInput, showSuggestionDropdown && styles.popupInputWithDropdown]}
+                placeholder="例如：御飯糰"
+                placeholderTextColor="#A9A9A9"
+                value={inputItemName}
+                onChangeText={handleInputItemNameChange}
+              />
+              {showSuggestionDropdown && (
+                <View style={styles.suggestionsContainer}>
+                  {isSearchingProducts ? (
+                    <Text style={styles.noSuggestionText}>搜尋中...</Text>
+                  ) : productSuggestions.length > 0 ? (
+                    <ScrollView style={styles.suggestionsScroll} nestedScrollEnabled={true}>
+                      {productSuggestions.map((product) => (
+                        <TouchableOpacity
+                          key={product.id}
+                          style={styles.suggestionItem}
+                          onPress={() => handleSelectProductSuggestion(product)}
+                        >
+                          <Text style={styles.suggestionText} numberOfLines={1} ellipsizeMode="tail">
+                            {product.name}
+                          </Text>
+                          <Text style={styles.suggestionMeta} numberOfLines={1} ellipsizeMode="tail">
+                            {product.unit ? `${product.unit} · ` : ''}{product.calories} 大卡
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  ) : (
+                    <Text style={styles.noSuggestionText}>查無商品</Text>
+                  )}
+                </View>
+              )}
             </View>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>份量與單位</Text>
@@ -875,6 +1011,13 @@ const styles = StyleSheet.create({
   disabledSelectBox: { borderWidth: 1, borderColor: '#DDD', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: '#EEEEEE' },
   disabledSelectText: { fontSize: 16, color: '#666', fontWeight: 'bold' },
   popupInput: { borderWidth: 1, borderColor: '#DDD', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, fontSize: 16, color: '#333', backgroundColor: '#FAFAFA' },
+  popupInputWithDropdown: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0 },
+  suggestionsContainer: { marginTop: -1, maxHeight: 180, borderWidth: 1, borderColor: '#E2E8F0', borderTopWidth: 0, borderBottomLeftRadius: 10, borderBottomRightRadius: 10, backgroundColor: '#FFF', overflow: 'hidden' },
+  suggestionsScroll: { maxHeight: 180 },
+  suggestionItem: { paddingVertical: 10, paddingHorizontal: 14, borderBottomWidth: 1, borderBottomColor: '#F1F5F9' },
+  suggestionText: { fontSize: 15, color: '#1F2937', fontWeight: '600', flexShrink: 1 },
+  suggestionMeta: { fontSize: 13, color: '#6B7280', marginTop: 4, flexShrink: 1 },
+  noSuggestionText: { fontSize: 14, color: '#9CA3AF', marginTop: 8, paddingHorizontal: 4, paddingVertical: 10 },
   unitSelectorContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   unitNumberInput: { flex: 1, borderWidth: 1, borderColor: '#DDD', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, fontSize: 16, color: '#333', backgroundColor: '#FAFAFA', marginRight: 15 },
   toggleButtonGroup: { flexDirection: 'row', borderWidth: 1, borderColor: '#A3C1AD', borderRadius: 10, overflow: 'hidden', height: 44, width: 120 },
