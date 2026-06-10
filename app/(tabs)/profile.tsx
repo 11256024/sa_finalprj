@@ -285,10 +285,6 @@ export default function ProfileScreen() {
     }
   };
 
-  const heightOptions = Array.from({ length: 151 }, (_, i) => (i + 100).toString());
-  const weightOptions = Array.from({ length: 171 }, (_, i) => (i + 30).toString());  
-  const genderOptions = ['男', '女'];
-
   const getPureAgeValue = (birthdayStr: string): string => {
     if (!birthdayStr || birthdayStr === '請選擇生日' || birthdayStr === '1995-01-15') return '';
     const birthDate = new Date(birthdayStr);
@@ -300,6 +296,30 @@ export default function ProfileScreen() {
     }
     return age >= 0 ? age.toString() : '';
   };
+
+  // 🎯 根據年齡取得身高體重的限制範圍
+  const getRangesByAge = (birthday: string) => {
+    const ageStr = getPureAgeValue(birthday);
+    const age = ageStr ? parseInt(ageStr) : 25; // 若未填寫則預設使用成年人範圍
+
+    if (age >= 1 && age <= 2) return { hMin: 70, hMax: 100, wMin: 7, wMax: 18 };
+    if (age >= 3 && age <= 5) return { hMin: 85, hMax: 125, wMin: 10, wMax: 30 };
+    if (age >= 6 && age <= 12) return { hMin: 105, hMax: 180, wMin: 15, wMax: 90 };
+    if (age >= 13 && age <= 18) return { hMin: 135, hMax: 200, wMin: 30, wMax: 120 };
+    if (age >= 19 && age <= 40) return { hMin: 140, hMax: 220, wMin: 35, wMax: 200 };
+    if (age >= 41 && age <= 65) return { hMin: 140, hMax: 220, wMin: 35, wMax: 220 };
+    if (age >= 66) return { hMin: 130, hMax: 220, wMin: 30, wMax: 220 };
+
+    return { hMin: 70, hMax: 220, wMin: 7, wMax: 220 }; // 預設緩衝範圍
+  };
+
+  // 🎯 動態生成選單選項
+  const currentRanges = getRangesByAge(isEditing ? tempData.birthday : profileData.birthday);
+
+  const heightOptions = Array.from({ length: currentRanges.hMax - currentRanges.hMin + 1 }, (_, i) => (i + currentRanges.hMin).toString());
+  const weightOptions = Array.from({ length: currentRanges.wMax - currentRanges.wMin + 1 }, (_, i) => (i + currentRanges.wMin).toString());
+
+  const genderOptions = ['男', '女'];
 
   const renderAgeLabel = (birthdayStr: string) => {
     const ageNum = getPureAgeValue(birthdayStr);

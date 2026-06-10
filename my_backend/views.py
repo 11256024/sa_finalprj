@@ -84,16 +84,20 @@ def validate_member_data(data):
             return (50, 250, 2, 200)
         elif age_val < 1:
             return (45, 80, 2, 15)
-        elif age_val < 2:
-            return (70, 90, 8, 18)
-        elif age_val < 4:
-            return (80, 105, 10, 22)
-        elif age_val < 7:
-            return (95, 125, 13, 35)
-        elif age_val < 13:
-            return (110, 165, 20, 65)
-        else:  # 13+ 歲
-            return (140, 210, 30, 200)
+        elif age_val <= 2:
+            return (70, 100, 7, 18)
+        elif age_val <= 5:
+            return (85, 125, 10, 30)
+        elif age_val <= 12:
+            return (105, 180, 15, 90)
+        elif age_val <= 18:
+            return (135, 200, 30, 120)
+        elif age_val <= 40:
+            return (140, 220, 35, 200)
+        elif age_val <= 65:
+            return (140, 220, 35, 220)
+        else:  # 66+ 歲
+            return (130, 220, 30, 220)
     
     min_h, max_h, min_w, max_w = get_height_weight_ranges(age)
     
