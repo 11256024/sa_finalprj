@@ -636,7 +636,8 @@ export default function DailyRecordScreen() {
     }
 
     const totalCalcCalories = String(Math.round(parseFloat(trimmedCalories) * servings));
-    const finalFullName = `${trimmedItemName}/${trimmedUnitValue}${selectedUnitType} x ${servings}份`;
+    // 🛠️ 依照需求修改儲存格式：將單份熱量顯示為「X大卡/份」，並使用 * 代替 x
+    const finalFullName = `${trimmedItemName}/${trimmedUnitValue}${selectedUnitType} * ${servings}份 (${trimmedCalories}大卡/份)`;
 
     let updatedMeals: typeof mealBlocks;
     if (editingItemId) {
@@ -672,17 +673,19 @@ export default function DailyRecordScreen() {
     category: '早餐' | '午餐' | '晚餐',
     item: FoodItem
   ) => {
-    const lastSlash = item.name.lastIndexOf('/');
+    // 🛠️ 修復：改用 indexOf 尋找第一個斜線，避免被熱量格式中的「/份」干擾
+    const firstSlash = item.name.indexOf('/');
     let nameOnly = item.name;
     let unitValue = '';
     let unitType: '克' | 'ml' = '克';
     let savedServings = item.servings || 1;
     let savedSingleCal = item.singleCalories || item.calories;
 
-    if (lastSlash !== -1) {
-      nameOnly = item.name.slice(0, lastSlash);
-      const unitPart = item.name.slice(lastSlash + 1);
-      const m = unitPart.match(/^(\d+)(克|ml)(?:\s*x\s*(\d+)份)?/);
+    if (firstSlash !== -1) {
+      nameOnly = item.name.slice(0, firstSlash);
+      const unitPart = item.name.slice(firstSlash + 1);
+      // 🛠️ 修改正則表達式，使其能同時解析 x 或 * 符號
+      const m = unitPart.match(/^(\d+)(克|ml)(?:\s*[x*]\s*(\d+)份)?/);
       if (m) {
         unitValue = m[1];
         unitType = m[2] as '克' | 'ml';

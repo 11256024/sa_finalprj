@@ -283,16 +283,17 @@ export default function HistoryScreen() {
       let displayName = food.name;
       let displayUnit = '份';
 
-      if (food.name.includes('/')) {
-        const parts = food.name.split('/');
-        displayName = parts[0];
-        displayUnit = parts[1] || '份';
+      // 🛠️ 修復：使用 indexOf 僅分割第一個斜線，保留後方完整的「(X大卡/份)」
+      const slashIndex = food.name.indexOf('/');
+      if (slashIndex !== -1) {
+        displayName = food.name.substring(0, slashIndex);
+        displayUnit = food.name.substring(slashIndex + 1);
       }
 
       return (
         <View key={food.id} style={styles.tableRow}>
-          <Text style={[styles.td, { flex: 2, fontWeight: '500' }]}>{displayName}</Text>
-          <Text style={[styles.td, { flex: 1, textAlign: 'center', color: '#777' }]}>{displayUnit}</Text>
+          <Text style={[styles.td, { flex: 1.2, fontWeight: '500' }]}>{displayName}</Text>
+          <Text style={[styles.td, { flex: 1.8, textAlign: 'center', color: '#777', fontSize: 15 }]}>{displayUnit}</Text>
           <Text style={[styles.td, { flex: 1, textAlign: 'right', color: '#E28743', fontWeight: 'bold' }]}>{food.calories}</Text>
         </View>
       );
@@ -375,8 +376,8 @@ export default function HistoryScreen() {
                       </Text>
                     </View>
                     <View style={styles.tableHeader}>
-                      <Text style={[styles.th, { flex: 2 }]}>品項</Text>
-                      <Text style={[styles.th, { flex: 1, textAlign: 'center' }]}>單位</Text>
+                      <Text style={[styles.th, { flex: 1.2 }]}>品項</Text>
+                      <Text style={[styles.th, { flex: 1.8, textAlign: 'center' }]}>單位 (含熱量明細)</Text>
                       <Text style={[styles.th, { flex: 1, textAlign: 'right' }]}>熱量 (大卡)</Text>
                     </View>
                     {currentRecord.mealBlocks.早餐.length > 0 ? (
@@ -395,8 +396,8 @@ export default function HistoryScreen() {
                       </Text>
                     </View>
                     <View style={styles.tableHeader}>
-                      <Text style={[styles.th, { flex: 2 }]}>品項</Text>
-                      <Text style={[styles.th, { flex: 1, textAlign: 'center' }]}>單位</Text>
+                      <Text style={[styles.th, { flex: 1.2 }]}>品項</Text>
+                      <Text style={[styles.th, { flex: 1.8, textAlign: 'center' }]}>單位 (含熱量明細)</Text>
                       <Text style={[styles.th, { flex: 1, textAlign: 'right' }]}>熱量 (大卡)</Text>
                     </View>
                     {currentRecord.mealBlocks.午餐.length > 0 ? (
@@ -415,8 +416,8 @@ export default function HistoryScreen() {
                       </Text>
                     </View>
                     <View style={styles.tableHeader}>
-                      <Text style={[styles.th, { flex: 2 }]}>品項</Text>
-                      <Text style={[styles.th, { flex: 1, textAlign: 'center' }]}>單位</Text>
+                      <Text style={[styles.th, { flex: 1.2 }]}>品項</Text>
+                      <Text style={[styles.th, { flex: 1.8, textAlign: 'center' }]}>單位 (含熱量明細)</Text>
                       <Text style={[styles.th, { flex: 1, textAlign: 'right' }]}>熱量 (大卡)</Text>
                     </View>
                     {currentRecord.mealBlocks.晚餐.length > 0 ? (
