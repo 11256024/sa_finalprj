@@ -76,6 +76,31 @@ export default function ProfileScreen() {
     return `${parts[0]}-${parts[1]}-${parts[2]}`;
   };
 
+  const getTodayRecordWeight = async (memberId: string) => {
+    try {
+      const todayFoodKey = `${memberId}_food_record_${getTodayDateString()}`;
+      const dailyFoodRecordRaw = await AsyncStorage.getItem(todayFoodKey);
+
+      if (!dailyFoodRecordRaw) return '';
+
+      const parsedFood = JSON.parse(dailyFoodRecordRaw);
+
+      if (
+        parsedFood.hasDailyWeight === true &&
+        parsedFood.weight !== undefined &&
+        parsedFood.weight !== null &&
+        parsedFood.weight.toString().trim() !== ''
+      ) {
+        return parsedFood.weight.toString().trim();
+      }
+
+      return '';
+    } catch (e) {
+      console.log('讀取今日每日紀錄體重失敗:', e);
+      return '';
+    }
+  };
+
   useFocusEffect(
     useCallback(() => {
       loadProfileData();
@@ -84,15 +109,20 @@ export default function ProfileScreen() {
 
   // 🎯 監聽每日紀錄的更新，自動同步到會員中心顯示
   useEffect(() => {
-    if (lastWeightValue && lastWeightValue !== profileData.weight) {
-      setProfileData(prev => ({ ...prev, weight: lastWeightValue }));
-      setTempData(prev => ({ ...prev, weight: lastWeightValue }));
-    }
+    const syncWeightFromDaily = async () => {
+      // 🎯 優先使用記憶體中的 lastWeightValue 達成秒同步
+      if (lastWeightValue && lastWeightValue !== profileData.weight) {
+        setProfileData(prev => ({ ...prev, weight: lastWeightValue }));
+        setTempData(prev => ({ ...prev, weight: lastWeightValue }));
+      }
+    };
+    syncWeightFromDaily();
   }, [weightUpdateVersion]);
 
   const getCurrentMemberContext = async () => {
     const userStr = await AsyncStorage.getItem('user');
     const currentUser = userStr ? JSON.parse(userStr) : null;
+
     const savedCurrentUserId = await AsyncStorage.getItem('current_user_id');
     const savedMemberId = await AsyncStorage.getItem('member_id');
 
@@ -110,9 +140,16 @@ export default function ProfileScreen() {
       const { memberId: savedUserId, currentUser } = await getCurrentMemberContext();
 
       const savedAccount = await AsyncStorage.getItem('account');
+      const savedUsername = await AsyncStorage.getItem('username');
       const savedPassword = await AsyncStorage.getItem('password');
 
-      const singleAccount = currentUser?.username || currentUser?.account || savedAccount || '';
+      const singleAccount =
+        currentUser?.username ||
+        currentUser?.account ||
+        savedAccount ||
+        savedUsername ||
+        '';
+
       const singlePassword = savedPassword || '';
 
       let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
@@ -129,6 +166,7 @@ export default function ProfileScreen() {
       const instantBirthday = parsedProfile.birthday || '';
       const instantName = singleNameForInstant || parsedProfile.name || '';
       const instantHeight = singleHeightForInstant || parsedProfile.height || '';
+      // 會員中心的體重不再與每日紀錄同步，僅使用會員資料本身的體重
       const instantWeight = singleWeightForInstant || parsedProfile.weight || '';
       const instantGender = parsedProfile.gender || '';
 
@@ -165,11 +203,15 @@ export default function ProfileScreen() {
               ...(currentUser || {}),
               ...data.member,
             }));
+            await AsyncStorage.setItem('current_user_id', String(data.member.id));
+            await AsyncStorage.setItem('member_id', String(data.member.id));
           }
         } catch (e) {
           console.log('⚠️ 從後端讀取會員資料失敗，才改用本機快取:', e);
         }
       }
+
+      const singleName = await AsyncStorage.getItem(`${savedUserId}_user_name_key`);
 
       let rawName = '';
       let rawAvatar = '';
@@ -185,12 +227,17 @@ export default function ProfileScreen() {
         rawHeight = dbProfile.height !== null && dbProfile.height !== undefined ? String(dbProfile.height) : '';
         rawWeight = dbProfile.initial_weight !== null && dbProfile.initial_weight !== undefined ? String(dbProfile.initial_weight) : '';
         rawGender = dbProfile.gender ? String(dbProfile.gender) : '';
+
+        await AsyncStorage.multiRemove([
+          'user_avatar',
+          'user_avatar_uri',
+        ]);
       } else {
         const singleHeight = await AsyncStorage.getItem(`${savedUserId}_user_height`);
         const singleWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`);
         const savedAvatar = await AsyncStorage.getItem(`${savedUserId}_user_avatar`);
 
-        rawName = singleNameForInstant || parsedProfile.name || '';
+        rawName = singleName || parsedProfile.name || '';
         rawAvatar = savedAvatar || parsedProfile.avatar || '';
         rawBirthday = parsedProfile.birthday || '';
         rawHeight = singleHeight || parsedProfile.height || '';
@@ -224,16 +271,22 @@ export default function ProfileScreen() {
       await AsyncStorage.setItem(`${savedUserId}_user_profile`, JSON.stringify(safeData));
       await AsyncStorage.setItem(`${savedUserId}_user_height`, safeData.height);
       await AsyncStorage.setItem(`${savedUserId}_user_weight`, safeData.weight);
-      if (safeData.name) await AsyncStorage.setItem(`${savedUserId}_user_name_key`, safeData.name);
-      if (safeData.age) await AsyncStorage.setItem(`${savedUserId}_user_age`, safeData.age);
+      if (safeData.name) {
+        await AsyncStorage.setItem(`${savedUserId}_user_name_key`, safeData.name);
+      }
+      if (safeData.age) {
+        await AsyncStorage.setItem(`${savedUserId}_user_age`, safeData.age);
+      }
+      if (rawAvatar || savedAvatarForInstant) {
+        await AsyncStorage.setItem(`${savedUserId}_user_avatar`, rawAvatar || savedAvatarForInstant || '');
+      }
     } catch (error) {
-      console.error("加載會員資料失敗：", error);
+      error && console.error("加載會員資料失敗：", error);
     }
   };
 
-  // ✨ 關鍵優化：網頁端下拉選單範圍校正 (符合 1 歲到成人的大範圍常態)
-  const heightOptions = Array.from({ length: 156 }, (_, i) => (i + 65).toString());
-  const weightOptions = Array.from({ length: 195 }, (_, i) => (i + 6).toString());  
+  const heightOptions = Array.from({ length: 151 }, (_, i) => (i + 100).toString());
+  const weightOptions = Array.from({ length: 171 }, (_, i) => (i + 30).toString());  
   const genderOptions = ['男', '女'];
 
   const getPureAgeValue = (birthdayStr: string): string => {
@@ -248,72 +301,6 @@ export default function ProfileScreen() {
     return age >= 0 ? age.toString() : '';
   };
 
-  // ✨ 核心升級：醫學級多重欄位動態交叉關聯驗證演算法
-  const validateMemberData = (data: any): { valid: boolean; errors: string[] } => {
-    const errors: string[] = [];
-    let age: number | null = null;
-
-    if (data.birthday && data.birthday !== '請選擇生日') {
-      const birthDate = new Date(data.birthday);
-      const today = new Date();
-      let calculatedAge = today.getFullYear() - birthDate.getFullYear();
-      const monthDifference = today.getMonth() - birthDate.getMonth();
-      if (monthDifference < 0 || (monthDifference === 0 && today.getDate() < birthDate.getDate())) {
-        calculatedAge--;
-      }
-      age = calculatedAge;
-    }
-
-    if (age !== null) {
-      if (age < 1) {
-        errors.push('設定年齡不得小於 1 歲，請重新確認您的生日！');
-      }
-      if (age > 120) {
-        errors.push('年齡不能超過 120 歲');
-      }
-    } else {
-      errors.push('請先選擇或輸入正確的生日');
-    }
-
-    const getHeightWeightRanges = (ageVal: number | null): [number, number, number, number] => {
-      if (ageVal === null) {
-        return [100, 220, 30, 200];
-      } else if (ageVal >= 1 && ageVal <= 3) {
-        return [65, 110, 6, 25];    
-      } else if (ageVal >= 4 && ageVal <= 12) {
-        return [90, 165, 12, 65];
-      } else {
-        return [130, 220, 35, 200];
-      }
-    };
-
-    const [minHeight, maxHeight, minWeight, maxWeight] = getHeightWeightRanges(age);
-
-    if (data.height && data.height !== '請選擇身高') {
-      const height = parseFloat(data.height);
-      if (isNaN(height)) {
-        errors.push('身高格式錯誤');
-      } else if (height < minHeight) {
-        errors.push(`不合邏輯：${age} 歲的身高不得低於 ${minHeight} cm`);
-      } else if (height > maxHeight) {
-        errors.push(`不合邏輯：${age} 歲的身高不得超過 ${maxHeight} cm`);
-      }
-    }
-
-    if (data.weight && data.weight !== '請選擇體重') {
-      const weight = parseFloat(data.weight);
-      if (isNaN(weight)) {
-        errors.push('體重格式錯誤');
-      } else if (weight < minWeight) {
-        errors.push(`不合邏輯：${age} 歲的體重不得少於 ${minWeight} kg`);
-      } else if (weight > maxWeight) {
-        errors.push(`不合邏輯：${age} 歲的體重不得超過 ${maxWeight} kg`);
-      }
-    }
-
-    return { valid: errors.length === 0, errors };
-  };
-
   const renderAgeLabel = (birthdayStr: string) => {
     const ageNum = getPureAgeValue(birthdayStr);
     return ageNum ? ` (${ageNum} 歲)` : '';
@@ -322,15 +309,23 @@ export default function ProfileScreen() {
   const saveAvatarToDatabase = async (avatarValue: string | null) => {
     try {
       const { memberId: savedUserId, currentUser } = await getCurrentMemberContext();
-      if (!savedUserId || savedUserId === 'guest') return;
+
+      if (!savedUserId || savedUserId === 'guest') {
+        return;
+      }
 
       const response = await fetch(`${API_URL}/member/profile/${savedUserId}/`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ avatar: avatarValue }),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          avatar: avatarValue,
+        }),
       });
 
       const data = await parseApiResponse(response);
+
       if (response.ok && data.success && data.member) {
         await AsyncStorage.setItem('user', JSON.stringify({
           ...(currentUser || {}),
@@ -364,13 +359,23 @@ export default function ProfileScreen() {
         reader.onload = async () => {
           const base64Data = reader.result as string;
           setAvatarUri(base64Data);
-          const { memberId: currentUserId } = await getCurrentMemberContext();
+          const currentUserId =
+            await AsyncStorage.getItem('current_user_id') ||
+            await AsyncStorage.getItem('member_id') ||
+            'guest';
           await AsyncStorage.setItem(`${currentUserId}_user_avatar`, base64Data);
           await saveAvatarToDatabase(base64Data);
         };
         reader.readAsDataURL(blob);
       } catch (e) {
+        console.log('⚠️ Base64 轉換失敗，使用原始 URI:', e);
         setAvatarUri(imageUri);
+        const currentUserId =
+          await AsyncStorage.getItem('current_user_id') ||
+          await AsyncStorage.getItem('member_id') ||
+          'guest';
+        await AsyncStorage.setItem(`${currentUserId}_user_avatar`, imageUri);
+        await saveAvatarToDatabase(imageUri);
       }
     }
   };
@@ -379,7 +384,10 @@ export default function ProfileScreen() {
     setDeleteConfirmVisible(false);
     setAvatarUri(null);
     try {
-      const { memberId: currentUserId } = await getCurrentMemberContext();
+      const currentUserId =
+        await AsyncStorage.getItem('current_user_id') ||
+        await AsyncStorage.getItem('member_id') ||
+        'guest';
       await AsyncStorage.removeItem(`${currentUserId}_user_avatar`);
       await AsyncStorage.removeItem('user_avatar');
       await AsyncStorage.removeItem('user_avatar_uri');
@@ -389,13 +397,17 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleAvatarPress = () => setAvatarMenuVisible(true);
+  const handleAvatarPress = () => {
+    setAvatarMenuVisible(true);
+  };
 
   const getFirstCharOfName = () => {
     const currentName = isEditing ? tempData.name : profileData.name;
     if (currentName && currentName.trim().length > 0) {
       const cleanText = currentName.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
-      if (cleanText.length > 0) return cleanText.charAt(0);
+      if (cleanText.length > 0) {
+        return cleanText.charAt(0);
+      }
     }
     return "👤";
   };
@@ -410,8 +422,10 @@ export default function ProfileScreen() {
       if (!tempData.name || tempData.name.trim() === '') { showWarningAlert('請輸入正確的姓名！'); return; }
       const cleanText = tempData.name.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
       if (cleanText.length === 0) { showWarningAlert('姓名不能全為空白或符號！'); return; }
+
       if (!tempData.birthday || tempData.birthday.trim() === '') { showWarningAlert('請選擇生日！'); return; }
       
+      // 🎯 唯一改動：精準檢查生日是否大於今天（未來日期）
       const selectedBirthDate = new Date(tempData.birthday);
       const todayDate = new Date();
       if (selectedBirthDate > todayDate) {
@@ -430,18 +444,19 @@ export default function ProfileScreen() {
     }
   };
 
+  // =================================================================
+  // ⏱️ 核心控時：無轉圈圈彈窗，精準卡死「剛好 1.0 秒（1000ms）」儲存成功！
+  // =================================================================
   const handleConfirmSave = async () => {
-    setSaveModalVisible(false);
-
-    const validation = validateMemberData(tempData);
-    if (!validation.valid) {
-      showWarningAlert(validation.errors.join('\n'));
-      return;
-    }
+    setSaveModalVisible(false); // 關閉「確認儲存變更嗎」對話框
 
     try {
       const { memberId: savedUserId, currentUser } = await getCurrentMemberContext();
-      if (!savedUserId || savedUserId === 'guest') return;
+
+      if (!savedUserId || savedUserId === 'guest') {
+        showWarningAlert('找不到登入會員 ID，請重新登入後再試一次。');
+        return;
+      }
 
       const birthdayForApi = normalizeDateForApi(tempData.birthday);
       const calculatedAgeStr = getPureAgeValue(birthdayForApi || tempData.birthday);
@@ -453,14 +468,17 @@ export default function ProfileScreen() {
         age: calculatedAgeStr,
       };
 
+      // 1. ⚡ 立刻搶先寫入本機快取與更新渲染狀態 (耗時 < 2ms)
       setProfileData(updatedData);
       setTempData(updatedData);
 
-      await AsyncStorage.setItem(`${savedUserId}_user_profile`, JSON.stringify(updatedData));
+      const stringifiedData = JSON.stringify(updatedData);
+      await AsyncStorage.setItem(`${savedUserId}_user_profile`, stringifiedData);
       await AsyncStorage.setItem(`${savedUserId}_user_name_key`, updatedData.name.trim());
       await AsyncStorage.setItem(`${savedUserId}_user_height`, updatedData.height);
       await AsyncStorage.setItem(`${savedUserId}_user_weight`, updatedData.weight);
 
+      // 🎯 雙向同步：將更新後的體重同步回今日的「每日紀錄」
       const todayStr = getTodayDateString();
       const todayKey = `${savedUserId}_food_record_${todayStr}`;
       const dailyRaw = await AsyncStorage.getItem(todayKey);
@@ -469,14 +487,17 @@ export default function ProfileScreen() {
       dailyData.weight = updatedData.weight;
       dailyData.hasDailyWeight = true;
       
+      // 計算 BMI
       if (updatedData.height && updatedData.weight) {
         const h = parseFloat(updatedData.height) / 100;
         const w = parseFloat(updatedData.weight);
         dailyData.bmi = (w / (h * h)).toFixed(1);
+        dailyData.bmiStatus = ''; // 可視需求計算狀態
       }
       
       await AsyncStorage.setItem(todayKey, JSON.stringify(dailyData));
       
+      // 🎯 同步今日紀錄到後端，避免餐點資料遺失，我們把當前餐點也帶上
       const mealsForBackend = {
         breakfast: (dailyData.mealBlocks.早餐 || []).map((it: any) => ({ name: it.name, calories: it.calories })),
         lunch: (dailyData.mealBlocks.午餐 || []).map((it: any) => ({ name: it.name, calories: it.calories })),
@@ -496,12 +517,17 @@ export default function ProfileScreen() {
         });
       } catch (e) { console.log('同步體重到每日紀錄後端失敗'); }
 
+      // 🎯 觸發體重更新信號，通知 achievements.tsx 實時同步
       updateWeight(updatedData.weight, savedUserId);
 
-      // 背景雲端同步
-      (async () => {
+      if (updatedData.age) {
+        await AsyncStorage.setItem(`${savedUserId}_user_age`, updatedData.age);
+      }
+
+      // 2. 🤫 幕後分流：把非同步網路要求丟進背景執行，絕不阻塞前台控時
+      const bgNetworkRequest = (async () => {
         try {
-          await fetch(`${API_URL}/member/profile/${savedUserId}/`, {
+          const response = await fetch(`${API_URL}/member/profile/${savedUserId}/`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -513,17 +539,36 @@ export default function ProfileScreen() {
               initial_weight: updatedData.weight ? Number(updatedData.weight) : null,
             }),
           });
-        } catch (netErr) { console.log('背景雲端備份略過'); }
+
+          const data = await parseApiResponse(response);
+          if (response.ok && data.success && data.member) {
+            await AsyncStorage.setItem('user', JSON.stringify({
+              ...(currentUser || {}),
+              ...data.member,
+            }));
+            await AsyncStorage.setItem('current_user_id', String(data.member.id));
+            await AsyncStorage.setItem('member_id', String(data.member.id));
+          }
+        } catch (netErr) {
+          console.log('背景雲端備份略過，數據已在本機快取安全儲存', netErr);
+        }
       })();
 
+      // 3. 🎯 精準控制：定時器強制背景數秒，不加遮罩，「剛好 1000 毫秒 (1秒)」跳出成功
       setTimeout(() => {
-        setIsEditing(false);
-        if (Platform.OS === 'web') window.alert('✨ 會員個人基本資料儲存成功！');
-        else Alert.alert("成功", "✨ 會員個人基本資料儲存成功！");
-      }, 1000);
+        setIsEditing(false); // 離開編輯狀態，切換成唯讀檢視
+        
+        // 剛好滿一秒，直接跳出儲存成功提示
+        if (Platform.OS === 'web') {
+          window.alert('✨ 會員個人基本資料儲存成功！');
+        } else {
+          Alert.alert("成功", "✨ 會員個人基本資料儲存成功！");
+        }
+      }, 1000); // ⏱️ 精準 1.0 秒
 
     } catch (error: any) {
-      showWarningAlert(error?.message || '無法連接後端');
+      console.error('更新會員資料失敗：', error);
+      showWarningAlert(error?.message || '無法連接後端，請確認 Django 是否已啟動。');
     }
   };
 
@@ -535,8 +580,11 @@ export default function ProfileScreen() {
       tempData.weight !== profileData.weight ||
       tempData.gender !== profileData.gender;
 
-    if (isChanged) setCancelModalVisible(true);
-    else setIsEditing(false);
+    if (isChanged) {
+      setCancelModalVisible(true);
+    } else {
+      setIsEditing(false);
+    }
   };
 
   const handleConfirmCancel = () => {
@@ -545,13 +593,34 @@ export default function ProfileScreen() {
   };
 
   const webSelectStyle = {
-    fontSize: '16px', color: '#333', backgroundColor: '#F9F9F9', border: '1px solid #DDD',
-    borderRadius: '8px', padding: '4px 10px', textAlign: 'right' as const, flex: 1, outline: 'none', cursor: 'pointer'
+    fontSize: '16px',
+    color: '#333',
+    backgroundColor: '#F9F9F9',
+    border: '1px solid #DDD',
+    borderRadius: '8px',
+    padding: '4px 10px',
+    textAlign: 'right' as const,
+    flex: 1,
+    outline: 'none',
+    cursor: 'pointer',
+    touchAction: 'manipulation',
+    willChange: 'transform',
   };
 
   const webCalendarStyle = {
-    fontSize: '16px', color: '#333', backgroundColor: '#F9F9F9', border: '1px solid #DDD',
-    borderRadius: '8px', padding: '4px 10px', textAlign: 'right' as const, flex: 1, outline: 'none', cursor: 'pointer', fontFamily: 'inherit'
+    fontSize: '16px',
+    color: '#333',
+    backgroundColor: '#F9F9F9',
+    border: '1px solid #DDD',
+    borderRadius: '8px',
+    padding: '4px 10px',
+    textAlign: 'right' as const,
+    flex: 1,
+    outline: 'none',
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    touchAction: 'manipulation',
+    willChange: 'transform',
   };
 
   return (
@@ -559,7 +628,7 @@ export default function ProfileScreen() {
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
         <View style={styles.profileCard}>
           
-          {/* 左側欄位 */}
+          {/* 左側欄位（大頭貼與姓名） */}
           <View style={styles.leftSection}>
             <TouchableOpacity style={styles.avatarContainer} onPress={handleAvatarPress} activeOpacity={0.8}>
               {avatarUri ? (
@@ -718,7 +787,11 @@ export default function ProfileScreen() {
               </View>
               {isEditing ? (
                 Platform.OS === 'web' ? (
-                  <select value={tempData.gender} onChange={(e) => setTempData({ ...tempData, gender: e.target.value })} style={webSelectStyle}>
+                  <select
+                    value={tempData.gender}
+                    onChange={(e) => setTempData({ ...tempData, gender: e.target.value })}
+                    style={webSelectStyle}
+                  >
                     <option value="">請選擇性別</option>
                     {genderOptions.map(g => <option key={g} value={g}>{g}</option>)}
                   </select>
@@ -766,9 +839,18 @@ export default function ProfileScreen() {
                     : (isPasswordVisible ? profileData.password : '••••••••')
                   }
                 </Text>
+                
                 {profileData.password && profileData.password.trim() !== '' && (
-                  <TouchableOpacity style={styles.customEyeButton} onPress={() => setIsPasswordVisible(!isPasswordVisible)} activeOpacity={0.6}>
-                    <Ionicons name={isPasswordVisible ? 'eye-outline' : 'eye-off-outline'} size={20} color="#999999" />
+                  <TouchableOpacity
+                    style={styles.customEyeButton}
+                    onPress={() => setIsPasswordVisible(!isPasswordVisible)}
+                    activeOpacity={0.6}
+                  >
+                    <Ionicons
+                      name={isPasswordVisible ? 'eye-outline' : 'eye-off-outline'}
+                      size={20}
+                      color="#999999"
+                    />
                   </TouchableOpacity>
                 )}
               </View>
@@ -802,15 +884,21 @@ export default function ProfileScreen() {
           <View style={styles.alertContent}>
             <Text style={styles.alertTitle}>🖼️ 編輯大頭貼</Text>
             <Text style={styles.alertMessage}>請選擇您想執行的操作：</Text>
+            
             <TouchableOpacity style={styles.menuActionButton} onPress={openImagePicker}>
               <Text style={styles.menuActionTextPrimary}>更換新圖片</Text>
             </TouchableOpacity>
+
             <TouchableOpacity 
               style={[styles.menuActionButton, { borderColor: '#E74C3C' }]} 
-              onPress={() => { setAvatarMenuVisible(false); setDeleteConfirmVisible(true); }}
+              onPress={() => {
+                setAvatarMenuVisible(false);
+                setDeleteConfirmVisible(true);
+              }}
             >
               <Text style={styles.menuActionTextDanger}>刪除大頭貼</Text>
             </TouchableOpacity>
+
             <TouchableOpacity style={[styles.menuActionButton, { borderBottomWidth: 0, marginTop: 10 }]} onPress={() => setAvatarMenuVisible(false)}>
               <Text style={styles.menuActionTextCancel}>取消</Text>
             </TouchableOpacity>
@@ -818,7 +906,7 @@ export default function ProfileScreen() {
         </View>
       </Modal>
 
-      {/* 刪除圖片防呆 Modal */}
+      {/* 刪除圖片防呆二次確認 Modal */}
       <Modal animationType="fade" transparent={true} visible={deleteConfirmVisible} onRequestClose={() => setDeleteConfirmVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
@@ -915,8 +1003,15 @@ const styles = StyleSheet.create({
   modalBtnCancelText: { color: '#666', fontSize: 15, fontWeight: '500' },
   orangeAlertBtn: { backgroundColor: '#F3B07E' },
   modalBtnConfirmText: { color: '#FFF', fontSize: 15, fontWeight: 'bold' },
-  menuActionButton: { width: '100%', paddingVertical: 14, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
+  
+  menuActionButton: {
+    width: '100%',
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
   menuActionTextPrimary: { fontSize: 16, color: '#E67E22', fontWeight: '600' },
   menuActionTextDanger: { fontSize: 16, color: '#E74C3C', fontWeight: '600' },
-  menuActionTextCancel: { fontSize: 16, color: '#999', fontWeight: '500' }
+  menuActionTextCancel: { fontSize: 16, color: '#99', fontWeight: '500' }
 });

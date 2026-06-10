@@ -52,6 +52,8 @@ interface FoodItem {
   id: string;
   name: string;      
   calories: string;  
+  singleCalories?: string; 
+  servings?: number;       
 }
 
 interface Product {
@@ -97,15 +99,18 @@ export default function DailyRecordScreen() {
   const [confirmAction, setConfirmAction] = useState<() => void>(() => {});
 
   const [currentBlockCategory, setCurrentBlockCategory] = useState<'早餐' | '午餐' | '晚餐'>('早餐');
+  
   const [inputItemName, setInputItemName] = useState('');
   const [inputUnitValue, setInputUnitValue] = useState(''); 
   const [selectedUnitType, setSelectedUnitType] = useState<'克' | 'ml'>('克'); 
-  const [inputCalories, setInputCalories] = useState('');
+  const [inputCalories, setInputCalories] = useState(''); 
+  const [servings, setServings] = useState<number>(1);   
+  const [isServingsDropdownOpen, setIsServingsDropdownOpen] = useState(false); 
+
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [productSuggestions, setProductSuggestions] = useState<Product[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(false);
   const [isSuggestionDropdownOpen, setIsSuggestionDropdownOpen] = useState(false);
-  // 不為 null 表示編輯既有品項；為 null 表示新增
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
 
   const [mealBlocks, setMealBlocks] = useState<{
@@ -123,7 +128,6 @@ export default function DailyRecordScreen() {
     stateRef.current = { weight, bmi, bmiStatus, mealBlocks, currentDate, userId };
   }, [weight, bmi, bmiStatus, mealBlocks, currentDate, userId]);
 
-  // 體重打到後端的 debounce 計時器（邊打字也會送，但不會每按一鍵就送）
   const weightSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -135,11 +139,9 @@ export default function DailyRecordScreen() {
         const todayStr = getTaiwanDateString();
         setCurrentDate(todayStr);
 
-        // 先用本機快取的身高載入每日紀錄，讓今日體重馬上顯示，不等待 Django / Aiven。
         const cachedHeight = await loadCachedMemberHeight(finalId);
         await loadDataByDate(todayStr, finalId, cachedHeight);
 
-        // 再背景抓會員中心最新身高；抓到後只重新計算 BMI。
         const memberHeight = await loadMemberHeight(finalId);
         if (memberHeight !== cachedHeight) {
           await loadDataByDate(todayStr, finalId, memberHeight);
@@ -153,16 +155,13 @@ export default function DailyRecordScreen() {
     initUserAndLoad();
   }, [pathname]);
 
-  // 🎯 監聽全域體重更新 (例如從會員中心傳來的修改)
   useEffect(() => {
     if (lastWeightValue && lastWeightValue !== weight) {
       setWeight(lastWeightValue);
-      // 同步計算 BMI 確保 UI 完整
       const { calculatedBmi, calculatedStatus } = calculateBmiByHeight(lastWeightValue, userHeight);
       setBmi(calculatedBmi);
       setBmiStatus(calculatedStatus);
       
-      // 更新內部 Ref 避免存檔時抓到舊日期
       stateRef.current.weight = lastWeightValue;
       stateRef.current.bmi = calculatedBmi;
       stateRef.current.bmiStatus = calculatedStatus;
@@ -190,14 +189,14 @@ export default function DailyRecordScreen() {
   }, []);
 
   useEffect(() => {
-    if (inputItemName.trim() !== '' && allProducts.length > 0) {
+    if (inputItemName.trim() !== '' && allProducts && allProducts.length > 0) {
       filterProductSuggestions(inputItemName);
     }
   }, [allProducts]);
 
   const filterProductSuggestions = (keyword: string) => {
     const trimmed = keyword.trim().toLowerCase();
-    if (!trimmed) {
+    if (!trimmed || !allProducts) {
       setProductSuggestions([]);
       return;
     }
@@ -244,147 +243,134 @@ export default function DailyRecordScreen() {
   const showSuggestionDropdown = isSuggestionDropdownOpen && (isSearchingProducts || productSuggestions.length > 0 || showNoProductFound);
 
   const loadDataByDate = async (dateStr: string, currentUid: string = userId, heightForBmi: number | null = userHeight) => {
-  try {
-    const savedDataStr = await AsyncStorage.getItem(`${currentUid}_food_record_${dateStr}`);
+    try {
+      const savedDataStr = await AsyncStorage.getItem(`${currentUid}_food_record_${dateStr}`);
 
-    // 把任何舊資料 / 缺鍵 / 英文鍵都標準化成 { 早餐, 午餐, 晚餐 } 三條 array
-    const normalizeMeals = (raw: any) => {
-      const safe = raw && typeof raw === 'object' ? raw : {};
-      const pickArray = (...keys: string[]) => {
-        for (const k of keys) {
-          if (Array.isArray(safe[k])) return safe[k];
+      const normalizeMeals = (raw: any) => {
+        const safe = raw && typeof raw === 'object' ? raw : {};
+        const pickArray = (...keys: string[]) => {
+          for (const k of keys) {
+            if (Array.isArray(safe[k])) return safe[k];
+          }
+          return [];
+        };
+        return {
+          早餐: pickArray('早餐', 'breakfast'),
+          午餐: pickArray('午餐', 'lunch'),
+          晚餐: pickArray('晚餐', 'dinner'),
+        };
+      };
+
+      if (savedDataStr) {
+        const parsed = JSON.parse(savedDataStr);
+        const normalizedMeals = normalizeMeals(parsed.mealBlocks);
+
+        if (parsed.hasDailyWeight === true) {
+          const savedWeight = parsed.weight || '';
+          const bmiResult = calculateBmiByHeight(savedWeight, heightForBmi);
+
+          setWeight(savedWeight);
+          setBmi(bmiResult.calculatedBmi);
+          setBmiStatus(bmiResult.calculatedStatus);
+        } else {
+          setWeight('');
+          setBmi('—');
+          setBmiStatus('');
         }
-        return [];
-      };
-      return {
-        早餐: pickArray('早餐', 'breakfast'),
-        午餐: pickArray('午餐', 'lunch'),
-        晚餐: pickArray('晚餐', 'dinner'),
-      };
-    };
 
-    if (savedDataStr) {
-      const parsed = JSON.parse(savedDataStr);
-      const normalizedMeals = normalizeMeals(parsed.mealBlocks);
-
-      if (parsed.hasDailyWeight === true) {
-        const savedWeight = parsed.weight || '';
-        const bmiResult = calculateBmiByHeight(savedWeight, heightForBmi);
-
-        setWeight(savedWeight);
-        setBmi(bmiResult.calculatedBmi);
-        setBmiStatus(bmiResult.calculatedStatus);
-        // 注意：載入時不要再呼叫 saveDataToStorage，避免使用舊的 userId 狀態
-        // 把資料寫到 guest 的 key 並把空 meals 同步到後端，造成餐點消失。
+        setMealBlocks(normalizedMeals);
       } else {
         setWeight('');
         setBmi('—');
         setBmiStatus('');
+        setMealBlocks({ 早餐: [], 午餐: [], 晚餐: [] });
       }
 
-      setMealBlocks(normalizedMeals);
-    } else {
-      setWeight('');
-      setBmi('—');
-      setBmiStatus('');
-      setMealBlocks({ 早餐: [], 午餐: [], 晚餐: [] });
-    }
+      if (/^\d+$/.test(currentUid)) {
+        try {
+          const resp = await fetch(`${API_URL}/daily/summary/?member_id=${currentUid}&days=30`);
+          if (resp.ok) {
+            const data = await resp.json();
+            const todayRow = Array.isArray(data?.records)
+              ? data.records.find((r: any) => r?.date === dateStr)
+              : null;
+            if (todayRow) {
+              const backendMeals = normalizeMeals(todayRow.meals);
+              const backendHasAny =
+                backendMeals.早餐.length + backendMeals.午餐.length + backendMeals.晚餐.length > 0;
 
-    // 背景再從後端拉一次當天資料，補齊本機可能缺漏的餐點
-    if (/^\d+$/.test(currentUid)) {
-      try {
-        const resp = await fetch(`${API_URL}/daily/summary/?member_id=${currentUid}&days=30`);
-        if (resp.ok) {
-          const data = await resp.json();
-          const todayRow = Array.isArray(data?.records)
-            ? data.records.find((r: any) => r?.date === dateStr)
-            : null;
-          if (todayRow) {
-            const backendMeals = normalizeMeals(todayRow.meals);
-            const backendHasAny =
-              backendMeals.早餐.length + backendMeals.午餐.length + backendMeals.晚餐.length > 0;
+              if (backendHasAny) {
+                setMealBlocks((prev) => {
+                  const merged = {
+                    早餐: prev.早餐.length ? prev.早餐 : backendMeals.早餐,
+                    午餐: prev.午餐.length ? prev.午餐 : backendMeals.午餐,
+                    晚餐: prev.晚餐.length ? prev.晚餐 : backendMeals.晚餐,
+                  };
+                  saveDataToStorage(
+                    stateRef.current.weight,
+                    stateRef.current.bmi,
+                    stateRef.current.bmiStatus,
+                    merged,
+                  );
+                  return merged;
+                });
+              }
 
-            if (backendHasAny) {
-              setMealBlocks((prev) => {
-                const merged = {
-                  早餐: prev.早餐.length ? prev.早餐 : backendMeals.早餐,
-                  午餐: prev.午餐.length ? prev.午餐 : backendMeals.午餐,
-                  晚餐: prev.晚餐.length ? prev.晚餐 : backendMeals.晚餐,
-                };
-                // 把補回來的餐點寫回本機，避免下次再缺
-                saveDataToStorage(
-                  stateRef.current.weight,
-                  stateRef.current.bmi,
-                  stateRef.current.bmiStatus,
-                  merged,
-                );
-                return merged;
-              });
-            }
-
-            // 如果本機沒體重但後端有，也順便補上
-            if (todayRow.weight && (!stateRef.current.weight || stateRef.current.weight === '')) {
-              const backendWeight = String(todayRow.weight);
-              const bmiResult = calculateBmiByHeight(backendWeight, heightForBmi);
-              setWeight(backendWeight);
-              setBmi(bmiResult.calculatedBmi);
-              setBmiStatus(bmiResult.calculatedStatus);
+              if (todayRow.weight && (!stateRef.current.weight || stateRef.current.weight === '')) {
+                const backendWeight = String(todayRow.weight);
+                const bmiResult = calculateBmiByHeight(backendWeight, heightForBmi);
+                setWeight(backendWeight);
+                setBmi(bmiResult.calculatedBmi);
+                setBmiStatus(bmiResult.calculatedStatus);
+              }
             }
           }
+        } catch (e) {
+          console.log('從後端補當天紀錄失敗:', e);
         }
-      } catch (e) {
-        console.log('從後端補當天紀錄失敗:', e);
       }
+    } catch (e) {
+      console.error('載入失敗', e);
     }
-  } catch (e) {
-    console.error('載入失敗', e);
-  }
-};
+  };
 
   const saveDataToStorage = async (
-  currentWeight: string, 
-  currentBmi: string, 
-  currentBmiStatus: string, 
-  currentMeals: typeof mealBlocks
-) => {
-  try {
-    // 用 stateRef 取得最新的 userId / currentDate，避免 React 還沒 propagate 狀態時
-    // 把資料寫到 guest 或舊日期的 key
-    const effectiveUserId = stateRef.current.userId || userId;
-    const effectiveDate = stateRef.current.currentDate || currentDate;
+    currentWeight: string, 
+    currentBmi: string, 
+    currentBmiStatus: string, 
+    currentMeals: typeof mealBlocks
+  ) => {
+    try {
+      const effectiveUserId = stateRef.current.userId || userId;
+      const effectiveDate = stateRef.current.currentDate || currentDate;
 
-    const hasDailyWeight = currentWeight.trim() !== '';
+      const hasDailyWeight = currentWeight.trim() !== '';
 
-    const dataToSave = {
-      weight: currentWeight,
-      bmi: currentBmi,
-      bmiStatus: currentBmiStatus,
-      mealBlocks: currentMeals,
-      hasDailyWeight: hasDailyWeight,
-    };
+      const dataToSave = {
+        weight: currentWeight,
+        bmi: currentBmi,
+        bmiStatus: currentBmiStatus,
+        mealBlocks: currentMeals,
+        hasDailyWeight: hasDailyWeight,
+      };
 
-    await AsyncStorage.setItem(
-      `${effectiveUserId}_food_record_${effectiveDate}`,
-      JSON.stringify(dataToSave)
-    );
+      await AsyncStorage.setItem(
+        `${effectiveUserId}_food_record_${effectiveDate}`,
+        JSON.stringify(dataToSave)
+      );
 
-    // 如果有體重，同步到會員中心並觸發全局更新
-    if (hasDailyWeight && /^\d+$/.test(effectiveUserId)) {
-      // 🎯 重要：必須先更新 ${userId}_user_weight 才能被 achievements.tsx 讀取到
-      await AsyncStorage.setItem(`${effectiveUserId}_user_weight`, currentWeight);
-      updateWeight(currentWeight, effectiveUserId);
-      updateDailyRecord();
+      if (hasDailyWeight && /^\d+$/.test(effectiveUserId)) {
+        await AsyncStorage.setItem(`${effectiveUserId}_user_weight`, currentWeight);
+        updateWeight(currentWeight, effectiveUserId);
+        updateDailyRecord();
+      }
+
+      syncDayToBackend(currentWeight, currentMeals, effectiveUserId, effectiveDate);
+    } catch (e) {
+      console.error('同步失敗', e);
     }
+  };
 
-    // 背景同步到後端，失敗也不影響本機體驗
-    syncDayToBackend(currentWeight, currentMeals, effectiveUserId, effectiveDate);
-
-  } catch (e) {
-    console.error('同步失敗', e);
-  }
-};
-
-  // 把當天「體重 + 三餐」一次送到後端，後端會 upsert DailyLog 並覆寫 DietRecords
   const syncDayToBackend = async (
     currentWeight: string,
     currentMeals: typeof mealBlocks,
@@ -433,7 +419,6 @@ export default function DailyRecordScreen() {
   const loadCachedMemberHeight = async (currentUid: string) => {
     try {
       let heightValue = '';
-
       const profileRaw = await AsyncStorage.getItem(`${currentUid}_user_profile`);
       if (profileRaw) {
         const profile = JSON.parse(profileRaw);
@@ -441,21 +426,17 @@ export default function DailyRecordScreen() {
           heightValue = profile.height.toString();
         }
       }
-
       if (!heightValue) {
         heightValue =
           (await AsyncStorage.getItem(`${currentUid}_user_height`)) ||
           (await AsyncStorage.getItem(`${currentUid}_height`)) ||
           '';
       }
-
       const parsedHeight = parseFloat(heightValue);
-
       if (!isNaN(parsedHeight) && parsedHeight > 0) {
         setUserHeight(parsedHeight);
         return parsedHeight;
       }
-
       return null;
     } catch (e) {
       return null;
@@ -465,8 +446,6 @@ export default function DailyRecordScreen() {
   const loadMemberHeight = async (currentUid: string) => {
     try {
       let heightValue = '';
-
-      // 先從 Django / Aiven 讀目前登入會員的身高
       if (currentUid && currentUid !== 'guest') {
         try {
           const response = await fetch(`${API_URL}/members/${currentUid}/profile/`);
@@ -474,8 +453,6 @@ export default function DailyRecordScreen() {
 
           if (response.ok && data.success !== false && data.member?.height !== null && data.member?.height !== undefined) {
             heightValue = String(data.member.height);
-
-            // 同步回目前會員自己的快取，讓身體指數頁也可以讀到同一份資料
             await AsyncStorage.setItem(`${currentUid}_user_height`, heightValue);
 
             if (data.member?.initial_weight !== null && data.member?.initial_weight !== undefined) {
@@ -497,7 +474,6 @@ export default function DailyRecordScreen() {
         }
       }
 
-      // 後端沒有資料時，再讀目前會員自己的本機快取
       if (!heightValue) {
         const profileRaw = await AsyncStorage.getItem(`${currentUid}_user_profile`);
         if (profileRaw) {
@@ -516,12 +492,10 @@ export default function DailyRecordScreen() {
       }
 
       const parsedHeight = parseFloat(heightValue);
-
       if (!isNaN(parsedHeight) && parsedHeight > 0) {
         setUserHeight(parsedHeight);
         return parsedHeight;
       }
-
       setUserHeight(null);
       return null;
     } catch (e) {
@@ -534,15 +508,12 @@ export default function DailyRecordScreen() {
   const calculateBmiByHeight = (inputWeight: string, heightForBmi: number | null) => {
     let calculatedBmi = '—';
     let calculatedStatus = '';
-
     const w = parseFloat(inputWeight);
-
     if (!isNaN(w) && w > 0 && heightForBmi && heightForBmi > 0) {
       const hInMeters = heightForBmi / 100;
       calculatedBmi = (w / (hInMeters * hInMeters)).toFixed(1);
       calculatedStatus = getBmiStatusLabel(parseFloat(calculatedBmi));
     }
-
     return { calculatedBmi, calculatedStatus };
   };
 
@@ -583,17 +554,13 @@ export default function DailyRecordScreen() {
     setWeight(cleanedText);
 
     const { calculatedBmi, calculatedStatus } = calculateBmiByHeight(cleanedText, userHeight);
-
     setBmi(calculatedBmi);
     setBmiStatus(calculatedStatus);
     saveDataToStorage(cleanedText, calculatedBmi, calculatedStatus, mealBlocks);
 
-    // 輸入有效範圍內的體重時，先同步快取，切到會員中心會馬上更新。
     const weightNum = parseFloat(cleanedText);
     if (!isNaN(weightNum) && weightNum >= 30 && weightNum <= 200) {
       updateMemberWeightLocalCache(cleanedText);
-
-      // debounce 600ms 再送後端，避免邊打字邊發 request
       if (weightSyncTimerRef.current) clearTimeout(weightSyncTimerRef.current);
       weightSyncTimerRef.current = setTimeout(() => {
         updateMemberWeightToBackend(cleanedText);
@@ -628,13 +595,10 @@ export default function DailyRecordScreen() {
     }
 
     const { calculatedBmi, calculatedStatus } = calculateBmiByHeight(finalWeight, userHeight);
-
     setBmi(calculatedBmi);
     setBmiStatus(calculatedStatus);
-
     saveDataToStorage(finalWeight, calculatedBmi, calculatedStatus, mealBlocks);
 
-    // 先更新本機快取，讓會員中心立即顯示，再背景同步到後端。
     await updateMemberWeightLocalCache(finalWeight);
     updateMemberWeightToBackend(finalWeight);
   };
@@ -664,23 +628,23 @@ export default function DailyRecordScreen() {
   const handleConfirmAddItem = () => {
     const trimmedItemName = inputItemName.trim();
     const trimmedUnitValue = inputUnitValue.trim();
-    const trimmedCalories = inputCalories.trim();
+    const trimmedCalories = inputCalories.trim(); 
 
     if (!trimmedItemName || !trimmedUnitValue || !trimmedCalories) {
       showAlert('欄位未填寫完整\n請輸入完整的品項、份量數值與熱量。');
       return;
     }
 
-    const finalFullName = `${trimmedItemName}/${trimmedUnitValue}${selectedUnitType}`;
+    const totalCalcCalories = String(Math.round(parseFloat(trimmedCalories) * servings));
+    const finalFullName = `${trimmedItemName}/${trimmedUnitValue}${selectedUnitType} x ${servings}份`;
 
     let updatedMeals: typeof mealBlocks;
     if (editingItemId) {
-      // 編輯模式：覆寫指定 id 的品項，保留原 id
       updatedMeals = {
         ...mealBlocks,
         [currentBlockCategory]: mealBlocks[currentBlockCategory].map((it) =>
           it.id === editingItemId
-            ? { ...it, name: finalFullName, calories: trimmedCalories }
+            ? { ...it, name: finalFullName, calories: totalCalcCalories, singleCalories: trimmedCalories, servings: servings }
             : it
         ),
       };
@@ -688,7 +652,9 @@ export default function DailyRecordScreen() {
       const newItem: FoodItem = {
         id: Date.now().toString(),
         name: finalFullName,
-        calories: trimmedCalories,
+        calories: totalCalcCalories,
+        singleCalories: trimmedCalories,
+        servings: servings
       };
       updatedMeals = {
         ...mealBlocks,
@@ -706,28 +672,30 @@ export default function DailyRecordScreen() {
     category: '早餐' | '午餐' | '晚餐',
     item: FoodItem
   ) => {
-    // 把 "名稱/份量單位" 拆回三欄；找最後一個 '/' 以避免名稱含 '/'
     const lastSlash = item.name.lastIndexOf('/');
     let nameOnly = item.name;
     let unitValue = '';
     let unitType: '克' | 'ml' = '克';
+    let savedServings = item.servings || 1;
+    let savedSingleCal = item.singleCalories || item.calories;
+
     if (lastSlash !== -1) {
       nameOnly = item.name.slice(0, lastSlash);
       const unitPart = item.name.slice(lastSlash + 1);
-      const m = unitPart.match(/^(\d+)(克|ml)$/);
+      const m = unitPart.match(/^(\d+)(克|ml)(?:\s*x\s*(\d+)份)?/);
       if (m) {
         unitValue = m[1];
         unitType = m[2] as '克' | 'ml';
-      } else {
-        // 無法解析時保留原始字串到名稱欄，避免使用者資料遺失
-        nameOnly = item.name;
+        if (m[3]) savedServings = parseInt(m[3], 10);
       }
     }
+
     setCurrentBlockCategory(category);
     setInputItemName(nameOnly);
     setInputUnitValue(unitValue);
     setSelectedUnitType(unitType);
-    setInputCalories(item.calories);
+    setInputCalories(savedSingleCal);
+    setServings(savedServings);
     setEditingItemId(item.id);
     setAddModalVisible(true);
   };
@@ -754,8 +722,10 @@ export default function DailyRecordScreen() {
     setInputUnitValue('');
     setSelectedUnitType('克');
     setInputCalories('');
+    setServings(1);
     setEditingItemId(null);
     setProductSuggestions([]);
+    setIsServingsDropdownOpen(false);
   };
 
   const openAddModalForCategory = (category: '早餐' | '午餐' | '晚餐') => {
@@ -823,14 +793,14 @@ export default function DailyRecordScreen() {
                 </TouchableOpacity>
               </View>
 
-              {mealBlocks[category].length > 0 && (
+              {mealBlocks[category] && mealBlocks[category].length > 0 && (
                 <View style={styles.tableHeader}>
                   <Text style={[styles.thLabel, { flex: 3 }]}>品項 / 單位</Text>
                   <Text style={[styles.thLabel, { flex: 1, textAlign: 'right', marginRight: 65 }]}>熱量 (大卡)</Text>
                 </View>
               )}
 
-              {mealBlocks[category].map((food) => (
+              {mealBlocks[category] && mealBlocks[category].map((food) => (
                 <View key={food.id} style={styles.tableRow}>
                   <View style={{ flex: 3, paddingVertical: 6 }}>
                     <Text style={styles.tableTextContent}>{food.name}</Text>
@@ -860,15 +830,17 @@ export default function DailyRecordScreen() {
         </View>
       </ScrollView>
 
-      {/* 新增飲食彈窗 */}
+      {/* 新增/編輯飲食彈窗 */}
       <Modal animationType="fade" transparent={true} visible={addModalVisible} onRequestClose={handleCancelAddItem}>
         <View style={styles.modalOverlay}>
           <View style={styles.popupBox}>
             <Text style={styles.popupTitle}>{editingItemId ? '編輯飲食紀錄' : '新增飲食紀錄'}</Text>
+            
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>新增類別</Text>
               <View style={styles.disabledSelectBox}><Text style={styles.disabledSelectText}>{currentBlockCategory}</Text></View>
             </View>
+
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>品項名稱</Text>
               <TextInput
@@ -905,6 +877,7 @@ export default function DailyRecordScreen() {
                 </View>
               )}
             </View>
+
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>份量與單位</Text>
               <View style={styles.unitSelectorContainer}>
@@ -919,10 +892,43 @@ export default function DailyRecordScreen() {
                 </View>
               </View>
             </View>
+
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>熱 量 (大卡)</Text>
+              <Text style={styles.inputLabel}>單份熱量 (大卡)</Text>
               <TextInput style={styles.popupInput} placeholder="限輸入數字" placeholderTextColor="#A9A9A9" keyboardType="numeric" value={inputCalories} onChangeText={(text) => setInputCalories(text.replace(/[^0-9]/g, ''))} />
             </View>
+
+            {/* 🎯 關鍵修復點：將全體下拉選單放入獨立的高層級 zIndex 容器，並且提供定高包覆，不再穿透 */}
+            <View style={[styles.inputGroup, { zIndex: 9999, minHeight: 75 }]}>
+              <Text style={styles.inputLabel}>份 數</Text>
+              <TouchableOpacity 
+                style={styles.dropdownSelector} 
+                onPress={() => setIsServingsDropdownOpen(!isServingsDropdownOpen)}
+              >
+                <Text style={styles.dropdownSelectorText}>{servings} 份</Text>
+                <Text style={styles.dropdownArrow}>{isServingsDropdownOpen ? '▲' : '▼'}</Text>
+              </TouchableOpacity>
+              
+              {isServingsDropdownOpen && (
+                <View style={styles.dropdownListContainer}>
+                  <ScrollView style={{ maxHeight: 150 }} nestedScrollEnabled={true}>
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20].map((num) => (
+                      <TouchableOpacity 
+                        key={num} 
+                        style={styles.dropdownItem} 
+                        onPress={() => {
+                          setServings(num);
+                          setIsServingsDropdownOpen(false);
+                        }}
+                      >
+                        <Text style={styles.dropdownItemText}>{num} 份</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+            </View>
+
             <View style={styles.modalButtonGroup}>
               <TouchableOpacity style={styles.modalBtnLeft} onPress={handleCancelAddItem}>
                 <Text style={styles.modalBtnLeftText}>取消</Text>
@@ -1004,9 +1010,11 @@ const styles = StyleSheet.create({
   totalCaloriesNumber: { fontSize: 32, fontWeight: 'bold', color: '#E67E22' },
   totalCaloriesUnit: { fontSize: 18, fontWeight: '600', color: '#7F8C8D' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  popupBox: { backgroundColor: '#FFF', width: 460, padding: 35, borderRadius: 25 },
+  
+  // 🎯 這裡加上 paddingBottom 保留空間
+  popupBox: { backgroundColor: '#FFF', width: 460, paddingHorizontal: 35, paddingTop: 30, paddingBottom: 45, borderRadius: 25 },
   popupTitle: { fontSize: 24, fontWeight: 'bold', color: '#333', marginBottom: 25, textAlign: 'center' },
-  inputGroup: { marginBottom: 18 },
+  inputGroup: { marginBottom: 18, position: 'relative' },
   inputLabel: { fontSize: 16, fontWeight: '600', color: '#4A4A4A', marginBottom: 8 },
   disabledSelectBox: { borderWidth: 1, borderColor: '#DDD', borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, backgroundColor: '#EEEEEE' },
   disabledSelectText: { fontSize: 16, color: '#666', fontWeight: 'bold' },
@@ -1025,7 +1033,18 @@ const styles = StyleSheet.create({
   toggleBtnActive: { backgroundColor: '#A3C1AD' },
   toggleBtnText: { fontSize: 15, color: '#A3C1AD', fontWeight: '600' },
   toggleBtnTextActive: { color: '#FFF', fontWeight: 'bold' },
-  modalButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 15 },
+  
+  dropdownSelector: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderWidth: 2, borderColor: '#000', borderRadius: 12, paddingVertical: 12, paddingHorizontal: 14, backgroundColor: '#FFF' },
+  dropdownSelectorText: { fontSize: 16, color: '#333', fontWeight: '500' },
+  dropdownArrow: { fontSize: 12, color: '#666' },
+  
+  // 🎯 核心修復點：這層容器改為絕對定位，並設定極高的 zIndex: 99999 與陰影，確保它像遮罩一樣完全浮在按鈕列上空
+  dropdownListContainer: { position: 'absolute', top: 78, left: 0, right: 0, backgroundColor: '#FFF', borderWidth: 2, borderColor: '#000', borderRadius: 12, overflow: 'hidden', zIndex: 99999, elevation: 15, shadowColor: '#000', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.2, shadowRadius: 5 },
+  dropdownItem: { paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
+  dropdownItemText: { fontSize: 16, color: '#333' },
+
+  // 🎯 給予按鈕群一個合理的上邊距
+  modalButtonGroup: { flexDirection: 'row', justifyContent: 'space-between', width: '100%', marginTop: 25 },
   modalBtnLeft: { flex: 1, height: 48, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginHorizontal: 6, backgroundColor: '#F5F5F5', borderWidth: 1, borderColor: '#333' },
   modalBtnLeftText: { color: '#333', fontSize: 16, fontWeight: 'bold' },
   modalBtnRight: { flex: 1, height: 48, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginHorizontal: 6, backgroundColor: '#E67E22' },
