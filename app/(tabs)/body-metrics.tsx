@@ -1,17 +1,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-    Modal,
-    NativeScrollEvent,
-    NativeSyntheticEvent,
-    Platform,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  Modal,
+  NativeScrollEvent,
+  NativeSyntheticEvent,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
 
 const API_URL = 'http://127.0.0.1:8000';
@@ -78,6 +78,24 @@ const getAgeFromBirthday = (birthday: string) => {
   return age >= 0 ? String(age) : '';
 };
 
+// 🎯 根據年齡取得身高體重的限制範圍 (從 profile.tsx 複製過來)
+const getRangesByAge = (birthday: string) => {
+  const ageStr = getAgeFromBirthday(birthday);
+  if (!ageStr) {
+    return { hMin: 70, hMax: 220, wMin: 7, wMax: 220 }; // 如果沒有生日，使用最寬鬆的範圍
+  }
+  const age = parseInt(ageStr);
+
+  if (age >= 1 && age <= 2) return { hMin: 70, hMax: 100, wMin: 7, wMax: 18 };
+  if (age >= 3 && age <= 5) return { hMin: 85, hMax: 125, wMin: 10, wMax: 30 };
+  if (age >= 6 && age <= 12) return { hMin: 105, hMax: 180, wMin: 15, wMax: 90 };
+  if (age >= 13 && age <= 18) return { hMin: 135, hMax: 200, wMin: 30, wMax: 120 };
+  if (age >= 19 && age <= 40) return { hMin: 140, hMax: 220, wMin: 35, wMax: 200 };
+  if (age >= 41 && age <= 65) return { hMin: 140, hMax: 220, wMin: 35, wMax: 220 };
+  if (age >= 66) return { hMin: 130, hMax: 220, wMin: 30, wMax: 220 };
+
+};
+
 const cleanBackendNumberText = (value: any) => {
   if (value === undefined || value === null) return '';
   return String(value).replace(/[^0-9.]/g, '').trim();
@@ -89,6 +107,7 @@ export default function BodyMetricsScreen() {
   const [metricsData, setMetricsData] = useState({
     gender: '',
     age: '',
+    birthday: '', // 🎯 新增 birthday 欄位
     height: '',
     weight: '',
     bmi: '---',
@@ -121,12 +140,15 @@ export default function BodyMetricsScreen() {
   const [isDraggingScrollbar, setIsDraggingScrollbar] = useState(false);
   const dragStartYRef = useRef(0);
   const dragStartScrollYRef = useRef(0);
+  
+  // 🎯 根據目前儲存或同步的 birthday 動態計算範圍
+  const currentRanges = getRangesByAge(metricsData.birthday);
 
   // 下拉選單項目定義
   const genderOptions = ['', '男', '女'];
   const ageOptions = ['', ...Array.from({ length: 100 }, (_, i) => (i + 1).toString())]; 
-  const heightOptions = ['', ...Array.from({ length: 151 }, (_, i) => (i + 100).toString())]; 
-  const weightOptions = ['', ...Array.from({ length: 171 }, (_, i) => (i + 30).toString())]; 
+  const heightOptions = ['', ...Array.from({ length: currentRanges.hMax - currentRanges.hMin + 1 }, (_, i) => (i + currentRanges.hMin).toString())];
+  const weightOptions = ['', ...Array.from({ length: currentRanges.wMax - currentRanges.wMin + 1 }, (_, i) => (i + currentRanges.wMin).toString())];
 
   const getBmiStatusText = (bmiNum: number): string => {
     if (bmiNum < 18.5) return '體重過輕';
@@ -161,7 +183,8 @@ export default function BodyMetricsScreen() {
     userProfileRaw: string | null,
     dailyRecordWeight: string,
     scannedHeight: string,
-    scannedWeight: string
+    scannedWeight: string,
+    memberBirthday: string = '' // 🎯 新增 memberBirthday 參數
   ) => {
     let savedProfile: any = null;
 
@@ -169,6 +192,7 @@ export default function BodyMetricsScreen() {
       try {
         savedProfile = JSON.parse(userProfileRaw);
       } catch (e) {}
+      memberBirthday = savedProfile?.birthday || memberBirthday; // 從 profileRaw 中提取 birthday
     }
 
     const cleanNumberString = (value: any) => {
@@ -178,28 +202,32 @@ export default function BodyMetricsScreen() {
       return raw.replace(/[^0-9.]/g, '').trim();
     };
 
-    const cleanHeightValue = (value: any) => {
+    // 🎯 修改 cleanHeightValue 以使用動態範圍
+    const cleanHeightValue = (value: any, birthday: string) => {
       const cleaned = cleanNumberString(value);
       const heightNum = parseFloat(cleaned);
-      if (!cleaned || isNaN(heightNum) || heightNum < 100 || heightNum > 250) return '';
+      const ranges = getRangesByAge(birthday);
+      if (!cleaned || isNaN(heightNum) || heightNum < ranges.hMin || heightNum > ranges.hMax) return '';
       return Math.round(heightNum).toString();
     };
 
-    const cleanWeightValue = (value: any) => {
+    // 🎯 修改 cleanWeightValue 以使用動態範圍
+    const cleanWeightValue = (value: any, birthday: string) => {
       const cleaned = cleanNumberString(value);
       const weightNum = parseFloat(cleaned);
-      if (!cleaned || isNaN(weightNum) || weightNum < 30 || weightNum > 200) return '';
+      const ranges = getRangesByAge(birthday);
+      if (!cleaned || isNaN(weightNum) || weightNum < ranges.wMin || weightNum > ranges.wMax) return '';
       return Math.round(weightNum).toString();
     };
 
     const cleanHeight =
-      cleanHeightValue(savedProfile?.height) ||
-      cleanHeightValue(scannedHeight);
+      cleanHeightValue(savedProfile?.height, memberBirthday) ||
+      cleanHeightValue(scannedHeight, memberBirthday);
 
     const cleanWeight =
-      cleanWeightValue(dailyRecordWeight) ||
-      cleanWeightValue(savedProfile?.weight) ||
-      cleanWeightValue(scannedWeight);
+      cleanWeightValue(dailyRecordWeight, memberBirthday) ||
+      cleanWeightValue(savedProfile?.weight, memberBirthday) ||
+      cleanWeightValue(scannedWeight, memberBirthday);
 
     let rawGender = savedProfile?.gender || '';
     let cleanGender =
@@ -214,7 +242,7 @@ export default function BodyMetricsScreen() {
       finalAge = savedProfile.age.toString().replace(/[^0-9]/g, '').trim();
     } else if (savedProfile?.birthday && !savedProfile.birthday.toString().includes('請選擇')) {
       const birthDate = new Date(savedProfile.birthday);
-
+      memberBirthday = savedProfile.birthday; // 確保這裡也更新了 memberBirthday
       if (!isNaN(birthDate.getTime())) {
         const today = new Date();
         let age = today.getFullYear() - birthDate.getFullYear();
@@ -233,7 +261,7 @@ export default function BodyMetricsScreen() {
       finalAge = '';
     }
 
-    return { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge };
+    return { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge, profileBirthday: memberBirthday }; // 🎯 回傳 profileBirthday
   };
 
   const loadProfileFromBackend = async (memberId: string) => {
@@ -245,11 +273,6 @@ export default function BodyMetricsScreen() {
         {},
         5000
       );
-      const data = await parseApiResponse(response);
-
-      if (!response.ok || data.success === false || !data.member) {
-        return null;
-      }
 
       const member = data.member;
       const profileForCache = {
@@ -285,10 +308,12 @@ export default function BodyMetricsScreen() {
         cleanHeight: string;
         cleanWeight: string;
         isZeroAge: boolean;
+        profileBirthday: string; // 🎯 接收 profileBirthday
       },
       shouldValidate: boolean
     ) => {
-      const { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge } = parsedData;
+      // 🎯 這裡一定要記得解構 profileBirthday，否則下方會出現 "is not defined" 錯誤
+      const { cleanGender, finalAge, cleanHeight, cleanWeight, isZeroAge, profileBirthday } = parsedData;
 
       if (shouldValidate && (!cleanWeight || cleanWeight.trim() === '' || parseFloat(cleanWeight) === 0)) {
         showAlert('⚠️ 請先至會員中心或每日紀錄填寫體重資料');
@@ -309,6 +334,7 @@ export default function BodyMetricsScreen() {
             prev.age === '' &&
             prev.height === cleanHeight &&
             prev.weight === cleanWeight;
+            // prev.birthday === profileBirthday; // 不檢查 birthday，因為 0 歲時 birthday 可能有值但 age 為空
 
           return {
             ...prev,
@@ -316,6 +342,7 @@ export default function BodyMetricsScreen() {
             age: '',
             height: cleanHeight,
             weight: cleanWeight,
+            birthday: profileBirthday, // 🎯 設定 birthday
             isCalculated: areFieldsUnchanged ? prev.isCalculated : false,
           };
         });
@@ -329,6 +356,7 @@ export default function BodyMetricsScreen() {
           prev.age === finalAge &&
           prev.height === cleanHeight &&
           prev.weight === cleanWeight;
+          // prev.birthday === profileBirthday; // 不檢查 birthday，因為它可能在後台更新
 
         return {
           ...prev,
@@ -336,6 +364,7 @@ export default function BodyMetricsScreen() {
           age: finalAge,
           height: cleanHeight,
           weight: cleanWeight,
+          birthday: profileBirthday, // 🎯 設定 birthday
           isCalculated: areFieldsUnchanged ? prev.isCalculated : false,
         };
       });
@@ -411,7 +440,7 @@ export default function BodyMetricsScreen() {
             '';
 
           const parsedLatest = parseAndCleanProfile(
-            latestProfileRaw,
+            latestProfileRaw, // parseAndCleanProfile 會從這裡提取 birthday
             todayWeight,
             latestScannedHeight,
             latestScannedWeight
@@ -465,6 +494,7 @@ export default function BodyMetricsScreen() {
   }, [metricsData.gender, metricsData.age, metricsData.height, metricsData.weight]);
 
   // 🎯 手動觸發熱量計算邏輯
+  // 這裡的驗證邏輯也需要更新，以使用動態範圍
   const handleManualCalculate = () => {
     const { gender, age, height, weight } = metricsData;
     
@@ -685,29 +715,31 @@ export default function BodyMetricsScreen() {
                       value={metricsData.age}
                       onChange={(e) => {
                         if (e.target.value === '0') {
-                          showAlert("請輸入大等於1的歲數，不滿1足歲無法計算TDEE");
+                          showAlert("請輸入大於等於1的歲數，不滿1足歲無法計算TDEE");
                           setMetricsData(prev => ({ ...prev, age: '' }));
                           return;
                         }
-                        setMetricsData(prev => ({ ...prev, age: e.target.value }));
+                        // 🎯 當年齡改變時，清空 birthday，讓系統重新計算
+                        setMetricsData(prev => ({ ...prev, age: e.target.value, birthday: '' }));
                       }}
                       style={getWebSelectStyle(metricsData.age, 'age')}
                     >
                       {ageOptions.map(a => (
                         <option key={a} value={a} style={{ color: '#333333' }}>
-                          {a === '' ? '請選擇年齡' : `${a} 歲`}
+                          {a === '' ? '請選擇年齡' : `${a} 歲`} 
                         </option>
                       ))}
                     </select>
                   ) : (
                     <TextInput
                       style={[styles.bmrInput, metricsData.age !== '' && (metricsData.age !== initialProfile?.age ? styles.darkValueText : styles.lightValueText)]}
-                      value={metricsData.age}
+                      value={metricsData.age} // 這裡的 age 應該是從 birthday 計算出來的
                       placeholder="請輸入年齡"
                       placeholderTextColor="#E0E0E0"
                       keyboardType="numeric"
                       onChangeText={(text) => {
                         const cleanText = text.replace(/[^0-9]/g, '');
+                        // 🎯 這裡的 age 應該是從 birthday 計算出來的，不應該手動輸入
                         if (cleanText === '0') {
                           showAlert("請輸入大等於1的歲數，不滿1足歲無法計算TDEE");
                           setMetricsData(prev => ({ ...prev, age: '' }));
@@ -715,6 +747,7 @@ export default function BodyMetricsScreen() {
                         }
                         setMetricsData(prev => ({ ...prev, age: cleanText }));
                       }}
+                      editable={false} // 🎯 讓年齡欄位不可編輯，只能透過生日計算
                     />
                   )}
                 </View>
@@ -727,7 +760,10 @@ export default function BodyMetricsScreen() {
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.height}
-                      onChange={(e) => setMetricsData(prev => ({ ...prev, height: e.target.value }))}
+                      onChange={(e) => {
+                        // 🎯 當身高改變時，清空 birthday，讓系統重新計算
+                        setMetricsData(prev => ({ ...prev, height: e.target.value, birthday: '' }));
+                      }}
                       style={getWebSelectStyle(metricsData.height, 'height')}
                     >
                       {heightOptions.map(h => (
@@ -743,7 +779,10 @@ export default function BodyMetricsScreen() {
                       placeholder="請輸入(cm)"
                       placeholderTextColor="#E0E0E0"
                       keyboardType="numeric"
-                      onChangeText={(text) => setMetricsData(prev => ({ ...prev, height: text }))}
+                      onChangeText={(text) => {
+                        // 🎯 當身高改變時，清空 birthday，讓系統重新計算
+                        setMetricsData(prev => ({ ...prev, height: text, birthday: '' }));
+                      }}
                     />
                   )}
                 </View>
@@ -756,7 +795,10 @@ export default function BodyMetricsScreen() {
                   {Platform.OS === 'web' ? (
                     <select
                       value={metricsData.weight}
-                      onChange={(e) => setMetricsData(prev => ({ ...prev, weight: e.target.value }))}
+                      onChange={(e) => {
+                        // 🎯 當體重改變時，清空 birthday，讓系統重新計算
+                        setMetricsData(prev => ({ ...prev, weight: e.target.value, birthday: '' }));
+                      }}
                       style={getWebSelectStyle(metricsData.weight, 'weight')}
                     >
                       {weightOptions.map(w => (
@@ -772,7 +814,10 @@ export default function BodyMetricsScreen() {
                       placeholder="請輸入體重"
                       placeholderTextColor="#E0E0E0"
                       keyboardType="numeric"
-                      onChangeText={(text) => setMetricsData(prev => ({ ...prev, weight: text }))}
+                      onChangeText={(text) => {
+                        // 🎯 當體重改變時，清空 birthday，讓系統重新計算
+                        setMetricsData(prev => ({ ...prev, weight: text, birthday: '' }));
+                      }}
                     />
                   )}
                 </View>

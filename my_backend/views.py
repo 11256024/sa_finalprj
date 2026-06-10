@@ -81,7 +81,7 @@ def validate_member_data(data):
         """返回 (min_height, max_height, min_weight, max_weight) 根據年齡"""
         if age_val is None:
             # 無年齡時使用寬鬆範圍
-            return (50, 250, 2, 200)
+            return (70, 220, 7, 220) # 與前端保持一致的寬鬆範圍
         elif age_val < 1:
             return (45, 80, 2, 15)
         elif age_val <= 2:

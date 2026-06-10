@@ -300,7 +300,10 @@ export default function ProfileScreen() {
   // 🎯 根據年齡取得身高體重的限制範圍
   const getRangesByAge = (birthday: string) => {
     const ageStr = getPureAgeValue(birthday);
-    const age = ageStr ? parseInt(ageStr) : 25; // 若未填寫則預設使用成年人範圍
+    if (!ageStr) {
+      return { hMin: 70, hMax: 220, wMin: 7, wMax: 220 }; // 如果沒有生日，使用最寬鬆的範圍
+    }
+    const age = parseInt(ageStr);
 
     if (age >= 1 && age <= 2) return { hMin: 70, hMax: 100, wMin: 7, wMax: 18 };
     if (age >= 3 && age <= 5) return { hMin: 85, hMax: 125, wMin: 10, wMax: 30 };
@@ -309,8 +312,28 @@ export default function ProfileScreen() {
     if (age >= 19 && age <= 40) return { hMin: 140, hMax: 220, wMin: 35, wMax: 200 };
     if (age >= 41 && age <= 65) return { hMin: 140, hMax: 220, wMin: 35, wMax: 220 };
     if (age >= 66) return { hMin: 130, hMax: 220, wMin: 30, wMax: 220 };
+    return { hMin: 70, hMax: 220, wMin: 7, wMax: 220 }; // 預設安全範圍
+  };
 
-    return { hMin: 70, hMax: 220, wMin: 7, wMax: 220 }; // 預設緩衝範圍
+  // 🎯 處理生日變動並驗證身高體重是否符合新範圍
+  const handleBirthdayChange = (newBday: string) => {
+    const ranges = getRangesByAge(newBday);
+    const currentH = parseFloat(tempData.height);
+    const currentW = parseFloat(tempData.weight);
+    
+    let errorMsg = "";
+    if (tempData.height && !isNaN(currentH) && (currentH < ranges.hMin || currentH > ranges.hMax)) {
+      errorMsg += `• 身高應介於 ${ranges.hMin}～${ranges.hMax} cm\n`;
+    }
+    if (tempData.weight && !isNaN(currentW) && (currentW < ranges.wMin || currentW > ranges.wMax)) {
+      errorMsg += `• 體重應介於 ${ranges.wMin}～${ranges.wMax} kg\n`;
+    }
+
+    if (errorMsg) {
+      showWarningAlert(`偵測到年齡變動，原資料不符合新範圍：\n${errorMsg}請重新點選身高或體重。`);
+    }
+
+    setTempData({ ...tempData, birthday: newBday });
   };
 
   // 🎯 動態生成選單選項
@@ -696,7 +719,7 @@ export default function ProfileScreen() {
                     value={tempData.birthday}
                     min="1900-01-01"
                     max="2026-12-31"
-                    onChange={(e) => setTempData({ ...tempData, birthday: e.target.value })}
+                    onChange={(e) => handleBirthdayChange(e.target.value)}
                     onClick={(e) => (e.target as any).showPicker?.()}
                     style={webCalendarStyle}
                   />
@@ -706,7 +729,7 @@ export default function ProfileScreen() {
                     value={tempData.birthday}
                     placeholder="YYYY-MM-DD"
                     placeholderTextColor="#A9A9A9"
-                    onChangeText={(text) => setTempData({ ...tempData, birthday: text })}
+                    onChangeText={handleBirthdayChange}
                   />
                 )
               ) : (
