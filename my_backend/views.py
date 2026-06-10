@@ -2,6 +2,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from django.contrib.auth.hashers import make_password, check_password
+from datetime import datetime, date
 
 from .models import (
     Members,
@@ -42,6 +43,86 @@ def clean_empty(value):
     if value == "":
         return None
     return value
+
+
+def validate_member_data(data):
+    """驗證會員身體資料的合理性，根據年齡動態驗證身高和體重。
+    
+    Returns:
+        tuple: (is_valid: bool, error_message: str or None)
+    """
+    errors = []
+    age = None
+    
+    # 先計算或獲取年齡
+    if "birthday" in data and data["birthday"]:
+        try:
+            birthday = datetime.fromisoformat(str(data["birthday"])).date()
+            today = date.today()
+            age = today.year - birthday.year - ((today.month, today.day) < (birthday.month, birthday.day))
+        except (ValueError, TypeError):
+            errors.append("生日格式錯誤")
+    
+    if "age" in data and data["age"]:
+        try:
+            age = int(data["age"])
+        except (ValueError, TypeError):
+            errors.append("年齡格式錯誤")
+    
+    # 驗證年齡範圍 (1-120 歲)
+    if age is not None:
+        if age < 1:
+            errors.append("年齡不能少於 1 歲")
+        elif age > 120:
+            errors.append("年齡不能超過 120 歲")
+    
+    # 根據年齡定義身高和體重範圍
+    def get_height_weight_ranges(age_val):
+        """返回 (min_height, max_height, min_weight, max_weight) 根據年齡"""
+        if age_val is None:
+            # 無年齡時使用寬鬆範圍
+            return (50, 250, 2, 200)
+        elif age_val < 1:
+            return (45, 80, 2, 15)
+        elif age_val < 2:
+            return (70, 90, 8, 18)
+        elif age_val < 4:
+            return (80, 105, 10, 22)
+        elif age_val < 7:
+            return (95, 125, 13, 35)
+        elif age_val < 13:
+            return (110, 165, 20, 65)
+        else:  # 13+ 歲
+            return (140, 210, 30, 200)
+    
+    min_h, max_h, min_w, max_w = get_height_weight_ranges(age)
+    
+    # 驗證身高
+    if "height" in data and data["height"]:
+        try:
+            height = float(data["height"])
+            if height < min_h:
+                errors.append(f"身高不能少於 {min_h} cm (依據年齡)")
+            elif height > max_h:
+                errors.append(f"身高不能超過 {max_h} cm (依據年齡)")
+        except (ValueError, TypeError):
+            errors.append("身高格式錯誤")
+    
+    # 驗證體重
+    if "initial_weight" in data and data["initial_weight"]:
+        try:
+            weight = float(data["initial_weight"])
+            if weight < min_w:
+                errors.append(f"體重不能少於 {min_w} kg (依據年齡)")
+            elif weight > max_w:
+                errors.append(f"體重不能超過 {max_w} kg (依據年齡)")
+        except (ValueError, TypeError):
+            errors.append("體重格式錯誤")
+    
+    if errors:
+        return False, "\n".join(errors)
+    
+    return True, None
 
 
 @api_view(['POST'])
@@ -153,6 +234,14 @@ def member_profile(request, member_id):
 
     if request.method == 'PUT':
         data = request.data
+
+        # 先驗證身體數據
+        is_valid, error_msg = validate_member_data(data)
+        if not is_valid:
+            return Response({
+                "success": False,
+                "message": error_msg
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         # 只有前端有傳欄位時才更新，避免沒傳的欄位被清空
         if "name" in data:

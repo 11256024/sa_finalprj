@@ -873,7 +873,7 @@ export default function DailyRecordScreen() {
               <Text style={styles.inputLabel}>品項名稱</Text>
               <TextInput
                 style={[styles.popupInput, showSuggestionDropdown && styles.popupInputWithDropdown]}
-                placeholder="例如：御飯糰"
+                placeholder="例如：火腿蛋餅"
                 placeholderTextColor="#A9A9A9"
                 value={inputItemName}
                 onChangeText={handleInputItemNameChange}

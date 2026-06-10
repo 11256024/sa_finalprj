@@ -2,7 +2,9 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+
 const API_URL = 'http://127.0.0.1:8000';
+
 export default function RegisterScreen() {
   const router = useRouter();
   const [username, setUsername] = useState('');
@@ -13,10 +15,10 @@ export default function RegisterScreen() {
   const [formatError, setFormatError] = useState(false);
   const [matchError, setMatchError] = useState(false);
   
-  // 🎯 新增：控制「註冊成功提示框」的顯示狀態
+  // 🎯 控制「註冊成功提示框」的顯示狀態
   const [successModalVisible, setSuccessModalVisible] = useState(false);
 
-  // 密碼可視性狀態（各自獨立控制）
+  // 密碼可視性狀態
   const [isPasswordSecure, setIsPasswordSecure] = useState(true);
   const [isConfirmPasswordSecure, setIsConfirmPasswordSecure] = useState(true);
 
@@ -34,79 +36,81 @@ export default function RegisterScreen() {
   }, []);
 
   const handleRegister = async () => {
-  // 帳號不可空白
-  if (!username.trim()) {
-    alert('請輸入帳號');
-    return;
-  }
-
-  // 密碼強度驗證：長度至少 6 位，且必須包含至少一個大寫英文字母
-  const hasUpperCase = /[A-Z]/.test(password);
-  const isLengthValid = password.length >= 6;
-
-  if (!hasUpperCase || !isLengthValid) {
-    setFormatError(true);
-    setMatchError(false);
-    return;
-  }
-
-  if (password !== confirmPassword) {
-    setMatchError(true);
-    setFormatError(false);
-    return;
-  }
-
-  // 驗證成功，重置錯誤狀態
-  setFormatError(false);
-  setMatchError(false);
-
-  try {
-    const response = await fetch(`${API_URL}/register/`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        username: username,
-        password: password,
-      }),
-    });
-
-    const data = await response.json();
-    console.log('註冊結果:', data);
-
-    if (data.success) {
-      // 保留你原本的成功提示框設計
-      setSuccessModalVisible(true);
-    } else {
-      alert(data.message || '註冊失敗');
+    // ❌ 核心防禦一：帳號基本檢查 (不可空白，且長度至少大於等於 3 位)
+    const trimmedUsername = username.trim();
+    if (!trimmedUsername) {
+      alert('請輸入帳號');
+      return;
     }
-  } catch (error) {
-    console.log('註冊錯誤:', error);
-    alert('無法連接後端');
-  }
-};
+    if (trimmedUsername.length < 3) {
+      alert('為了帳戶安全，帳號長度必須至少大於或等於 3 位數！');
+      return;
+    }
 
-  // 🎯 新增：點選提示框的確定按鈕後，導向登入頁面
+    // ❌ 核心防禦二：密碼強度驗證
+    const hasUpperCase = /[A-Z]/.test(password);
+    const isLengthValid = password.length >= 6;
+
+    if (!hasUpperCase || !isLengthValid) {
+      setFormatError(true);
+      setMatchError(false);
+      return;
+    }
+
+    // ❌ 核心防禦三：防止密碼與帳號完全相同
+    if (password.toLowerCase() === trimmedUsername.toLowerCase()) {
+      alert('安全性警告：密碼不得與帳號名稱完全相同，請重新設定！');
+      return;
+    }
+
+    // ❌ 核心防禦四：二次密碼一致性檢查
+    if (password !== confirmPassword) {
+      setMatchError(true);
+      setFormatError(false);
+      return;
+    }
+
+    // 驗證成功，重置錯誤狀態
+    setFormatError(false);
+    setMatchError(false);
+
+    try {
+      const response = await fetch(`${API_URL}/register/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: trimmedUsername, 
+          password: password,
+        }),
+      });
+
+      const data = await response.json();
+      console.log('註冊結果:', data);
+
+      if (data.success) {
+        setSuccessModalVisible(true);
+      } else {
+        alert(data.message || '註冊失敗');
+      }
+    } catch (error) {
+      console.log('註冊錯誤:', error);
+      alert('無法連接後端，請確認 Django 是否已啟動。');
+    }
+  };
+
   const handleGoToLogin = () => {
     setSuccessModalVisible(false);
-    
-    // 清空輸入欄位（防污染）
     setUsername('');
     setPassword('');
     setConfirmPassword('');
-
-    // 導向你的登入首頁 (請根據你的實際路徑調整，通常登入首頁是 '/' 或 '/login')
     router.replace('/'); 
   };
 
   return (
     <View style={{ flex: 1, backgroundColor: '#E0E7DA' }}>
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
-        {/* 標題文字 */}
         <Text style={styles.pageTitle}>帳 號 註 冊</Text>
         
-        {/* 註冊卡片 */}
         <View style={styles.registerCard}>
           <View style={styles.inputContainer}>
             
@@ -119,9 +123,7 @@ export default function RegisterScreen() {
                 placeholder="請輸入帳號 (限用英文字母與數字)" 
                 placeholderTextColor="#A9A9A9"
                 value={username}
-                onChangeText={(text) => {
-                  setUsername(text.replace(/[^a-zA-Z0-9]/g, ''));
-                }}
+                onChangeText={(text) => setUsername(text.replace(/[^a-zA-Z0-9]/g, ''))}
                 autoCapitalize="none"
                 returnKeyType="next"
                 blurOnSubmit={false}
@@ -149,15 +151,8 @@ export default function RegisterScreen() {
                   blurOnSubmit={false}
                   onSubmitEditing={() => confirmPasswordRef.current?.focus()}
                 />
-                <TouchableOpacity 
-                  style={styles.eyeButton} 
-                  onPress={() => setIsPasswordSecure(!isPasswordSecure)}
-                >
-                  <Ionicons 
-                    name={isPasswordSecure ? 'eye-off-outline' : 'eye-outline'} 
-                    size={22} 
-                    color="#888" 
-                  />
+                <TouchableOpacity style={styles.eyeButton} onPress={() => setIsPasswordSecure(!isPasswordSecure)}>
+                  <Ionicons name={isPasswordSecure ? 'eye-off-outline' : 'eye-outline'} size={22} color="#888" />
                 </TouchableOpacity>
               </View>
             </View>
@@ -187,15 +182,8 @@ export default function RegisterScreen() {
                   returnKeyType="done"
                   onSubmitEditing={handleRegister}
                 />
-                <TouchableOpacity 
-                  style={styles.eyeButton} 
-                  onPress={() => setIsConfirmPasswordSecure(!isConfirmPasswordSecure)}
-                >
-                  <Ionicons 
-                    name={isConfirmPasswordSecure ? 'eye-off-outline' : 'eye-outline'} 
-                    size={22} 
-                    color="#888" 
-                  />
+                <TouchableOpacity style={styles.eyeButton} onPress={() => setIsConfirmPasswordSecure(!isConfirmPasswordSecure)}>
+                  <Ionicons name={isConfirmPasswordSecure ? 'eye-off-outline' : 'eye-outline'} size={22} color="#888" />
                 </TouchableOpacity>
               </View>
             </View>
@@ -215,23 +203,14 @@ export default function RegisterScreen() {
           )}
 
           {/* 確認按鈕 */}
-          <TouchableOpacity 
-            style={styles.button} 
-            onPress={handleRegister}
-            activeOpacity={0.7}
-          >
+          <TouchableOpacity style={styles.button} onPress={handleRegister} activeOpacity={0.7}>
             <Text style={styles.buttonText}>確 認 註 冊</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
 
-      {/* 🎯 新增：註冊成功提示彈窗 (對齊 Profile 的 Modal 設計風格) */}
-      <Modal 
-        animationType="fade" 
-        transparent={true} 
-        visible={successModalVisible} 
-        onRequestClose={handleGoToLogin}
-      >
+      {/* 註冊成功提示彈窗 */}
+      <Modal animationType="fade" transparent={true} visible={successModalVisible} onRequestClose={handleGoToLogin}>
         <View style={styles.modalOverlay}>
           <View style={styles.alertContent}>
             <Text style={styles.alertTitle}>🎉 註冊成功！</Text>
@@ -263,8 +242,6 @@ const styles = StyleSheet.create({
   errorText: { color: '#C53929', fontSize: 14, fontWeight: '600', textAlign: 'center' },
   button: { backgroundColor: '#F3B07E', paddingVertical: 14, width: '100%', borderRadius: 15, alignItems: 'center', marginTop: 25 },
   buttonText: { color: 'white', fontSize: 22, fontWeight: 'bold' },
-  
-  // 🎯 提示彈窗樣式 (與你的 Profile 樣式完美對齊)
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
   alertContent: { backgroundColor: '#FFF', width: 380, padding: 25, borderRadius: 20, alignItems: 'center' },
   alertTitle: { fontSize: 22, fontWeight: 'bold', color: '#2E7D32', marginBottom: 12, textAlign: 'center' },
