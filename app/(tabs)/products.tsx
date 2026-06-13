@@ -48,7 +48,7 @@ const mapProductFromApi = (item: any): Product => {
 
 const pageLanguageConfig = {
   appName: '食半功倍',
-  pageTitle: '新 增 / 刪 除 商 品',
+  pageTitle: ' 查 詢 商 品',
   tabProductList: '商品列表',      
   tabAuditHistory: '審核紀錄',     
   subTabPending: '待審核', 
