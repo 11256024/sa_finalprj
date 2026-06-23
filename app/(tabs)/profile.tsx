@@ -1,3 +1,5 @@
+// 檔案說明：會員資料頁面：管理個人資料、登入狀態、好友與帳號相關操作。
+// 說明：下方 import 會把此頁需要的 React、React Native、路由、圖示與資料工具載入。
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
@@ -6,8 +8,10 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Image, Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useDataContext } from '../../context/DataContext';
 
+// 說明：後端 API 的本機網址，fetch 會以這個位址呼叫 Django 服務。
 const API_URL = 'http://127.0.0.1:8000';
 
+// 說明：ProfileType 定義這個頁面會使用的資料欄位與型別。
 interface ProfileType {
   name: string;
   birthday: string;
@@ -19,7 +23,9 @@ interface ProfileType {
   age?: string;
 }
 
+// 說明：ProfileScreen 是此檔案的主要畫面元件，負責組合狀態、資料處理與 UI。
 export default function ProfileScreen() {
+  // 說明：宣告 router，集中處理這段畫面邏輯會用到的資料或方法。
   const router = useRouter();
   const { weightUpdateVersion, updateWeight, lastWeightValue } = useDataContext();
 
@@ -49,12 +55,15 @@ export default function ProfileScreen() {
   const [tempData, setTempData] = useState<ProfileType>({ ...profileData });
   const [avatarUri, setAvatarUri] = useState<string | null>(null);
 
+  // 說明：宣告 normalizeDateForApi，集中處理這段畫面邏輯會用到的資料或方法。
   const normalizeDateForApi = (value: string) => {
     if (!value) return '';
     return value.trim().replace(/\//g, '-');
   };
 
+  // 說明：統一解析後端回應，避免後端不是 JSON 時讓錯誤訊息太難懂。
   const parseApiResponse = async (response: Response) => {
+    // 說明：宣告 text，集中處理這段畫面邏輯會用到的資料或方法。
     const text = await response.text();
     try {
       return text ? JSON.parse(text) : {};
@@ -63,8 +72,11 @@ export default function ProfileScreen() {
     }
   };
 
+  // 說明：宣告 getTodayDateString，集中處理這段畫面邏輯會用到的資料或方法。
   const getTodayDateString = () => {
+    // 說明：宣告 now，集中處理這段畫面邏輯會用到的資料或方法。
     const now = new Date();
+    // 說明：整理顯示文字，讓資料在畫面上比較乾淨易讀。
     const formatter = new Intl.DateTimeFormat('zh-TW', {
       timeZone: 'Asia/Taipei',
       year: 'numeric',
@@ -72,17 +84,22 @@ export default function ProfileScreen() {
       day: '2-digit',
     });
 
+    // 說明：宣告 parts，集中處理這段畫面邏輯會用到的資料或方法。
     const parts = formatter.format(now).split('/');
     return `${parts[0]}-${parts[1]}-${parts[2]}`;
   };
 
+  // 說明：宣告 getTodayRecordWeight，集中處理這段畫面邏輯會用到的資料或方法。
   const getTodayRecordWeight = async (memberId: string) => {
     try {
+      // 說明：宣告 todayFoodKey，集中處理這段畫面邏輯會用到的資料或方法。
       const todayFoodKey = `${memberId}_food_record_${getTodayDateString()}`;
+      // 說明：宣告 dailyFoodRecordRaw，集中處理這段畫面邏輯會用到的資料或方法。
       const dailyFoodRecordRaw = await AsyncStorage.getItem(todayFoodKey);
 
       if (!dailyFoodRecordRaw) return '';
 
+      // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
       const parsedFood = JSON.parse(dailyFoodRecordRaw);
 
       if (
@@ -101,6 +118,7 @@ export default function ProfileScreen() {
     }
   };
 
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useFocusEffect(
     useCallback(() => {
       loadProfileData();
@@ -108,7 +126,9 @@ export default function ProfileScreen() {
   );
 
   // 🎯 監聽每日紀錄的更新，自動同步到會員中心顯示
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
+    // 說明：把前端目前資料同步到後端或其他頁面共用狀態。
     const syncWeightFromDaily = async () => {
       // 🎯 優先使用記憶體中的 lastWeightValue 達成秒同步
       if (lastWeightValue && lastWeightValue !== profileData.weight) {
@@ -119,13 +139,19 @@ export default function ProfileScreen() {
     syncWeightFromDaily();
   }, [weightUpdateVersion]);
 
+  // 說明：讀取目前登入者 ID，之後用來組 AsyncStorage key 或呼叫會員 API。
   const getCurrentMemberContext = async () => {
+    // 說明：宣告 userStr，集中處理這段畫面邏輯會用到的資料或方法。
     const userStr = await AsyncStorage.getItem('user');
+    // 說明：宣告 currentUser，集中處理這段畫面邏輯會用到的資料或方法。
     const currentUser = userStr ? JSON.parse(userStr) : null;
 
+    // 說明：宣告 savedCurrentUserId，集中處理這段畫面邏輯會用到的資料或方法。
     const savedCurrentUserId = await AsyncStorage.getItem('current_user_id');
+    // 說明：宣告 savedMemberId，集中處理這段畫面邏輯會用到的資料或方法。
     const savedMemberId = await AsyncStorage.getItem('member_id');
 
+    // 說明：宣告 memberId，集中處理這段畫面邏輯會用到的資料或方法。
     const memberId =
       currentUser?.id?.toString?.() ||
       savedCurrentUserId ||
@@ -135,14 +161,19 @@ export default function ProfileScreen() {
     return { memberId, currentUser };
   };
 
+  // 說明：從本機快取或後端載入資料，載入完成後更新畫面狀態。
   const loadProfileData = async () => {
     try {
       const { memberId: savedUserId, currentUser } = await getCurrentMemberContext();
 
+      // 說明：宣告 savedAccount，集中處理這段畫面邏輯會用到的資料或方法。
       const savedAccount = await AsyncStorage.getItem('account');
+      // 說明：宣告 savedUsername，集中處理這段畫面邏輯會用到的資料或方法。
       const savedUsername = await AsyncStorage.getItem('username');
+      // 說明：宣告 savedPassword，集中處理這段畫面邏輯會用到的資料或方法。
       const savedPassword = await AsyncStorage.getItem('password');
 
+      // 說明：宣告 singleAccount，集中處理這段畫面邏輯會用到的資料或方法。
       const singleAccount =
         currentUser?.username ||
         currentUser?.account ||
@@ -150,6 +181,7 @@ export default function ProfileScreen() {
         savedUsername ||
         '';
 
+      // 說明：宣告 singlePassword，集中處理這段畫面邏輯會用到的資料或方法。
       const singlePassword = savedPassword || '';
 
       let localData = await AsyncStorage.getItem(`${savedUserId}_user_profile`);
@@ -158,18 +190,28 @@ export default function ProfileScreen() {
         try { parsedProfile = JSON.parse(localData); } catch (e) {}
       }
 
+      // 說明：宣告 singleNameForInstant，集中處理這段畫面邏輯會用到的資料或方法。
       const singleNameForInstant = await AsyncStorage.getItem(`${savedUserId}_user_name_key`);
+      // 說明：宣告 singleHeightForInstant，集中處理這段畫面邏輯會用到的資料或方法。
       const singleHeightForInstant = await AsyncStorage.getItem(`${savedUserId}_user_height`);
+      // 說明：宣告 singleWeightForInstant，集中處理這段畫面邏輯會用到的資料或方法。
       const singleWeightForInstant = await AsyncStorage.getItem(`${savedUserId}_user_weight`);
+      // 說明：宣告 savedAvatarForInstant，集中處理這段畫面邏輯會用到的資料或方法。
       const savedAvatarForInstant = await AsyncStorage.getItem(`${savedUserId}_user_avatar`);
 
+      // 說明：宣告 instantBirthday，集中處理這段畫面邏輯會用到的資料或方法。
       const instantBirthday = parsedProfile.birthday || '';
+      // 說明：宣告 instantName，集中處理這段畫面邏輯會用到的資料或方法。
       const instantName = singleNameForInstant || parsedProfile.name || '';
+      // 說明：宣告 instantHeight，集中處理這段畫面邏輯會用到的資料或方法。
       const instantHeight = singleHeightForInstant || parsedProfile.height || '';
       // 會員中心的體重不再與每日紀錄同步，僅使用會員資料本身的體重
+      // 說明：宣告 instantWeight，集中處理這段畫面邏輯會用到的資料或方法。
       const instantWeight = singleWeightForInstant || parsedProfile.weight || '';
+      // 說明：宣告 instantGender，集中處理這段畫面邏輯會用到的資料或方法。
       const instantGender = parsedProfile.gender || '';
 
+      // 說明：宣告 instantData，集中處理這段畫面邏輯會用到的資料或方法。
       const instantData = {
         name: (instantName === '請輸入姓名' || instantName === '王小' || instantName === '王小明' || instantName === '你好' || instantName === 'xx') ? '' : instantName,
         birthday: (instantBirthday === '請選擇生日' || instantBirthday === '1995-01-15') ? '' : instantBirthday,
@@ -192,7 +234,9 @@ export default function ProfileScreen() {
 
       if (savedUserId && savedUserId !== 'guest') {
         try {
+          // 說明：宣告 response，集中處理這段畫面邏輯會用到的資料或方法。
           const response = await fetch(`${API_URL}/member/profile/${savedUserId}/`);
+          // 說明：宣告 data，集中處理這段畫面邏輯會用到的資料或方法。
           const data = await parseApiResponse(response);
 
           if (response.ok && data.success && data.member) {
@@ -211,6 +255,7 @@ export default function ProfileScreen() {
         }
       }
 
+      // 說明：宣告 singleName，集中處理這段畫面邏輯會用到的資料或方法。
       const singleName = await AsyncStorage.getItem(`${savedUserId}_user_name_key`);
 
       let rawName = '';
@@ -233,8 +278,11 @@ export default function ProfileScreen() {
           'user_avatar_uri',
         ]);
       } else {
+        // 說明：宣告 singleHeight，集中處理這段畫面邏輯會用到的資料或方法。
         const singleHeight = await AsyncStorage.getItem(`${savedUserId}_user_height`);
+        // 說明：宣告 singleWeight，集中處理這段畫面邏輯會用到的資料或方法。
         const singleWeight = await AsyncStorage.getItem(`${savedUserId}_user_weight`);
+        // 說明：宣告 savedAvatar，集中處理這段畫面邏輯會用到的資料或方法。
         const savedAvatar = await AsyncStorage.getItem(`${savedUserId}_user_avatar`);
 
         rawName = singleName || parsedProfile.name || '';
@@ -245,14 +293,21 @@ export default function ProfileScreen() {
         rawGender = parsedProfile.gender || '';
       }
 
+      // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
       const cleanName = (rawName === '請輸入姓名' || rawName === '王小' || rawName === '王小明' || rawName === '你好' || rawName === 'xx') ? '' : rawName;
+      // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
       const cleanBirthday = (rawBirthday === '請選擇生日' || rawBirthday === '1995-01-15') ? '' : rawBirthday;
+      // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
       const cleanHeight = (rawHeight === '請選擇身高' || !rawHeight) ? '' : rawHeight.toString().trim();
+      // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
       const cleanWeight = (rawWeight === '請選擇體重' || !rawWeight) ? '' : rawWeight.toString().trim();
+      // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
       const cleanGender = (rawGender === '請選擇性別') ? '' : rawGender;
 
+      // 說明：宣告 singleAge，集中處理這段畫面邏輯會用到的資料或方法。
       const singleAge = cleanBirthday ? getPureAgeValue(cleanBirthday) : '';
 
+      // 說明：宣告 safeData，集中處理這段畫面邏輯會用到的資料或方法。
       const safeData = {
         name: cleanName,
         birthday: cleanBirthday,
@@ -285,11 +340,15 @@ export default function ProfileScreen() {
     }
   };
 
+  // 說明：宣告 getPureAgeValue，集中處理這段畫面邏輯會用到的資料或方法。
   const getPureAgeValue = (birthdayStr: string): string => {
     if (!birthdayStr || birthdayStr === '請選擇生日' || birthdayStr === '1995-01-15') return '';
+    // 說明：宣告 birthDate，集中處理這段畫面邏輯會用到的資料或方法。
     const birthDate = new Date(birthdayStr);
+    // 說明：宣告 today，集中處理這段畫面邏輯會用到的資料或方法。
     const today = new Date();
     let age = today.getFullYear() - birthDate.getFullYear();
+    // 說明：宣告 monthDifference，集中處理這段畫面邏輯會用到的資料或方法。
     const monthDifference = today.getMonth() - birthDate.getMonth();
     if (monthDifference < 0 || (monthDifference === 0 && today.getDate() < birthDate.getDate())) {
       age--;
@@ -298,11 +357,14 @@ export default function ProfileScreen() {
   };
 
   // 🎯 根據年齡取得身高體重的限制範圍
+  // 說明：宣告 getRangesByAge，集中處理這段畫面邏輯會用到的資料或方法。
   const getRangesByAge = (birthday: string) => {
+    // 說明：宣告 ageStr，集中處理這段畫面邏輯會用到的資料或方法。
     const ageStr = getPureAgeValue(birthday);
     if (!ageStr) {
       return { hMin: 70, hMax: 220, wMin: 7, wMax: 220 }; // 如果沒有生日，使用最寬鬆的範圍
     }
+    // 說明：宣告 age，集中處理這段畫面邏輯會用到的資料或方法。
     const age = parseInt(ageStr);
 
     if (age >= 1 && age <= 2) return { hMin: 70, hMax: 100, wMin: 7, wMax: 18 };
@@ -316,9 +378,13 @@ export default function ProfileScreen() {
   };
 
   // 🎯 處理生日變動並驗證身高體重是否符合新範圍
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleBirthdayChange = (newBday: string) => {
+    // 說明：宣告 ranges，集中處理這段畫面邏輯會用到的資料或方法。
     const ranges = getRangesByAge(newBday);
+    // 說明：宣告 currentH，集中處理這段畫面邏輯會用到的資料或方法。
     const currentH = parseFloat(tempData.height);
+    // 說明：宣告 currentW，集中處理這段畫面邏輯會用到的資料或方法。
     const currentW = parseFloat(tempData.weight);
     
     let errorMsg = "";
@@ -337,18 +403,25 @@ export default function ProfileScreen() {
   };
 
   // 🎯 動態生成選單選項
+  // 說明：宣告 currentRanges，集中處理這段畫面邏輯會用到的資料或方法。
   const currentRanges = getRangesByAge(isEditing ? tempData.birthday : profileData.birthday);
 
+  // 說明：提供畫面下拉選單或清單渲染使用的固定資料。
   const heightOptions = Array.from({ length: currentRanges.hMax - currentRanges.hMin + 1 }, (_, i) => (i + currentRanges.hMin).toString());
+  // 說明：提供畫面下拉選單或清單渲染使用的固定資料。
   const weightOptions = Array.from({ length: currentRanges.wMax - currentRanges.wMin + 1 }, (_, i) => (i + currentRanges.wMin).toString());
 
+  // 說明：提供畫面下拉選單或清單渲染使用的固定資料。
   const genderOptions = ['男', '女'];
 
+  // 說明：宣告 renderAgeLabel，集中處理這段畫面邏輯會用到的資料或方法。
   const renderAgeLabel = (birthdayStr: string) => {
+    // 說明：宣告 ageNum，集中處理這段畫面邏輯會用到的資料或方法。
     const ageNum = getPureAgeValue(birthdayStr);
     return ageNum ? ` (${ageNum} 歲)` : '';
   };
 
+  // 說明：宣告 saveAvatarToDatabase，集中處理這段畫面邏輯會用到的資料或方法。
   const saveAvatarToDatabase = async (avatarValue: string | null) => {
     try {
       const { memberId: savedUserId, currentUser } = await getCurrentMemberContext();
@@ -357,6 +430,7 @@ export default function ProfileScreen() {
         return;
       }
 
+      // 說明：宣告 response，集中處理這段畫面邏輯會用到的資料或方法。
       const response = await fetch(`${API_URL}/member/profile/${savedUserId}/`, {
         method: 'PUT',
         headers: {
@@ -367,6 +441,7 @@ export default function ProfileScreen() {
         }),
       });
 
+      // 說明：宣告 data，集中處理這段畫面邏輯會用到的資料或方法。
       const data = await parseApiResponse(response);
 
       if (response.ok && data.success && data.member) {
@@ -380,6 +455,7 @@ export default function ProfileScreen() {
     }
   };
 
+  // 說明：宣告 openImagePicker，集中處理這段畫面邏輯會用到的資料或方法。
   const openImagePicker = async () => {
     setAvatarMenuVisible(false);
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -391,17 +467,23 @@ export default function ProfileScreen() {
       quality: 1,
     });
     if (!result.canceled) {
+      // 說明：宣告 imageUri，集中處理這段畫面邏輯會用到的資料或方法。
       const imageUri = result.assets[0].uri;
       setAvatarUri(imageUri);
       
       try {
+        // 說明：宣告 response，集中處理這段畫面邏輯會用到的資料或方法。
         const response = await fetch(imageUri);
+        // 說明：宣告 blob，集中處理這段畫面邏輯會用到的資料或方法。
         const blob = await response.blob();
         
+        // 說明：宣告 reader，集中處理這段畫面邏輯會用到的資料或方法。
         const reader = new FileReader();
         reader.onload = async () => {
+          // 說明：宣告 base64Data，集中處理這段畫面邏輯會用到的資料或方法。
           const base64Data = reader.result as string;
           setAvatarUri(base64Data);
+          // 說明：宣告 currentUserId，集中處理這段畫面邏輯會用到的資料或方法。
           const currentUserId =
             await AsyncStorage.getItem('current_user_id') ||
             await AsyncStorage.getItem('member_id') ||
@@ -413,6 +495,7 @@ export default function ProfileScreen() {
       } catch (e) {
         console.log('⚠️ Base64 轉換失敗，使用原始 URI:', e);
         setAvatarUri(imageUri);
+        // 說明：宣告 currentUserId，集中處理這段畫面邏輯會用到的資料或方法。
         const currentUserId =
           await AsyncStorage.getItem('current_user_id') ||
           await AsyncStorage.getItem('member_id') ||
@@ -423,10 +506,12 @@ export default function ProfileScreen() {
     }
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleConfirmDeleteImage = async () => {
     setDeleteConfirmVisible(false);
     setAvatarUri(null);
     try {
+      // 說明：宣告 currentUserId，集中處理這段畫面邏輯會用到的資料或方法。
       const currentUserId =
         await AsyncStorage.getItem('current_user_id') ||
         await AsyncStorage.getItem('member_id') ||
@@ -440,13 +525,17 @@ export default function ProfileScreen() {
     }
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleAvatarPress = () => {
     setAvatarMenuVisible(true);
   };
 
+  // 說明：宣告 getFirstCharOfName，集中處理這段畫面邏輯會用到的資料或方法。
   const getFirstCharOfName = () => {
+    // 說明：宣告 currentName，集中處理這段畫面邏輯會用到的資料或方法。
     const currentName = isEditing ? tempData.name : profileData.name;
     if (currentName && currentName.trim().length > 0) {
+      // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
       const cleanText = currentName.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
       if (cleanText.length > 0) {
         return cleanText.charAt(0);
@@ -455,21 +544,26 @@ export default function ProfileScreen() {
     return "👤";
   };
 
+  // 說明：控制提示訊息或畫面顯示條件。
   const showWarningAlert = (message: string) => {
     if (Platform.OS === 'web') window.alert(`儲存失敗\n\n⚠️ ${message}`);
     else Alert.alert("儲存失敗", `⚠️ ${message}`);
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleEditPress = () => {
     if (isEditing) {
       if (!tempData.name || tempData.name.trim() === '') { showWarningAlert('請輸入正確的姓名！'); return; }
+      // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
       const cleanText = tempData.name.replace(/[^a-zA-Z\u4e00-\u9fa5]/g, '');
       if (cleanText.length === 0) { showWarningAlert('姓名不能全為空白或符號！'); return; }
 
       if (!tempData.birthday || tempData.birthday.trim() === '') { showWarningAlert('請選擇生日！'); return; }
       
       // 🎯 唯一改動：精準檢查生日是否大於今天（未來日期）
+      // 說明：宣告 selectedBirthDate，集中處理這段畫面邏輯會用到的資料或方法。
       const selectedBirthDate = new Date(tempData.birthday);
+      // 說明：宣告 todayDate，集中處理這段畫面邏輯會用到的資料或方法。
       const todayDate = new Date();
       if (selectedBirthDate > todayDate) {
         showWarningAlert('出生日期不能是未來日期！');
@@ -490,6 +584,7 @@ export default function ProfileScreen() {
   // =================================================================
   // ⏱️ 核心控時：無轉圈圈彈窗，精準卡死「剛好 1.0 秒（1000ms）」儲存成功！
   // =================================================================
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleConfirmSave = async () => {
     setSaveModalVisible(false); // 關閉「確認儲存變更嗎」對話框
 
@@ -501,8 +596,11 @@ export default function ProfileScreen() {
         return;
       }
 
+      // 說明：宣告 birthdayForApi，集中處理這段畫面邏輯會用到的資料或方法。
       const birthdayForApi = normalizeDateForApi(tempData.birthday);
+      // 說明：根據目前輸入或紀錄重新計算畫面要顯示的數值。
       const calculatedAgeStr = getPureAgeValue(birthdayForApi || tempData.birthday);
+      // 說明：宣告 updatedData，集中處理這段畫面邏輯會用到的資料或方法。
       const updatedData = {
         ...tempData,
         birthday: birthdayForApi,
@@ -515,6 +613,7 @@ export default function ProfileScreen() {
       setProfileData(updatedData);
       setTempData(updatedData);
 
+      // 說明：宣告 stringifiedData，集中處理這段畫面邏輯會用到的資料或方法。
       const stringifiedData = JSON.stringify(updatedData);
       await AsyncStorage.setItem(`${savedUserId}_user_profile`, stringifiedData);
       await AsyncStorage.setItem(`${savedUserId}_user_name_key`, updatedData.name.trim());
@@ -522,8 +621,11 @@ export default function ProfileScreen() {
       await AsyncStorage.setItem(`${savedUserId}_user_weight`, updatedData.weight);
 
       // 🎯 雙向同步：將更新後的體重同步回今日的「每日紀錄」
+      // 說明：宣告 todayStr，集中處理這段畫面邏輯會用到的資料或方法。
       const todayStr = getTodayDateString();
+      // 說明：宣告 todayKey，集中處理這段畫面邏輯會用到的資料或方法。
       const todayKey = `${savedUserId}_food_record_${todayStr}`;
+      // 說明：宣告 dailyRaw，集中處理這段畫面邏輯會用到的資料或方法。
       const dailyRaw = await AsyncStorage.getItem(todayKey);
       let dailyData = dailyRaw ? JSON.parse(dailyRaw) : { mealBlocks: { 早餐: [], 午餐: [], 晚餐: [] } };
       
@@ -532,7 +634,9 @@ export default function ProfileScreen() {
       
       // 計算 BMI
       if (updatedData.height && updatedData.weight) {
+        // 說明：宣告 h，集中處理這段畫面邏輯會用到的資料或方法。
         const h = parseFloat(updatedData.height) / 100;
+        // 說明：宣告 w，集中處理這段畫面邏輯會用到的資料或方法。
         const w = parseFloat(updatedData.weight);
         dailyData.bmi = (w / (h * h)).toFixed(1);
         dailyData.bmiStatus = ''; // 可視需求計算狀態
@@ -541,6 +645,7 @@ export default function ProfileScreen() {
       await AsyncStorage.setItem(todayKey, JSON.stringify(dailyData));
       
       // 🎯 同步今日紀錄到後端，避免餐點資料遺失，我們把當前餐點也帶上
+      // 說明：宣告 mealsForBackend，集中處理這段畫面邏輯會用到的資料或方法。
       const mealsForBackend = {
         breakfast: (dailyData.mealBlocks.早餐 || []).map((it: any) => ({ name: it.name, calories: it.calories })),
         lunch: (dailyData.mealBlocks.午餐 || []).map((it: any) => ({ name: it.name, calories: it.calories })),
@@ -568,8 +673,10 @@ export default function ProfileScreen() {
       }
 
       // 2. 🤫 幕後分流：把非同步網路要求丟進背景執行，絕不阻塞前台控時
+      // 說明：宣告 bgNetworkRequest，集中處理這段畫面邏輯會用到的資料或方法。
       const bgNetworkRequest = (async () => {
         try {
+          // 說明：宣告 response，集中處理這段畫面邏輯會用到的資料或方法。
           const response = await fetch(`${API_URL}/member/profile/${savedUserId}/`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -583,6 +690,7 @@ export default function ProfileScreen() {
             }),
           });
 
+          // 說明：宣告 data，集中處理這段畫面邏輯會用到的資料或方法。
           const data = await parseApiResponse(response);
           if (response.ok && data.success && data.member) {
             await AsyncStorage.setItem('user', JSON.stringify({
@@ -615,7 +723,9 @@ export default function ProfileScreen() {
     }
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleCancelPress = () => {
+    // 說明：宣告 isChanged，集中處理這段畫面邏輯會用到的資料或方法。
     const isChanged = 
       tempData.name !== profileData.name ||
       tempData.birthday !== profileData.birthday ||
@@ -630,11 +740,13 @@ export default function ProfileScreen() {
     }
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleConfirmCancel = () => {
     setCancelModalVisible(false);
     setIsEditing(false);
   };
 
+  // 說明：宣告 webSelectStyle，集中處理這段畫面邏輯會用到的資料或方法。
   const webSelectStyle = {
     fontSize: '16px',
     color: '#333',
@@ -650,6 +762,7 @@ export default function ProfileScreen() {
     willChange: 'transform',
   };
 
+  // 說明：宣告 webCalendarStyle，集中處理這段畫面邏輯會用到的資料或方法。
   const webCalendarStyle = {
     fontSize: '16px',
     color: '#333',
@@ -666,6 +779,7 @@ export default function ProfileScreen() {
     willChange: 'transform',
   };
 
+  // 說明：回傳此頁的畫面結構；上方 state 和 handler 會在這裡被綁到 UI 元件上。
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
@@ -1007,6 +1121,7 @@ export default function ProfileScreen() {
   );
 }
 
+// 說明：集中定義本頁所有樣式，讓 JSX 只負責描述畫面結構。
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#E0E7DA' },
   scrollContent: { minHeight: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5DC', paddingVertical: 40 },

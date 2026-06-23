@@ -1,11 +1,16 @@
+// 檔案說明：註冊頁面：處理新會員註冊表單、驗證與送出。
+// 說明：下方 import 會把此頁需要的 React、React Native、路由、圖示與資料工具載入。
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+// 說明：後端 API 的本機網址，fetch 會以這個位址呼叫 Django 服務。
 const API_URL = 'http://127.0.0.1:8000';
 
+// 說明：RegisterScreen 是此檔案的主要畫面元件，負責組合狀態、資料處理與 UI。
 export default function RegisterScreen() {
+  // 說明：宣告 router，集中處理這段畫面邏輯會用到的資料或方法。
   const router = useRouter();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -23,20 +28,27 @@ export default function RegisterScreen() {
   const [isConfirmPasswordSecure, setIsConfirmPasswordSecure] = useState(true);
 
   // 建立三個欄位的 Ref 焦點控制
+  // 說明：保存 usernameRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const usernameRef = useRef<TextInput>(null);
+  // 說明：保存 passwordRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const passwordRef = useRef<TextInput>(null);
+  // 說明：保存 confirmPasswordRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const confirmPasswordRef = useRef<TextInput>(null);
 
   // 頁面一載入，自動聚焦在帳號欄位
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
+    // 說明：宣告 timer，集中處理這段畫面邏輯會用到的資料或方法。
     const timer = setTimeout(() => {
       usernameRef.current?.focus();
     }, 100);
     return () => clearTimeout(timer);
   }, []);
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleRegister = async () => {
     // ❌ 核心防禦一：帳號基本檢查 (不可空白，且長度至少大於等於 3 位)
+    // 說明：宣告 trimmedUsername，集中處理這段畫面邏輯會用到的資料或方法。
     const trimmedUsername = username.trim();
     if (!trimmedUsername) {
       alert('請輸入帳號');
@@ -48,7 +60,9 @@ export default function RegisterScreen() {
     }
 
     // ❌ 核心防禦二：密碼強度驗證
+    // 說明：宣告 hasUpperCase，集中處理這段畫面邏輯會用到的資料或方法。
     const hasUpperCase = /[A-Z]/.test(password);
+    // 說明：宣告 isLengthValid，集中處理這段畫面邏輯會用到的資料或方法。
     const isLengthValid = password.length >= 6;
 
     if (!hasUpperCase || !isLengthValid) {
@@ -75,6 +89,7 @@ export default function RegisterScreen() {
     setMatchError(false);
 
     try {
+      // 說明：宣告 response，集中處理這段畫面邏輯會用到的資料或方法。
       const response = await fetch(`${API_URL}/register/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -84,6 +99,7 @@ export default function RegisterScreen() {
         }),
       });
 
+      // 說明：宣告 data，集中處理這段畫面邏輯會用到的資料或方法。
       const data = await response.json();
       console.log('註冊結果:', data);
 
@@ -98,6 +114,7 @@ export default function RegisterScreen() {
     }
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleGoToLogin = () => {
     setSuccessModalVisible(false);
     setUsername('');
@@ -106,6 +123,7 @@ export default function RegisterScreen() {
     router.replace('/'); 
   };
 
+  // 說明：回傳此頁的畫面結構；上方 state 和 handler 會在這裡被綁到 UI 元件上。
   return (
     <View style={{ flex: 1, backgroundColor: '#E0E7DA' }}>
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
@@ -227,6 +245,7 @@ export default function RegisterScreen() {
   );
 }
 
+// 說明：集中定義本頁所有樣式，讓 JSX 只負責描述畫面結構。
 const styles = StyleSheet.create({
   scrollContent: { minHeight: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5DC', paddingTop: 60, paddingBottom: 60 },
   pageTitle: { fontSize: 36, marginBottom: 30, color: '#333', fontWeight: 'bold' },

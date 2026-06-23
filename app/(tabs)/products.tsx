@@ -1,11 +1,16 @@
+// 檔案說明：商品頁面：讓使用者查詢商品、送出新增商品申請，並顯示審核狀態。
+// 說明：下方 import 會把此頁需要的 React、React Native、路由、圖示與資料工具載入。
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+// 說明：後端 API 的本機網址，fetch 會以這個位址呼叫 Django 服務。
 const API_URL = 'http://127.0.0.1:8000';
+// 說明：後端 WebSocket 位址，用來接收商品審核資料的即時刷新通知。
 const WS_URL = 'ws://127.0.0.1:8000/ws/admin-reviews/'; 
 
+// 說明：Product 定義這個頁面會使用的資料欄位與型別。
 interface Product {
   id: string;
   name: string;
@@ -15,7 +20,9 @@ interface Product {
   creatorId?: string;
 }
 
+// 說明：統一解析後端回應，避免後端不是 JSON 時讓錯誤訊息太難懂。
 const parseApiResponse = async (response: any) => {
+  // 說明：宣告 text，集中處理這段畫面邏輯會用到的資料或方法。
   const text = await response.text();
   try {
     return text ? JSON.parse(text) : {};
@@ -24,6 +31,7 @@ const parseApiResponse = async (response: any) => {
   }
 };
 
+// 說明：把後端回傳欄位轉成前端畫面固定使用的資料格式。
 const mapProductFromApi = (item: any): Product => {
   let cId = '';
   if (item.creator_id !== null && item.creator_id !== undefined) {
@@ -46,6 +54,7 @@ const mapProductFromApi = (item: any): Product => {
   };
 };
 
+// 說明：宣告 pageLanguageConfig，集中處理這段畫面邏輯會用到的資料或方法。
 const pageLanguageConfig = {
   appName: '食半功倍',
   pageTitle: ' 查 詢 商 品',
@@ -83,7 +92,9 @@ const pageLanguageConfig = {
   amountPlaceholder: '限輸入數字'
 };
 
+// 說明：ProductsScreen 是此檔案的主要畫面元件，負責組合狀態、資料處理與 UI。
 export default function ProductsScreen() {
+  // 說明：宣告 txt，集中處理這段畫面邏輯會用到的資料或方法。
   const txt = pageLanguageConfig;
 
   const [activeTab, setActiveTab] = useState<'list' | 'audit'>('list'); 
@@ -92,20 +103,29 @@ export default function ProductsScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [products, setProducts] = useState<Product[]>([]); 
   const [currentUserId, setCurrentUserId] = useState(''); 
+  // 說明：保存 wsRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const wsRef = useRef<WebSocket | null>(null);
   
   // 🌟 新增全域載入狀態控制旗標，初始預設為 true
   const [isLoading, setIsLoading] = useState(true);
 
+  // 說明：保存 cacheMapRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const cacheMapRef = useRef<Map<string, Product[]>>(new Map());
+  // 說明：保存 isFetchingRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const isFetchingRef = useRef(false);
+  // 說明：保存 productsRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const productsRef = useRef<Product[]>([]);
   
+  // 說明：保存 activeTabRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const activeTabRef = useRef(activeTab);
+  // 說明：保存 auditSubTabRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const auditSubTabRef = useRef(auditSubTab);
 
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => { productsRef.current = products; }, [products]);
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => { auditSubTabRef.current = auditSubTab; }, [auditSubTab]);
 
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -114,13 +134,17 @@ export default function ProductsScreen() {
   const [unitType, setUnitType] = useState<'g' | 'ml'>('g');
   const [newProductCalorie, setNewProductCalorie] = useState('');
 
+  // 說明：保存 amountInputRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const amountInputRef = useRef<TextInput>(null);
+  // 說明：保存 calorieInputRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const calorieInputRef = useRef<TextInput>(null);
 
+  // 說明：整理顯示文字，讓資料在畫面上比較乾淨易讀。
   const formatDisplayInfo = (name: string, unit: string) => {
     let cleanName = name ? name.trim() : '';
     let cleanUnit = unit ? unit.trim() : '';
     if (cleanName.includes('/') || cleanName.includes(cleanUnit)) {
+      // 說明：宣告 parts，集中處理這段畫面邏輯會用到的資料或方法。
       const parts = cleanName.split('/');
       if (parts.length > 1) {
         cleanName = parts[0].trim();
@@ -131,10 +155,14 @@ export default function ProductsScreen() {
     return cleanUnit ? `${cleanName} / ${cleanUnit}` : cleanName;
   };
 
+  // 說明：讀取目前登入者 ID，之後用來組 AsyncStorage key 或呼叫會員 API。
   const getCurrentMemberId = async () => {
     try {
+      // 說明：宣告 userStr，集中處理這段畫面邏輯會用到的資料或方法。
       const userStr = await AsyncStorage.getItem('user');
+      // 說明：宣告 currentUser，集中處理這段畫面邏輯會用到的資料或方法。
       const currentUser = userStr ? JSON.parse(userStr) : null;
+      // 說明：宣告 savedId，集中處理這段畫面邏輯會用到的資料或方法。
       const savedId = currentUser?.id?.toString?.() || await AsyncStorage.getItem('current_user_id') || '';
       return /^\d+$/.test(savedId) ? savedId : '';
     } catch {
@@ -142,11 +170,15 @@ export default function ProductsScreen() {
     }
   };
 
+  // 說明：從本機快取或後端載入資料，載入完成後更新畫面狀態。
   const fetchProductsByUrl = async (url: string) => {
     try {
+      // 說明：宣告 response，集中處理這段畫面邏輯會用到的資料或方法。
       const response = await fetch(url);
+      // 說明：宣告 data，集中處理這段畫面邏輯會用到的資料或方法。
       const data = await parseApiResponse(response);
       if (Array.isArray(data)) {
+        // 說明：宣告 mapped，集中處理這段畫面邏輯會用到的資料或方法。
         const mapped = data.map(mapProductFromApi);
         cacheMapRef.current.set(url, mapped); 
         return mapped;
@@ -158,6 +190,7 @@ export default function ProductsScreen() {
     }
   };
 
+  // 說明：從本機快取或後端載入資料，載入完成後更新畫面狀態。
   const loadSavedProducts = async (force = false) => {
     if (isFetchingRef.current) {
       // 已有同時進行的請求；不要在這裡關掉 isLoading，否則畫面會先閃「找不到相關商品」。
@@ -167,6 +200,7 @@ export default function ProductsScreen() {
     isFetchingRef.current = true;
 
     try {
+      // 說明：宣告 savedUserId，集中處理這段畫面邏輯會用到的資料或方法。
       const savedUserId = await getCurrentMemberId();
       if (currentUserId !== savedUserId) setCurrentUserId(savedUserId);
 
@@ -179,8 +213,10 @@ export default function ProductsScreen() {
         }
       }
 
+      // 說明：從本機快取或後端載入資料，載入完成後更新畫面狀態。
       const fetchedData = await fetchProductsByUrl(targetUrl);
 
+      // 說明：宣告 mergedMap，集中處理這段畫面邏輯會用到的資料或方法。
       const mergedMap = new Map<string, Product>();
       
       cacheMapRef.current.forEach((productList) => {
@@ -190,16 +226,20 @@ export default function ProductsScreen() {
 
       productsRef.current.forEach(p => {
         if (p.id.startsWith('virtual_')) {
+          // 說明：宣告 matched，集中處理這段畫面邏輯會用到的資料或方法。
           const matched = Array.from(mergedMap.values()).find(f => f.name === p.name && f.unit === p.unit);
           if (!matched) mergedMap.set(p.id, p);
         }
       });
 
+      // 說明：宣告 sortedProducts，集中處理這段畫面邏輯會用到的資料或方法。
       const sortedProducts = Array.from(mergedMap.values()).sort((a, b) => {
         if (a.status === 'pending' && b.status !== 'pending') return -1;
         if (b.status === 'pending' && a.status !== 'pending') return 1;
 
+        // 說明：宣告 idA，集中處理這段畫面邏輯會用到的資料或方法。
         const idA = a.id.startsWith('virtual_') ? Number(a.id.replace('virtual_', '')) : Number(a.id);
+        // 說明：宣告 idB，集中處理這段畫面邏輯會用到的資料或方法。
         const idB = b.id.startsWith('virtual_') ? Number(b.id.replace('virtual_', '')) : Number(b.id);
         return idB - idA;
       });
@@ -218,12 +258,14 @@ export default function ProductsScreen() {
   };
 
   // 初始化與 WebSocket 機制
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
     getCurrentMemberId().then(id => {
       setCurrentUserId(id);
       loadSavedProducts(true);
     });
 
+    // 說明：宣告 ws，集中處理這段畫面邏輯會用到的資料或方法。
     const ws = new WebSocket(WS_URL);
     wsRef.current = ws;
     ws.onmessage = () => {
@@ -236,7 +278,9 @@ export default function ProductsScreen() {
   }, []);
 
   // 全域高頻 1 秒自動背景同步計時器
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
+    // 說明：宣告 intervalId，集中處理這段畫面邏輯會用到的資料或方法。
     const intervalId = setInterval(() => {
       loadSavedProducts(true); 
     }, 1000); 
@@ -245,6 +289,7 @@ export default function ProductsScreen() {
   }, []); 
 
   // 當使用者「按分頁」時切換
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleTabChange = (tab: 'list' | 'audit', subTab?: 'pending' | 'approved' | 'rejected') => {
     // 🌟 切換分頁時立即把載入狀態拉回 true，避免顯示上一頁留下來的空資料文字
     setIsLoading(true); 
@@ -264,6 +309,7 @@ export default function ProductsScreen() {
     });
   };
 
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useFocusEffect(
     useCallback(() => { 
       setIsLoading(true); // 🌟 頁面 Focus 進來時也先進入載入狀態
@@ -271,6 +317,7 @@ export default function ProductsScreen() {
     }, [])
   );
 
+  // 說明：依照關鍵字或頁籤條件篩選要顯示的資料。
   const getFilteredDisplayProducts = () => {
     let baseList: Product[] = [];
 
@@ -302,6 +349,7 @@ export default function ProductsScreen() {
     onCancel?: () => void;
   }>({ visible: false, title: '', message: '', onConfirm: () => {} });
 
+  // 說明：宣告 clearForm，集中處理這段畫面邏輯會用到的資料或方法。
   const clearForm = () => {
     setNewProductName('');
     setNewProductAmount('');
@@ -309,6 +357,7 @@ export default function ProductsScreen() {
     setNewProductCalorie('');
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleCancelAdd = () => {
     if (newProductName.trim() || newProductAmount.trim() || newProductCalorie.trim()) {
       setCustomAlert({
@@ -329,6 +378,7 @@ export default function ProductsScreen() {
     }
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleConfirmAdd = async () => {
     if (!newProductName.trim() || !newProductAmount.trim() || !newProductCalorie.trim()) {
       setCustomAlert({ 
@@ -342,9 +392,12 @@ export default function ProductsScreen() {
       return;
     }
 
+    // 說明：整理顯示文字，讓資料在畫面上比較乾淨易讀。
     const formattedUnit = `${newProductAmount}${unitType === 'g' ? '克' : 'ml'}`;
+    // 說明：宣告 savedUserId，集中處理這段畫面邏輯會用到的資料或方法。
     const savedUserId = await getCurrentMemberId();
 
+    // 說明：宣告 virtualId，集中處理這段畫面邏輯會用到的資料或方法。
     const virtualId = `virtual_${Date.now()}`;
     const virtualProduct: Product = {
       id: virtualId,
@@ -388,8 +441,10 @@ export default function ProductsScreen() {
     }
   };
 
+  // 說明：宣告 displayProducts，集中處理這段畫面邏輯會用到的資料或方法。
   const displayProducts = getFilteredDisplayProducts();
 
+  // 說明：回傳此頁的畫面結構；上方 state 和 handler 會在這裡被綁到 UI 元件上。
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.mainContent}>
@@ -514,6 +569,7 @@ export default function ProductsScreen() {
   );
 }
 
+// 說明：集中定義本頁所有樣式，讓 JSX 只負責描述畫面結構。
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F6EFE5' },
   mainContent: { flex: 1, paddingHorizontal: 80, paddingTop: 30, paddingBottom: 20 },

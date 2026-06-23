@@ -1,13 +1,19 @@
+// 檔案說明：體重紀錄圖表頁面：讀取每日體重資料並用圖表呈現變化。
+// 說明：下方 import 會把此頁需要的 React、React Native、路由、圖示與資料工具載入。
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Dimensions, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { LineChart } from "react-native-chart-kit";
 
+// 說明：後端 API 的本機網址，fetch 會以這個位址呼叫 Django 服務。
 const API_URL = 'http://127.0.0.1:8000';
 
+// 說明：WeightPicScreen 是此檔案的主要畫面元件，負責組合狀態、資料處理與 UI。
 export default function WeightPicScreen() {
+  // 說明：宣告 router，集中處理這段畫面邏輯會用到的資料或方法。
   const router = useRouter();
+  // 說明：宣告 screenWidth，集中處理這段畫面邏輯會用到的資料或方法。
   const screenWidth = Dimensions.get("window").width;
   const [selectedPeriod, setSelectedPeriod] = useState('周');
 
@@ -19,19 +25,27 @@ export default function WeightPicScreen() {
   const [bmiData, setBmiData] = useState<number[]>([]);
 
   // 🕒 計算動態週日期
+  // 說明：宣告 getDynamicWeekData，集中處理這段畫面邏輯會用到的資料或方法。
   const getDynamicWeekData = () => {
+    // 說明：宣告 now，集中處理這段畫面邏輯會用到的資料或方法。
     const now = new Date();
+    // 說明：宣告 utc，集中處理這段畫面邏輯會用到的資料或方法。
     const utc = now.getTime() + now.getTimezoneOffset() * 60000;
+    // 說明：宣告 twDate，集中處理這段畫面邏輯會用到的資料或方法。
     const twDate = new Date(utc + 3600000 * 8);
 
+    // 說明：宣告 hours，集中處理這段畫面邏輯會用到的資料或方法。
     const hours = twDate.getHours();
     if (hours < 12) {
       twDate.setDate(twDate.getDate() - 1);
     }
 
+    // 說明：宣告 currentDay，集中處理這段畫面邏輯會用到的資料或方法。
     const currentDay = twDate.getDay();
+    // 說明：宣告 distanceToMonday，集中處理這段畫面邏輯會用到的資料或方法。
     const distanceToMonday = currentDay === 0 ? -6 : 1 - currentDay;
     
+    // 說明：宣告 monday，集中處理這段畫面邏輯會用到的資料或方法。
     const monday = new Date(twDate);
     monday.setDate(twDate.getDate() + distanceToMonday);
 
@@ -39,11 +53,15 @@ export default function WeightPicScreen() {
     const fullDates: string[] = []; 
 
     for (let i = 0; i < 7; i++) {
+      // 說明：宣告 nextDay，集中處理這段畫面邏輯會用到的資料或方法。
       const nextDay = new Date(monday);
       nextDay.setDate(monday.getDate() + i);
       
+      // 說明：宣告 year，集中處理這段畫面邏輯會用到的資料或方法。
       const year = nextDay.getFullYear();
+      // 說明：宣告 month，集中處理這段畫面邏輯會用到的資料或方法。
       const month = nextDay.getMonth() + 1;
+      // 說明：宣告 date，集中處理這段畫面邏輯會用到的資料或方法。
       const date = nextDay.getDate();
       
       if (i === 6) {
@@ -52,7 +70,9 @@ export default function WeightPicScreen() {
         labels.push(`${month}/${date}`);
       }
       
+      // 說明：宣告 queryMonth，集中處理這段畫面邏輯會用到的資料或方法。
       const queryMonth = month < 10 ? `0${month}` : `${month}`;
+      // 說明：宣告 queryDate，集中處理這段畫面邏輯會用到的資料或方法。
       const queryDate = date < 10 ? `0${date}` : `${date}`;
       fullDates.push(`${year}-${queryMonth}-${queryDate}`);
     }
@@ -61,36 +81,48 @@ export default function WeightPicScreen() {
   };
 
   // 🧮 依據體重與真實身高計算 BMI
+  // 說明：根據目前輸入或紀錄重新計算畫面要顯示的數值。
   const calculateBmiDataset = (weights: number[], heightCm: number | null): number[] => {
     if (!heightCm || heightCm <= 0) return weights.map(() => 0);
+    // 說明：宣告 heightMeters，集中處理這段畫面邏輯會用到的資料或方法。
     const heightMeters = heightCm / 100;
     return weights.map(w => {
       if (!w || w <= 0) return 0;
+      // 說明：宣告 bmi，集中處理這段畫面邏輯會用到的資料或方法。
       const bmi = w / (heightMeters * heightMeters);
       return Math.round(bmi * 10) / 10;
     });
   };
 
   // 🌐 撈取每日紀錄檔儲存的真實體重
+  // 說明：從本機快取或後端載入資料，載入完成後更新畫面狀態。
   const fetchHistoryData = async (period: string) => {
     setIsLoading(true);
     try {
+      // 說明：宣告 userStr，集中處理這段畫面邏輯會用到的資料或方法。
       const userStr = await AsyncStorage.getItem('user');
+      // 說明：宣告 currentUser，集中處理這段畫面邏輯會用到的資料或方法。
       const currentUser = userStr ? JSON.parse(userStr) : null;
+      // 說明：宣告 savedCurrentUserId，集中處理這段畫面邏輯會用到的資料或方法。
       const savedCurrentUserId = await AsyncStorage.getItem('current_user_id');
+      // 說明：宣告 savedMemberId，集中處理這段畫面邏輯會用到的資料或方法。
       const savedMemberId = await AsyncStorage.getItem('member_id');
 
+      // 說明：宣告 userId，集中處理這段畫面邏輯會用到的資料或方法。
       const userId =
         currentUser?.id?.toString?.() ||
         savedCurrentUserId ||
         savedMemberId ||
         'guest';
       
+      // 說明：宣告 finalUserId，集中處理這段畫面邏輯會用到的資料或方法。
       const finalUserId = /^\d+$/.test(userId) ? userId : 'guest';
 
+      // 說明：宣告 savedHeightStr，集中處理這段畫面邏輯會用到的資料或方法。
       const savedHeightStr = await AsyncStorage.getItem(`${finalUserId}_user_height`);
       let currentHeight: number | null = null;
       if (savedHeightStr && savedHeightStr.trim() !== '') {
+        // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
         const parsedHeight = parseFloat(savedHeightStr);
         if (!isNaN(parsedHeight) && parsedHeight > 0) currentHeight = parsedHeight;
       }
@@ -99,12 +131,15 @@ export default function WeightPicScreen() {
       const backendWeightByDate: Record<string, number> = {};
       if (/^\d+$/.test(finalUserId)) {
         try {
+          // 說明：宣告 resp，集中處理這段畫面邏輯會用到的資料或方法。
           const resp = await fetch(`${API_URL}/daily-logs/?member_id=${finalUserId}`);
           if (resp.ok) {
+            // 說明：宣告 data，集中處理這段畫面邏輯會用到的資料或方法。
             const data = await resp.json();
             if (Array.isArray(data)) {
               data.forEach((row: any) => {
                 if (!row?.date) return;
+                // 說明：宣告 w，集中處理這段畫面邏輯會用到的資料或方法。
                 const w = parseFloat(row.weight);
                 if (!isNaN(w) && w > 0) {
                   backendWeightByDate[row.date] = w;
@@ -117,13 +152,17 @@ export default function WeightPicScreen() {
         }
       }
 
+      // 說明：宣告 getWeightForDate，集中處理這段畫面邏輯會用到的資料或方法。
       const getWeightForDate = async (dateStr: string): Promise<number> => {
         if (backendWeightByDate[dateStr]) return backendWeightByDate[dateStr];
+        // 說明：宣告 recordDataStr，集中處理這段畫面邏輯會用到的資料或方法。
         const recordDataStr = await AsyncStorage.getItem(`${finalUserId}_food_record_${dateStr}`);
         if (!recordDataStr) return 0;
         try {
+          // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
           const parsedRecord = JSON.parse(recordDataStr);
           if (parsedRecord.hasDailyWeight && parsedRecord.weight) {
+            // 說明：宣告 w，集中處理這段畫面邏輯會用到的資料或方法。
             const w = parseFloat(parsedRecord.weight);
             return !isNaN(w) && w > 0 ? w : 0;
           }
@@ -135,21 +174,25 @@ export default function WeightPicScreen() {
       let weights: number[] = [];
 
       if (period === '周') {
+        // 說明：宣告 weekDataResult，集中處理這段畫面邏輯會用到的資料或方法。
         const weekDataResult = getDynamicWeekData();
         labels = weekDataResult.labels;
 
         for (let i = 0; i < weekDataResult.fullDates.length; i++) {
+          // 說明：宣告 targetDateStr，集中處理這段畫面邏輯會用到的資料或方法。
           const targetDateStr = weekDataResult.fullDates[i];
           weights.push(await getWeightForDate(targetDateStr));
         }
         
       } else if (period === '月') {
         labels = ["W1", "W2", "W3", "W4(週別)"];
+        // 說明：宣告 weekDataResult，集中處理這段畫面邏輯會用到的資料或方法。
         const weekDataResult = getDynamicWeekData();
         let thisWeekSum = 0;
         let thisWeekCount = 0;
 
         for (let i = 0; i < weekDataResult.fullDates.length; i++) {
+          // 說明：宣告 w，集中處理這段畫面邏輯會用到的資料或方法。
           const w = await getWeightForDate(weekDataResult.fullDates[i]);
           if (w > 0) {
             thisWeekSum += w;
@@ -163,6 +206,7 @@ export default function WeightPicScreen() {
         weights = [0, 0, 0, 0];
       }
 
+      // 說明：宣告 computedBmis，集中處理這段畫面邏輯會用到的資料或方法。
       const computedBmis = weights.length > 0 ? calculateBmiDataset(weights, currentHeight) : [];
 
       setChartLabels(labels);
@@ -176,9 +220,11 @@ export default function WeightPicScreen() {
     }
   };
 
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
     fetchHistoryData(selectedPeriod);
 
+    // 說明：宣告 timer，集中處理這段畫面邏輯會用到的資料或方法。
     const timer = setInterval(() => {
       if (selectedPeriod === '周') {
         const { labels } = getDynamicWeekData();
@@ -189,12 +235,17 @@ export default function WeightPicScreen() {
     return () => clearInterval(timer);
   }, [selectedPeriod]);
 
+  // 說明：宣告 hasData，集中處理這段畫面邏輯會用到的資料或方法。
   const hasData = weightData.length > 0 && weightData.some(w => w > 0);
+  // 說明：宣告 isDataEmpty，集中處理這段畫面邏輯會用到的資料或方法。
   const isDataEmpty = !hasData;
 
+  // 說明：宣告 finalWeightData，集中處理這段畫面邏輯會用到的資料或方法。
   const finalWeightData = isDataEmpty ? new Array(chartLabels.length).fill(0) : weightData;
+  // 說明：宣告 finalBmiData，集中處理這段畫面邏輯會用到的資料或方法。
   const finalBmiData = isDataEmpty ? new Array(chartLabels.length).fill(0) : bmiData;
 
+  // 說明：回傳此頁的畫面結構；上方 state 和 handler 會在這裡被綁到 UI 元件上。
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
@@ -259,6 +310,7 @@ export default function WeightPicScreen() {
                         fillShadowGradientFromOpacity: 0,
                         fillShadowGradientToOpacity: 0,
                         formatYLabel: (yValue) => {
+                          // 說明：宣告 val，集中處理這段畫面邏輯會用到的資料或方法。
                           const val = parseFloat(yValue);
                           if (val <= 31) return "0";
                           if (val > 31 && val < 80) return "50";
@@ -327,7 +379,9 @@ export default function WeightPicScreen() {
                     // 如果這天沒有數據 (等於 0)，就優雅地跳過不顯示
                     if (weight <= 0) return null;
 
+                    // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
                     const cleanLabel = chartLabels[index]?.replace('\n(日期)', '');
+                    // 說明：宣告 currentBmi，集中處理這段畫面邏輯會用到的資料或方法。
                     const currentBmi = bmiData[index];
 
                     return (
@@ -351,6 +405,7 @@ export default function WeightPicScreen() {
   );
 }
 
+// 說明：集中定義本頁所有樣式，讓 JSX 只負責描述畫面結構。
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#E0E7DA' },
   scrollContent: { minHeight: '100%', backgroundColor: '#F6EFE5' },

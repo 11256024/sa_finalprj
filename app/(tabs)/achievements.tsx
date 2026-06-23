@@ -1,3 +1,5 @@
+// 檔案說明：成就頁面：計算使用者的連續紀錄、減重與商品審核成就，並顯示已解鎖/未解鎖清單。
+// 說明：下方 import 會把此頁需要的 React、React Native、路由、圖示與資料工具載入。
 import { Feather, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useFocusEffect } from 'expo-router';
@@ -5,8 +7,10 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Modal, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useDataContext } from '../../context/DataContext';
 
+// 說明：後端 API 的本機網址，fetch 會以這個位址呼叫 Django 服務。
 const API_URL = 'http://127.0.0.1:8000';
 
+// 說明：AchievementItem 定義這個頁面會使用的資料欄位與型別。
 interface AchievementItem {
   id: string;
   category: 'login' | 'weight' | 'product';
@@ -17,6 +21,7 @@ interface AchievementItem {
   unit: string;
 }
 
+// 說明：AchievementsScreen 是此檔案的主要畫面元件，負責組合狀態、資料處理與 UI。
 export default function AchievementsScreen() {
   const [activeTab, setActiveTab] = useState<'locked' | 'unlocked'>('locked');
   const [isLoading, setIsLoading] = useState(true);
@@ -36,24 +41,35 @@ export default function AchievementsScreen() {
   const [cachedProducts, setCachedProducts] = useState<any[]>([]);
 
   // 🎯 精準對齊 history.tsx 的台灣時間基準
+  // 說明：宣告 getBaseBusinessDate，集中處理這段畫面邏輯會用到的資料或方法。
   const getBaseBusinessDate = () => {
+    // 說明：宣告 now，集中處理這段畫面邏輯會用到的資料或方法。
     const now = new Date();
+    // 說明：宣告 utc，集中處理這段畫面邏輯會用到的資料或方法。
     const utc = now.getTime() + now.getTimezoneOffset() * 60000;
     return new Date(utc + 3600000 * 8); 
   };
 
   // 🎯 精準對齊 history.tsx 的 YYYY-MM-DD 補零格式
+  // 說明：宣告 getTaiwanDateString，集中處理這段畫面邏輯會用到的資料或方法。
   const getTaiwanDateString = (dateObj: Date) => {
+    // 說明：宣告 year，集中處理這段畫面邏輯會用到的資料或方法。
     const year = dateObj.getFullYear();
+    // 說明：宣告 month，集中處理這段畫面邏輯會用到的資料或方法。
     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+    // 說明：宣告 day，集中處理這段畫面邏輯會用到的資料或方法。
     const day = String(dateObj.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
   };
 
+  // 說明：讀取目前登入者 ID，之後用來組 AsyncStorage key 或呼叫會員 API。
   const getCurrentMemberId = async () => {
     try {
+      // 說明：宣告 userStr，集中處理這段畫面邏輯會用到的資料或方法。
       const userStr = await AsyncStorage.getItem('user');
+      // 說明：宣告 currentUser，集中處理這段畫面邏輯會用到的資料或方法。
       const currentUser = userStr ? JSON.parse(userStr) : null;
+      // 說明：宣告 memberId，集中處理這段畫面邏輯會用到的資料或方法。
       const memberId =
         currentUser?.id?.toString?.() ||
         (await AsyncStorage.getItem('current_user_id')) ||
@@ -66,6 +82,7 @@ export default function AchievementsScreen() {
   };
 
   // 核心數據計算邏輯 (完美融合本地與後端數據)
+  // 說明：根據目前輸入或紀錄重新計算畫面要顯示的數值。
   const calculateAndRender = (
     recordsPairs: [string, string | null][], 
     baseWeight: number, 
@@ -74,9 +91,11 @@ export default function AchievementsScreen() {
     profileWeight: number,
     backendSummaryData: Record<string, any> = {} // 新增：承接後端30天同步對齊
   ) => {
+    // 說明：宣告 baseDate，集中處理這段畫面邏輯會用到的資料或方法。
     const baseDate = getBaseBusinessDate();
     const last30Days: string[] = [];
     for (let i = 0; i < 30; i++) {
+      // 說明：宣告 d，集中處理這段畫面邏輯會用到的資料或方法。
       const d = new Date(baseDate.getTime());
       d.setDate(baseDate.getDate() - i);
       last30Days.push(getTaiwanDateString(d));
@@ -84,6 +103,7 @@ export default function AchievementsScreen() {
 
     // 將所有 AsyncStorage 的 key-value 轉成 Lookup 物件
     const recordsLookup: Record<string, string> = {};
+    // 說明：宣告 len，集中處理這段畫面邏輯會用到的資料或方法。
     const len = recordsPairs.length;
     for (let i = 0; i < len; i++) {
       if (recordsPairs[i][1]) {
@@ -94,11 +114,16 @@ export default function AchievementsScreen() {
     // 1. 🎯 點名統計：融合本地與後端雙重管道檢測
     let loginStreak = 0;
     for (let i = 0; i < 30; i++) {
+      // 說明：宣告 dateStr，集中處理這段畫面邏輯會用到的資料或方法。
       const dateStr = last30Days[i];
+      // 說明：宣告 foodKey，集中處理這段畫面邏輯會用到的資料或方法。
       const foodKey = `${currentUid}_food_record_${dateStr}`;
+      // 說明：宣告 weightKey，集中處理這段畫面邏輯會用到的資料或方法。
       const weightKey = `${currentUid}_weight_${dateStr}`;
       
+      // 說明：宣告 savedFoodStr，集中處理這段畫面邏輯會用到的資料或方法。
       const savedFoodStr = recordsLookup[foodKey];
+      // 說明：宣告 savedWeightStr，集中處理這段畫面邏輯會用到的資料或方法。
       const savedWeightStr = recordsLookup[weightKey];
       
       let hasWeightOrFood = false;
@@ -106,6 +131,7 @@ export default function AchievementsScreen() {
       // 管道 A：檢查本地飲食紀錄物件
       if (savedFoodStr) {
         try {
+          // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
           const parsed = JSON.parse(savedFoodStr);
           if (parsed.weight && parsed.weight.toString().trim() !== '' && parseFloat(parsed.weight) > 0) {
             hasWeightOrFood = true;
@@ -115,6 +141,7 @@ export default function AchievementsScreen() {
 
       // 管道 B：檢查本地獨立體重紀錄欄位
       if (!hasWeightOrFood && savedWeightStr && savedWeightStr.trim() !== '') {
+        // 說明：宣告 wVal，集中處理這段畫面邏輯會用到的資料或方法。
         const wVal = parseFloat(savedWeightStr);
         if (!isNaN(wVal) && wVal > 0) {
           hasWeightOrFood = true;
@@ -122,11 +149,13 @@ export default function AchievementsScreen() {
       }
 
       // 管道 C：整合檢查後端回傳的歷史數據（修正關鍵！）
+      // 說明：宣告 fromBackend，集中處理這段畫面邏輯會用到的資料或方法。
       const fromBackend = backendSummaryData[dateStr];
       if (!hasWeightOrFood && fromBackend) {
         if (fromBackend.weight && fromBackend.weight.toString().trim() !== '') {
           hasWeightOrFood = true;
         } else if (fromBackend.meals) {
+          // 說明：宣告 backendHasAny，集中處理這段畫面邏輯會用到的資料或方法。
           const backendHasAny =
             (fromBackend.meals['早餐']?.length || 0) +
             (fromBackend.meals['午餐']?.length || 0) +
@@ -150,17 +179,24 @@ export default function AchievementsScreen() {
     let foundLatest = false;
 
     for (let i = 0; i < 30; i++) {
+      // 說明：宣告 dateStr，集中處理這段畫面邏輯會用到的資料或方法。
       const dateStr = last30Days[i];
+      // 說明：宣告 foodKey，集中處理這段畫面邏輯會用到的資料或方法。
       const foodKey = `${currentUid}_food_record_${dateStr}`;
+      // 說明：宣告 weightKey，集中處理這段畫面邏輯會用到的資料或方法。
       const weightKey = `${currentUid}_weight_${dateStr}`;
 
+      // 說明：宣告 savedFoodStr，集中處理這段畫面邏輯會用到的資料或方法。
       const savedFoodStr = recordsLookup[foodKey];
+      // 說明：宣告 savedWeightStr，集中處理這段畫面邏輯會用到的資料或方法。
       const savedWeightStr = recordsLookup[weightKey];
 
       if (savedFoodStr) {
         try {
+          // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
           const parsed = JSON.parse(savedFoodStr);
           if (parsed.weight && parsed.weight.toString().trim() !== '') {
+            // 說明：宣告 w，集中處理這段畫面邏輯會用到的資料或方法。
             const w = parseFloat(parsed.weight);
             if (!isNaN(w) && w > 0) {
               latestDailyWeight = w;
@@ -172,6 +208,7 @@ export default function AchievementsScreen() {
       }
 
       if (savedWeightStr && savedWeightStr.trim() !== '') {
+        // 說明：宣告 w，集中處理這段畫面邏輯會用到的資料或方法。
         const w = parseFloat(savedWeightStr);
         if (!isNaN(w) && w > 0) {
           latestDailyWeight = w;
@@ -180,6 +217,7 @@ export default function AchievementsScreen() {
         }
       }
 
+      // 說明：宣告 fromBackend，集中處理這段畫面邏輯會用到的資料或方法。
       const fromBackend = backendSummaryData[dateStr];
       if (fromBackend && fromBackend.weight && parseFloat(fromBackend.weight) > 0) {
         latestDailyWeight = parseFloat(fromBackend.weight);
@@ -188,10 +226,12 @@ export default function AchievementsScreen() {
       }
     }
 
+    // 說明：根據目前輸入或紀錄重新計算畫面要顯示的數值。
     const currentWeightForCalc = foundLatest ? latestDailyWeight : profileWeight;
 
     let weightLoss = 0;
     if (baseWeight > 0 && currentWeightForCalc > 0) {
+      // 說明：宣告 rawDiff，集中處理這段畫面邏輯會用到的資料或方法。
       const rawDiff = currentWeightForCalc - baseWeight;
       if (rawDiff < 0) {
         weightLoss = Math.abs(rawDiff);
@@ -207,9 +247,12 @@ export default function AchievementsScreen() {
 
     // 商品審核數統計
     let pCount = 0;
+    // 說明：宣告 targetUidStr，集中處理這段畫面邏輯會用到的資料或方法。
     const targetUidStr = String(currentUid).trim();
+    // 說明：宣告 pLen，集中處理這段畫面邏輯會用到的資料或方法。
     const pLen = pList.length;
     for (let i = 0; i < pLen; i++) {
+      // 說明：宣告 item，集中處理這段畫面邏輯會用到的資料或方法。
       const item = pList[i];
       if (!item) continue;
       let cId = '';
@@ -218,6 +261,7 @@ export default function AchievementsScreen() {
       } else if (item.creator && typeof item.creator === 'object' && item.creator.id !== undefined) {
         cId = String(item.creator.id);
       }
+      // 說明：提供畫面下拉選單或清單渲染使用的固定資料。
       const itemStatus = item.status ? String(item.status).trim().toLowerCase() : '';
 
       if (itemStatus === 'approved' && cId === targetUidStr) {
@@ -225,6 +269,7 @@ export default function AchievementsScreen() {
       }
     }
 
+    // 說明：宣告 rules，集中處理這段畫面邏輯會用到的資料或方法。
     const rules = [
       { id: 'l1',  category: 'login' as const, title: '初來乍到 (連續紀錄體重 1 天)',  currentProgress: loginStreak, targetTotal: 1,  unit: '天' },
       { id: 'l3',  category: 'login' as const, title: '養成習慣 (連續紀錄體重 3 天)',  currentProgress: loginStreak, targetTotal: 3,  unit: '天' },
@@ -255,8 +300,10 @@ export default function AchievementsScreen() {
     });
   };
 
+  // 說明：把前端目前資料同步到後端或其他頁面共用狀態。
   const syncAchievementsToBackend = async (currentUid: string, items: AchievementItem[]) => {
     if (currentUid === 'guest') return;
+    // 說明：宣告 unlockedCodes，集中處理這段畫面邏輯會用到的資料或方法。
     const unlockedCodes = items.filter(it => it.unlocked).map(it => it.id);
     if (unlockedCodes.length === 0) return;
 
@@ -271,6 +318,7 @@ export default function AchievementsScreen() {
     }
   };
 
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useFocusEffect(
     useCallback(() => {
       let isMounted = true;
@@ -279,8 +327,10 @@ export default function AchievementsScreen() {
     }, [])
   );
 
+  // 說明：宣告 refreshAllData，集中處理這段畫面邏輯會用到的資料或方法。
   const refreshAllData = async (isMounted: boolean) => {
     try {
+      // 說明：宣告 currentUid，集中處理這段畫面邏輯會用到的資料或方法。
       const currentUid = await getCurrentMemberId();
 
       const [cachedStartWeightStr, cachedProfileWeightStr, fastCachedResults, cachedProductsStr] = await Promise.all([
@@ -301,16 +351,20 @@ export default function AchievementsScreen() {
       }
 
       // 抓取全量本地快取進行首輪處理
+      // 說明：宣告 allKeys，集中處理這段畫面邏輯會用到的資料或方法。
       const allKeys = await AsyncStorage.getAllKeys();
+      // 說明：宣告 matchedKeys，集中處理這段畫面邏輯會用到的資料或方法。
       const matchedKeys = allKeys.filter(k => 
         k.includes(`${currentUid}_food_record_`) || k.includes(`${currentUid}_weight_`)
       );
+      // 說明：宣告 recordsPairs，集中處理這段畫面邏輯會用到的資料或方法。
       const recordsPairs = await AsyncStorage.multiGet(matchedKeys);
 
       if (isMounted) {
         setCachedRecords(recordsPairs as [string, string | null][]);
         setCachedProducts(initialProducts);
         
+        // 說明：宣告 firstResult，集中處理這段畫面邏輯會用到的資料或方法。
         const firstResult = calculateAndRender(recordsPairs as [string, string | null][], startWeight, initialProducts, currentUid, profileWeight);
         setAchievements(firstResult);
         setAchievementStartWeight(startWeight);
@@ -318,6 +372,7 @@ export default function AchievementsScreen() {
       }
 
       // 🎯 核心補強：完美複製 history.tsx 的 30天後端同步邏輯 
+      // 說明：宣告 isRealMember，集中處理這段畫面邏輯會用到的資料或方法。
       const isRealMember = /^\d+$/.test(currentUid);
       if (isRealMember) {
         fetch(`${API_URL}/daily/summary/?member_id=${currentUid}&days=30`)
@@ -334,6 +389,7 @@ export default function AchievementsScreen() {
               });
               
               // 帶入後端三十天數據重新渲染！完美對齊 history 畫面！
+              // 說明：宣告 finalResult，集中處理這段畫面邏輯會用到的資料或方法。
               const finalResult = calculateAndRender(recordsPairs as [string, string | null][], startWeight, initialProducts, currentUid, profileWeight, backendRecordsByDate);
               setAchievements(finalResult);
               syncAchievementsToBackend(currentUid, finalResult);
@@ -349,7 +405,9 @@ export default function AchievementsScreen() {
         .then(async (profileData) => {
           if (!isMounted || !profileData?.success) return;
           
+          // 說明：宣告 backendAchieveStart，集中處理這段畫面邏輯會用到的資料或方法。
           const backendAchieveStart = profileData.member.achievement_start_weight ? parseFloat(profileData.member.achievement_start_weight) : null;
+          // 說明：宣告 backendInitialWeight，集中處理這段畫面邏輯會用到的資料或方法。
           const backendInitialWeight = profileData.member.initial_weight ? parseFloat(profileData.member.initial_weight) : null;
 
           let finalSyncWeight = startWeight;
@@ -363,6 +421,7 @@ export default function AchievementsScreen() {
             await AsyncStorage.setItem(`${currentUid}_achievement_start_weight`, String(finalSyncWeight));
             if (isMounted) {
               setAchievementStartWeight(finalSyncWeight);
+              // 說明：根據目前輸入或紀錄重新計算畫面要顯示的數值。
               const reCalc = calculateAndRender(recordsPairs as [string, string | null][], finalSyncWeight, initialProducts, currentUid, profileWeight);
               setAchievements(reCalc);
               syncAchievementsToBackend(currentUid, reCalc);
@@ -376,14 +435,17 @@ export default function AchievementsScreen() {
     }
   };
 
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
     if (lastWeightValue) {
+      // 說明：宣告 newW，集中處理這段畫面邏輯會用到的資料或方法。
       const newW = parseFloat(lastWeightValue);
       if (!isNaN(newW)) setCurrentWeight(newW);
     }
     refreshAllData(true); 
   }, [weightUpdateVersion]);
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleCancelReset = () => {
     if (inputWeight.trim() !== '') {
       setCancelModalVisible(true);
@@ -393,34 +455,46 @@ export default function AchievementsScreen() {
     }
   };
 
+  // 說明：依照關鍵字或頁籤條件篩選要顯示的資料。
   const filteredAchievements = achievements.filter((item) =>
     activeTab === 'unlocked' ? item.unlocked : !item.unlocked
   );
 
+  // 說明：宣告 unlockedCount，集中處理這段畫面邏輯會用到的資料或方法。
   const unlockedCount = achievements.filter((item) => item.unlocked).length;
+  // 說明：宣告 totalCount，集中處理這段畫面邏輯會用到的資料或方法。
   const totalCount = achievements.length;
 
+  // 說明：宣告 weightDiff，集中處理這段畫面邏輯會用到的資料或方法。
   const weightDiff = (currentWeight > 0 && achievementStartWeight > 0)
     ? parseFloat((currentWeight - achievementStartWeight).toFixed(1))
     : 0;
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleApplyTodayWeight = async () => {
     try {
+      // 說明：宣告 currentUid，集中處理這段畫面邏輯會用到的資料或方法。
       const currentUid = await getCurrentMemberId();
+      // 說明：宣告 baseDate，集中處理這段畫面邏輯會用到的資料或方法。
       const baseDate = getBaseBusinessDate();
+      // 說明：宣告 todayStr，集中處理這段畫面邏輯會用到的資料或方法。
       const todayStr = getTaiwanDateString(baseDate);
       
       let todayWeight = 0;
+      // 說明：宣告 foodVal，集中處理這段畫面邏輯會用到的資料或方法。
       const foodVal = await AsyncStorage.getItem(`${currentUid}_food_record_${todayStr}`);
+      // 說明：宣告 weightVal，集中處理這段畫面邏輯會用到的資料或方法。
       const weightVal = await AsyncStorage.getItem(`${currentUid}_weight_${todayStr}`);
 
       if (foodVal) {
         try {
+          // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
           const parsed = JSON.parse(foodVal);
           if (parsed.weight) todayWeight = parseFloat(parsed.weight);
         } catch {}
       }
       if (todayWeight === 0 && weightVal) {
+        // 說明：宣告 wVal，集中處理這段畫面邏輯會用到的資料或方法。
         const wVal = parseFloat(weightVal);
         if (!isNaN(wVal)) todayWeight = wVal;
       }
@@ -435,14 +509,17 @@ export default function AchievementsScreen() {
     }
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleConfirmWeightChange = async () => {
     try {
+      // 說明：宣告 newWeight，集中處理這段畫面邏輯會用到的資料或方法。
       const newWeight = parseFloat(inputWeight);
       if (isNaN(newWeight) || newWeight <= 0) {
         Alert.alert('錯誤', '請輸入有效的體重數值');
         return;
       }
 
+      // 說明：宣告 currentUid，集中處理這段畫面邏輯會用到的資料或方法。
       const currentUid = await getCurrentMemberId();
       if (currentUid === 'guest') {
         Alert.alert('錯誤', '請先登入');
@@ -452,6 +529,7 @@ export default function AchievementsScreen() {
       await AsyncStorage.setItem(`${currentUid}_achievement_start_weight`, String(newWeight));
       setAchievementStartWeight(newWeight);
       
+      // 說明：宣告 updatedResult，集中處理這段畫面邏輯會用到的資料或方法。
       const updatedResult = calculateAndRender(cachedRecords, newWeight, cachedProducts, currentUid, currentWeight);
       setAchievements(updatedResult);
       syncAchievementsToBackend(currentUid, updatedResult);
@@ -476,6 +554,7 @@ export default function AchievementsScreen() {
     }
   };
 
+  // 說明：回傳此頁的畫面結構；上方 state 和 handler 會在這裡被綁到 UI 元件上。
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.mainContent}>
@@ -670,6 +749,7 @@ export default function AchievementsScreen() {
   );
 }
 
+// 說明：集中定義本頁所有樣式，讓 JSX 只負責描述畫面結構。
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F6EFE5' },
   mainContent: { flex: 1, paddingHorizontal: 80, paddingTop: 10 },

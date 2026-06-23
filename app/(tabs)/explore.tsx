@@ -1,3 +1,5 @@
+// 檔案說明：Explore 範例頁面：保留 Expo template 的說明內容與摺疊區塊。
+// 說明：下方 import 會把此頁需要的 React、React Native、路由、圖示與資料工具載入。
 import { Image } from 'expo-image';
 import { Platform, StyleSheet } from 'react-native';
 
@@ -9,7 +11,9 @@ import { ThemedView } from '@/components/themed-view';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Fonts } from '@/constants/theme';
 
+// 說明：TabTwoScreen 是此檔案的主要畫面元件，負責組合狀態、資料處理與 UI。
 export default function TabTwoScreen() {
+  // 說明：回傳此頁的畫面結構；上方 state 和 handler 會在這裡被綁到 UI 元件上。
   return (
     <ParallaxScrollView
       headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
@@ -98,6 +102,7 @@ export default function TabTwoScreen() {
   );
 }
 
+// 說明：集中定義本頁所有樣式，讓 JSX 只負責描述畫面結構。
 const styles = StyleSheet.create({
   headerImage: {
     color: '#808080',

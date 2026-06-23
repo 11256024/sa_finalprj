@@ -1,10 +1,15 @@
+// 檔案說明：管理者商品審核頁面：讓管理者新增官方商品、審核使用者送出的商品，以及刪除商品。
+// 說明：下方 import 會把此頁需要的 React、React Native、路由、圖示與資料工具載入。
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, SafeAreaView, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 
+// 說明：後端 API 的本機網址，fetch 會以這個位址呼叫 Django 服務。
 const API_URL = 'http://127.0.0.1:8000';
+// 說明：後端 WebSocket 位址，用來接收商品審核資料的即時刷新通知。
 const WS_URL = 'ws://127.0.0.1:8000/ws/admin-reviews/'; 
 
+// 說明：Product 定義這個頁面會使用的資料欄位與型別。
 interface Product {
   id: string;
   name: string;
@@ -16,7 +21,9 @@ interface Product {
   creatorUsername?: string;
 }
 
+// 說明：統一解析後端回應，避免後端不是 JSON 時讓錯誤訊息太難懂。
 const parseApiResponse = async (response: Response) => {
+  // 說明：宣告 text，集中處理這段畫面邏輯會用到的資料或方法。
   const text = await response.text();
   try {
     return text ? JSON.parse(text) : {};
@@ -25,6 +32,7 @@ const parseApiResponse = async (response: Response) => {
   }
 };
 
+// 說明：把後端回傳欄位轉成前端畫面固定使用的資料格式。
 const getCreatorIdFromApi = (item: any) => {
   if (item.creator_id !== null && item.creator_id !== undefined) return String(item.creator_id);
   if (item.creator && typeof item.creator === 'object' && item.creator.id !== undefined) return String(item.creator.id);
@@ -32,6 +40,7 @@ const getCreatorIdFromApi = (item: any) => {
   return '';
 };
 
+// 說明：把後端回傳欄位轉成前端畫面固定使用的資料格式。
 const getCreatorRoleFromApi = (item: any) => {
   if (item.creator_role) return String(item.creator_role);
   if (item.creatorRole) return String(item.creatorRole);
@@ -39,6 +48,7 @@ const getCreatorRoleFromApi = (item: any) => {
   return '';
 };
 
+// 說明：把後端回傳欄位轉成前端畫面固定使用的資料格式。
 const getCreatorUsernameFromApi = (item: any) => {
   if (item.creator_username) return String(item.creator_username);
   if (item.creatorUsername) return String(item.creatorUsername);
@@ -46,6 +56,7 @@ const getCreatorUsernameFromApi = (item: any) => {
   return '';
 };
 
+// 說明：把後端回傳欄位轉成前端畫面固定使用的資料格式。
 const mapProductFromApi = (item: any): Product => ({
   id: String(item.id),
   name: item.name || '',
@@ -57,17 +68,23 @@ const mapProductFromApi = (item: any): Product => ({
   creatorUsername: getCreatorUsernameFromApi(item),
 });
 
+// 說明：宣告 getCreatorSourceText，集中處理這段畫面邏輯會用到的資料或方法。
 const getCreatorSourceText = (item: Product) => {
+  // 說明：宣告 creatorId，集中處理這段畫面邏輯會用到的資料或方法。
   const creatorId = item.creatorId || 'guest';
+  // 說明：宣告 creatorRole，集中處理這段畫面邏輯會用到的資料或方法。
   const creatorRole = String(item.creatorRole || '').toLowerCase();
+  // 說明：宣告 roleText，集中處理這段畫面邏輯會用到的資料或方法。
   const roleText = creatorRole === 'admin' ? '管理者' : '使用者';
   return `商品來源：${creatorId} (${roleText})`;
 };
 
+// 說明：控制提示訊息或畫面顯示條件。
 const showMessage = (message: string) => {
   if (Platform.OS === 'web') window.alert(message);
 };
 
+// 說明：AdminReviewScreen 是此檔案的主要畫面元件，負責組合狀態、資料處理與 UI。
 export default function AdminReviewScreen() {
   
   const [currentUserId, setCurrentUserId] = useState('');
@@ -92,16 +109,22 @@ export default function AdminReviewScreen() {
   const [cancelWarningVisible, setCancelWarningVisible] = useState(false);
   const [errors, setErrors] = useState({ name: '', unit: '', calories: '' });
 
+  // 說明：保存 isFetchingRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const isFetchingRef = useRef(false);
+  // 說明：保存 wsRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const wsRef = useRef<WebSocket | null>(null);
 
+  // 說明：保存 unitInputRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const unitInputRef = useRef<TextInput>(null);
+  // 說明：保存 caloriesInputRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const caloriesInputRef = useRef<TextInput>(null);
 
+  // 說明：整理顯示文字，讓資料在畫面上比較乾淨易讀。
   const formatDisplayInfo = (name: string, unit: string) => {
     let cleanName = name ? name.trim() : '';
     let cleanUnit = unit ? unit.trim() : '';
     if (cleanName.includes('/') || cleanName.includes(cleanUnit)) {
+      // 說明：宣告 parts，集中處理這段畫面邏輯會用到的資料或方法。
       const parts = cleanName.split('/');
       if (parts.length > 1) {
         cleanName = parts[0].trim();
@@ -110,6 +133,7 @@ export default function AdminReviewScreen() {
       }
     }
     if (cleanUnit.includes('/')) {
+      // 說明：宣告 unitParts，集中處理這段畫面邏輯會用到的資料或方法。
       const unitParts = cleanUnit.split('/');
       if (unitParts[0].trim() === unitParts[1].trim()) {
         cleanUnit = unitParts[0].trim();
@@ -118,10 +142,14 @@ export default function AdminReviewScreen() {
     return { displayName: cleanName || '未命名商品', displayUnit: cleanUnit };
   };
 
+  // 說明：讀取目前登入者 ID，之後用來組 AsyncStorage key 或呼叫會員 API。
   const getCurrentAdminId = async () => {
     try {
+      // 說明：宣告 userStr，集中處理這段畫面邏輯會用到的資料或方法。
       const userStr = await AsyncStorage.getItem('user');
+      // 說明：宣告 currentUser，集中處理這段畫面邏輯會用到的資料或方法。
       const currentUser = userStr ? JSON.parse(userStr) : null;
+      // 說明：宣告 savedId，集中處理這段畫面邏輯會用到的資料或方法。
       const savedId = currentUser?.id?.toString?.() || await AsyncStorage.getItem('current_user_id') || '';
       return /^\d+$/.test(savedId) ? savedId : '';
     } catch (e) {
@@ -129,6 +157,7 @@ export default function AdminReviewScreen() {
     }
   };
 
+  // 說明：從本機快取或後端載入資料，載入完成後更新畫面狀態。
   const fetchGlobalProducts = async (isBackground = false) => {
     if (isFetchingRef.current) return; 
     isFetchingRef.current = true;
@@ -139,6 +168,7 @@ export default function AdminReviewScreen() {
     }
 
     try {
+      // 說明：宣告 t，集中處理這段畫面邏輯會用到的資料或方法。
       const t = Date.now();
       const [approvedRes, pendingRes, rejectedRes] = await Promise.all([
         fetch(`${API_URL}/products/?t=${t}`),
@@ -146,21 +176,27 @@ export default function AdminReviewScreen() {
         fetch(`${API_URL}/products/rejected/?t=${t}`),
       ]);
 
+      // 說明：宣告 approvedData，集中處理這段畫面邏輯會用到的資料或方法。
       const approvedData = await parseApiResponse(approvedRes);
+      // 說明：宣告 pendingData，集中處理這段畫面邏輯會用到的資料或方法。
       const pendingData = await parseApiResponse(pendingRes);
+      // 說明：宣告 rejectedData，集中處理這段畫面邏輯會用到的資料或方法。
       const rejectedData = await parseApiResponse(rejectedRes);
 
       if (!approvedRes.ok || !pendingRes.ok || !rejectedRes.ok) throw new Error('讀取失敗');
 
+      // 說明：宣告 mergedMap，集中處理這段畫面邏輯會用到的資料或方法。
       const mergedMap = new Map<string, Product>();
       (Array.isArray(pendingData) ? pendingData : []).forEach(item => mergedMap.set(String(item.id), mapProductFromApi(item)));
       (Array.isArray(rejectedData) ? rejectedData : []).forEach(item => mergedMap.set(String(item.id), mapProductFromApi(item)));
       (Array.isArray(approvedData) ? approvedData : []).forEach(item => mergedMap.set(String(item.id), mapProductFromApi(item)));
 
+      // 說明：宣告 mergedList，集中處理這段畫面邏輯會用到的資料或方法。
       const mergedList = Array.from(mergedMap.values());
 
       setAllProducts(prev => {
         return mergedList.map(newItem => {
+          // 說明：宣告 existing，集中處理這段畫面邏輯會用到的資料或方法。
           const existing = prev.find(p => p.id === newItem.id);
           if (existing && existing.status !== 'pending' && newItem.status === 'pending') {
             return existing;
@@ -178,17 +214,21 @@ export default function AdminReviewScreen() {
     }
   };
 
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
     getCurrentAdminId().then(id => { if (id) setCurrentUserId(id); });
     fetchGlobalProducts(false);
 
+    // 說明：宣告 connectWebSocket，集中處理這段畫面邏輯會用到的資料或方法。
     const connectWebSocket = () => {
       console.log('正在建立即時刷新 WebSocket 連線...');
+      // 說明：宣告 ws，集中處理這段畫面邏輯會用到的資料或方法。
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
 
       ws.onmessage = (event) => {
         try {
+          // 說明：宣告 data，集中處理這段畫面邏輯會用到的資料或方法。
           const data = JSON.parse(event.data);
           if (data.type === 'REFRESH_DATA') {
             fetchGlobalProducts(true); 
@@ -207,8 +247,10 @@ export default function AdminReviewScreen() {
 
     connectWebSocket();
 
+    // 說明：宣告 refreshInterval，集中處理這段畫面邏輯會用到的資料或方法。
     const refreshInterval = 3000;
 
+    // 說明：宣告 pollingTimer，集中處理這段畫面邏輯會用到的資料或方法。
     const pollingTimer = setInterval(() => {
       fetchGlobalProducts(true); 
     }, refreshInterval);
@@ -219,7 +261,9 @@ export default function AdminReviewScreen() {
     };
   }, [activeTab]);
 
+  // 說明：依照關鍵字或頁籤條件篩選要顯示的資料。
   const getFilteredProducts = () => {
+    // 說明：宣告 sortedProducts，集中處理這段畫面邏輯會用到的資料或方法。
     const sortedProducts = [...allProducts].sort((a, b) => Number(b.id) - Number(a.id));
     if (activeTab === 'list') return sortedProducts.filter(p => p.status === 'approved');
     if (activeTab === 'user_pending') return sortedProducts.filter(p => p.status === 'pending' && p.creatorId !== currentUserId);
@@ -231,18 +275,22 @@ export default function AdminReviewScreen() {
     return [];
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleNumberChange = (text: string, setter: (val: string) => void, field: 'unit' | 'calories') => {
+    // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
     const cleanText = text.replace(/[^0-9]/g, '');
     setter(cleanText);
     if (cleanText) setErrors(prev => ({ ...prev, [field]: '' }));
   };
 
+  // 說明：關閉彈窗並把相關輸入狀態恢復成初始值。
   const closeAddModal = () => {
     setNewProdName(''); setNewProdUnitValue(''); setNewProdCalories('');
     setErrors({ name: '', unit: '', calories: '' });
     setCancelWarningVisible(false); setAddModalVisible(false);       
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleCancelPress = () => {
     if (newProdName.trim() || newProdUnitValue.trim() || newProdCalories.trim()) {
       setCancelWarningVisible(true);
@@ -251,21 +299,26 @@ export default function AdminReviewScreen() {
     }
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleAddProduct = async () => {
     let hasError = false;
+    // 說明：宣告 newErrors，集中處理這段畫面邏輯會用到的資料或方法。
     const newErrors = { name: '', unit: '', calories: '' };
     if (!newProdName.trim()) { newErrors.name = '請輸入商品名稱'; hasError = true; }
     if (!newProdUnitValue.trim()) { newErrors.unit = '請輸入單位數量'; hasError = true; }
     if (!newProdCalories.trim()) { newErrors.calories = '請輸入熱量'; hasError = true; }
     if (hasError) { setErrors(newErrors); return; }
 
+    // 說明：宣告 finalUnitString，集中處理這段畫面邏輯會用到的資料或方法。
     const finalUnitString = `${newProdUnitValue.trim()}${unitType === 'g' ? '克' : 'ml'}`;
+    // 說明：宣告 adminId，集中處理這段畫面邏輯會用到的資料或方法。
     const adminId = await getCurrentAdminId();
     if (!adminId) return;
 
     closeAddModal();
 
     try {
+      // 說明：宣告 response，集中處理這段畫面邏輯會用到的資料或方法。
       const response = await fetch(`${API_URL}/products/add/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -282,19 +335,23 @@ export default function AdminReviewScreen() {
     }
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleExecuteAction = async () => {
     if (!selectedItem) return;
     
     const { id, action, name, unit } = selectedItem; 
     setConfirmModalVisible(false);
 
+    // 說明：宣告 targetStatus，集中處理這段畫面邏輯會用到的資料或方法。
     const targetStatus = action === 'approve' ? 'approved' : 'rejected';
     setAllProducts(prev => prev.map(p => p.id === id ? { ...p, status: targetStatus } : p));
     showMessage(action === 'approve' ? `✅ 商品「${name} / ${unit}」已核准入庫！` : `❌ 商品「${name} / ${unit}」已拒絕退件！`);
 
     try {
+      // 說明：宣告 adminId，集中處理這段畫面邏輯會用到的資料或方法。
       const adminId = await getCurrentAdminId();
       if (!adminId) return;
+      // 說明：宣告 response，集中處理這段畫面邏輯會用到的資料或方法。
       const response = await fetch(`${API_URL}/products/${id}/${action === 'approve' ? 'approve' : 'reject'}/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -308,6 +365,7 @@ export default function AdminReviewScreen() {
     }
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleExecuteDelete = async () => {
     if (!deleteItem) return;
     setDeleteModalVisible(false);
@@ -318,8 +376,10 @@ export default function AdminReviewScreen() {
     showMessage('🗑️ 商品已成功刪除！');
 
     try {
+      // 說明：宣告 adminId，集中處理這段畫面邏輯會用到的資料或方法。
       const adminId = await getCurrentAdminId();
       if (!adminId) return;
+      // 說明：宣告 response，集中處理這段畫面邏輯會用到的資料或方法。
       const response = await fetch(`${API_URL}/products/${id}/delete/`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -331,8 +391,10 @@ export default function AdminReviewScreen() {
     }
   };
 
+  // 說明：存放已經套用篩選條件、準備顯示在畫面上的資料。
   const displayedList = getFilteredProducts();
 
+  // 說明：回傳此頁的畫面結構；上方 state 和 handler 會在這裡被綁到 UI 元件上。
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -533,6 +595,7 @@ export default function AdminReviewScreen() {
   );
 }
 
+// 說明：集中定義本頁所有樣式，讓 JSX 只負責描述畫面結構。
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F1F5F9' },
   scrollContent: { paddingVertical: 30, alignItems: 'center' },

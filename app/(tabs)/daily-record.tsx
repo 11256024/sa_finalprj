@@ -1,12 +1,17 @@
+// 檔案說明：每日紀錄頁面：記錄今日體重、三餐飲食與熱量，並同步到本機快取及後端。
+// 說明：下方 import 會把此頁需要的 React、React Native、路由、圖示與資料工具載入。
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { usePathname, useRouter } from 'expo-router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useDataContext } from '../../context/DataContext';
 
+// 說明：後端 API 的本機網址，fetch 會以這個位址呼叫 Django 服務。
 const API_URL = 'http://127.0.0.1:8000';
 
+// 說明：統一解析後端回應，避免後端不是 JSON 時讓錯誤訊息太難懂。
 const parseApiResponse = async (response: Response) => {
+  // 說明：宣告 text，集中處理這段畫面邏輯會用到的資料或方法。
   const text = await response.text();
   try {
     return text ? JSON.parse(text) : {};
@@ -15,11 +20,15 @@ const parseApiResponse = async (response: Response) => {
   }
 };
 
+// 說明：讀取目前登入者 ID，之後用來組 AsyncStorage key 或呼叫會員 API。
 const getCurrentMemberId = async () => {
   try {
+    // 說明：宣告 userStr，集中處理這段畫面邏輯會用到的資料或方法。
     const userStr = await AsyncStorage.getItem('user');
+    // 說明：宣告 currentUser，集中處理這段畫面邏輯會用到的資料或方法。
     const currentUser = userStr ? JSON.parse(userStr) : null;
 
+    // 說明：宣告 memberId，集中處理這段畫面邏輯會用到的資料或方法。
     const memberId =
       currentUser?.id?.toString?.() ||
       (await AsyncStorage.getItem('current_user_id')) ||
@@ -32,6 +41,7 @@ const getCurrentMemberId = async () => {
   }
 };
 
+// 說明：把後端回傳欄位轉成前端畫面固定使用的資料格式。
 const mapProductFromApi = (item: any): Product => {
   return {
     id: String(item.id),
@@ -48,6 +58,7 @@ const mapProductFromApi = (item: any): Product => {
   };
 };
 
+// 說明：FoodItem 定義這個頁面會使用的資料欄位與型別。
 interface FoodItem {
   id: string;
   name: string;      
@@ -56,6 +67,7 @@ interface FoodItem {
   servings?: number;       
 }
 
+// 說明：Product 定義這個頁面會使用的資料欄位與型別。
 interface Product {
   id: string;
   name: string;
@@ -65,21 +77,28 @@ interface Product {
   creatorId?: string;
 }
 
+// 說明：DailyRecordScreen 是此檔案的主要畫面元件，負責組合狀態、資料處理與 UI。
 export default function DailyRecordScreen() {
+  // 說明：宣告 router，集中處理這段畫面邏輯會用到的資料或方法。
   const router = useRouter();
+  // 說明：宣告 pathname，集中處理這段畫面邏輯會用到的資料或方法。
   const pathname = usePathname(); 
   const { updateDailyRecord, updateWeight, weightUpdateVersion, lastWeightValue } = useDataContext();
 
   const [userId, setUserId] = useState<string>('guest'); 
 
+  // 說明：宣告 getTaiwanDateString，集中處理這段畫面邏輯會用到的資料或方法。
   const getTaiwanDateString = () => {
+    // 說明：宣告 now，集中處理這段畫面邏輯會用到的資料或方法。
     const now = new Date();
+    // 說明：整理顯示文字，讓資料在畫面上比較乾淨易讀。
     const formatter = new Intl.DateTimeFormat('zh-TW', {
       timeZone: 'Asia/Taipei',
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
     });
+    // 說明：宣告 parts，集中處理這段畫面邏輯會用到的資料或方法。
     const parts = formatter.format(now).split('/');
     return `${parts[0]}-${parts[1]}-${parts[2]}`;
   };
@@ -123,31 +142,41 @@ export default function DailyRecordScreen() {
     晚餐: [], 
   });
 
+  // 說明：保存 stateRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const stateRef = useRef({ weight, bmi, bmiStatus, mealBlocks, currentDate, userId });
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
     stateRef.current = { weight, bmi, bmiStatus, mealBlocks, currentDate, userId };
   }, [weight, bmi, bmiStatus, mealBlocks, currentDate, userId]);
 
+  // 說明：保存 weightSyncTimerRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const weightSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
+    // 說明：從本機快取或後端載入資料，載入完成後更新畫面狀態。
     const initUserAndLoad = async () => {
       try {
+        // 說明：宣告 finalId，集中處理這段畫面邏輯會用到的資料或方法。
         const finalId = await getCurrentMemberId();
         setUserId(finalId);
         
+        // 說明：宣告 todayStr，集中處理這段畫面邏輯會用到的資料或方法。
         const todayStr = getTaiwanDateString();
         setCurrentDate(todayStr);
 
+        // 說明：宣告 cachedHeight，集中處理這段畫面邏輯會用到的資料或方法。
         const cachedHeight = await loadCachedMemberHeight(finalId);
         await loadDataByDate(todayStr, finalId, cachedHeight);
 
+        // 說明：宣告 memberHeight，集中處理這段畫面邏輯會用到的資料或方法。
         const memberHeight = await loadMemberHeight(finalId);
         if (memberHeight !== cachedHeight) {
           await loadDataByDate(todayStr, finalId, memberHeight);
         }
       } catch (e) {
         console.error('初始化失敗', e);
+        // 說明：宣告 todayStr，集中處理這段畫面邏輯會用到的資料或方法。
         const todayStr = getTaiwanDateString();
         await loadDataByDate(todayStr, 'guest');
       }
@@ -155,6 +184,7 @@ export default function DailyRecordScreen() {
     initUserAndLoad();
   }, [pathname]);
 
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
     if (lastWeightValue && lastWeightValue !== weight) {
       setWeight(lastWeightValue);
@@ -168,13 +198,17 @@ export default function DailyRecordScreen() {
     }
   }, [weightUpdateVersion]);
 
+  // 說明：從本機快取或後端載入資料，載入完成後更新畫面狀態。
   const loadApprovedProducts = async () => {
     try {
       setIsLoadingProducts(true);
+      // 說明：宣告 resp，集中處理這段畫面邏輯會用到的資料或方法。
       const resp = await fetch(`${API_URL}/products/`);
       if (!resp.ok) return;
+      // 說明：宣告 data，集中處理這段畫面邏輯會用到的資料或方法。
       const data = await resp.json();
       if (!Array.isArray(data)) return;
+      // 說明：宣告 mappedProducts，集中處理這段畫面邏輯會用到的資料或方法。
       const mappedProducts = data.map(mapProductFromApi).filter((item) => item.status === 'approved');
       setAllProducts(mappedProducts);
     } catch (error) {
@@ -184,17 +218,21 @@ export default function DailyRecordScreen() {
     }
   };
 
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
     loadApprovedProducts();
   }, []);
 
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
     if (inputItemName.trim() !== '' && allProducts && allProducts.length > 0) {
       filterProductSuggestions(inputItemName);
     }
   }, [allProducts]);
 
+  // 說明：依照關鍵字或頁籤條件篩選要顯示的資料。
   const filterProductSuggestions = (keyword: string) => {
+    // 說明：宣告 trimmed，集中處理這段畫面邏輯會用到的資料或方法。
     const trimmed = keyword.trim().toLowerCase();
     if (!trimmed || !allProducts) {
       setProductSuggestions([]);
@@ -207,8 +245,11 @@ export default function DailyRecordScreen() {
     );
   };
 
+  // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
   const parseProductUnit = (unit: string) => {
+    // 說明：宣告 normalized，集中處理這段畫面邏輯會用到的資料或方法。
     const normalized = String(unit || '').trim();
+    // 說明：宣告 match，集中處理這段畫面邏輯會用到的資料或方法。
     const match = normalized.match(/^(\d+(?:\.\d+)?)\s*(克|g|ml)$/i);
     if (match) {
       return {
@@ -222,15 +263,18 @@ export default function DailyRecordScreen() {
     } as const;
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleInputItemNameChange = (text: string) => {
     setInputItemName(text);
     setIsSuggestionDropdownOpen(text.trim() !== '');
     filterProductSuggestions(text);
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleSelectProductSuggestion = (product: Product) => {
     setInputItemName(product.name);
     setInputCalories(String(product.calories));
+    // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
     const parsedUnit = parseProductUnit(product.unit);
     setInputUnitValue(parsedUnit.value);
     setSelectedUnitType(parsedUnit.type);
@@ -238,16 +282,24 @@ export default function DailyRecordScreen() {
     setIsSuggestionDropdownOpen(false);
   };
 
+  // 說明：宣告 isSearchingProducts，集中處理這段畫面邏輯會用到的資料或方法。
   const isSearchingProducts = inputItemName.trim() !== '' && isLoadingProducts;
+  // 說明：控制提示訊息或畫面顯示條件。
   const showNoProductFound = !isLoadingProducts && inputItemName.trim() !== '' && productSuggestions.length === 0;
+  // 說明：控制提示訊息或畫面顯示條件。
   const showSuggestionDropdown = isSuggestionDropdownOpen && (isSearchingProducts || productSuggestions.length > 0 || showNoProductFound);
 
+  // 說明：從本機快取或後端載入資料，載入完成後更新畫面狀態。
   const loadDataByDate = async (dateStr: string, currentUid: string = userId, heightForBmi: number | null = userHeight) => {
     try {
+      // 說明：宣告 savedDataStr，集中處理這段畫面邏輯會用到的資料或方法。
       const savedDataStr = await AsyncStorage.getItem(`${currentUid}_food_record_${dateStr}`);
 
+      // 說明：宣告 normalizeMeals，集中處理這段畫面邏輯會用到的資料或方法。
       const normalizeMeals = (raw: any) => {
+        // 說明：宣告 safe，集中處理這段畫面邏輯會用到的資料或方法。
         const safe = raw && typeof raw === 'object' ? raw : {};
+        // 說明：宣告 pickArray，集中處理這段畫面邏輯會用到的資料或方法。
         const pickArray = (...keys: string[]) => {
           for (const k of keys) {
             if (Array.isArray(safe[k])) return safe[k];
@@ -262,11 +314,15 @@ export default function DailyRecordScreen() {
       };
 
       if (savedDataStr) {
+        // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
         const parsed = JSON.parse(savedDataStr);
+        // 說明：宣告 normalizedMeals，集中處理這段畫面邏輯會用到的資料或方法。
         const normalizedMeals = normalizeMeals(parsed.mealBlocks);
 
         if (parsed.hasDailyWeight === true) {
+          // 說明：宣告 savedWeight，集中處理這段畫面邏輯會用到的資料或方法。
           const savedWeight = parsed.weight || '';
+          // 說明：宣告 bmiResult，集中處理這段畫面邏輯會用到的資料或方法。
           const bmiResult = calculateBmiByHeight(savedWeight, heightForBmi);
 
           setWeight(savedWeight);
@@ -288,19 +344,25 @@ export default function DailyRecordScreen() {
 
       if (/^\d+$/.test(currentUid)) {
         try {
+          // 說明：宣告 resp，集中處理這段畫面邏輯會用到的資料或方法。
           const resp = await fetch(`${API_URL}/daily/summary/?member_id=${currentUid}&days=30`);
           if (resp.ok) {
+            // 說明：宣告 data，集中處理這段畫面邏輯會用到的資料或方法。
             const data = await resp.json();
+            // 說明：宣告 todayRow，集中處理這段畫面邏輯會用到的資料或方法。
             const todayRow = Array.isArray(data?.records)
               ? data.records.find((r: any) => r?.date === dateStr)
               : null;
             if (todayRow) {
+              // 說明：宣告 backendMeals，集中處理這段畫面邏輯會用到的資料或方法。
               const backendMeals = normalizeMeals(todayRow.meals);
+              // 說明：宣告 backendHasAny，集中處理這段畫面邏輯會用到的資料或方法。
               const backendHasAny =
                 backendMeals.早餐.length + backendMeals.午餐.length + backendMeals.晚餐.length > 0;
 
               if (backendHasAny) {
                 setMealBlocks((prev) => {
+                  // 說明：宣告 merged，集中處理這段畫面邏輯會用到的資料或方法。
                   const merged = {
                     早餐: prev.早餐.length ? prev.早餐 : backendMeals.早餐,
                     午餐: prev.午餐.length ? prev.午餐 : backendMeals.午餐,
@@ -317,7 +379,9 @@ export default function DailyRecordScreen() {
               }
 
               if (todayRow.weight && (!stateRef.current.weight || stateRef.current.weight === '')) {
+                // 說明：宣告 backendWeight，集中處理這段畫面邏輯會用到的資料或方法。
                 const backendWeight = String(todayRow.weight);
+                // 說明：宣告 bmiResult，集中處理這段畫面邏輯會用到的資料或方法。
                 const bmiResult = calculateBmiByHeight(backendWeight, heightForBmi);
                 setWeight(backendWeight);
                 setBmi(bmiResult.calculatedBmi);
@@ -334,6 +398,7 @@ export default function DailyRecordScreen() {
     }
   };
 
+  // 說明：宣告 saveDataToStorage，集中處理這段畫面邏輯會用到的資料或方法。
   const saveDataToStorage = async (
     currentWeight: string, 
     currentBmi: string, 
@@ -341,11 +406,15 @@ export default function DailyRecordScreen() {
     currentMeals: typeof mealBlocks
   ) => {
     try {
+      // 說明：宣告 effectiveUserId，集中處理這段畫面邏輯會用到的資料或方法。
       const effectiveUserId = stateRef.current.userId || userId;
+      // 說明：宣告 effectiveDate，集中處理這段畫面邏輯會用到的資料或方法。
       const effectiveDate = stateRef.current.currentDate || currentDate;
 
+      // 說明：宣告 hasDailyWeight，集中處理這段畫面邏輯會用到的資料或方法。
       const hasDailyWeight = currentWeight.trim() !== '';
 
+      // 說明：宣告 dataToSave，集中處理這段畫面邏輯會用到的資料或方法。
       const dataToSave = {
         weight: currentWeight,
         bmi: currentBmi,
@@ -371,6 +440,7 @@ export default function DailyRecordScreen() {
     }
   };
 
+  // 說明：把前端目前資料同步到後端或其他頁面共用狀態。
   const syncDayToBackend = async (
     currentWeight: string,
     currentMeals: typeof mealBlocks,
@@ -378,12 +448,15 @@ export default function DailyRecordScreen() {
     targetDate?: string,
   ) => {
     try {
+      // 說明：宣告 effectiveUserId，集中處理這段畫面邏輯會用到的資料或方法。
       const effectiveUserId = targetUserId || stateRef.current.userId || userId;
+      // 說明：宣告 effectiveDate，集中處理這段畫面邏輯會用到的資料或方法。
       const effectiveDate = targetDate || stateRef.current.currentDate || currentDate;
 
       if (!effectiveUserId || effectiveUserId === 'guest') return;
       if (!/^\d+$/.test(effectiveUserId)) return;
 
+      // 說明：宣告 meals，集中處理這段畫面邏輯會用到的資料或方法。
       const meals = {
         breakfast: currentMeals.早餐.map((it) => ({ name: it.name, calories: it.calories })),
         lunch: currentMeals.午餐.map((it) => ({ name: it.name, calories: it.calories })),
@@ -405,6 +478,7 @@ export default function DailyRecordScreen() {
     }
   };
 
+  // 說明：宣告 getBmiStatusLabel，集中處理這段畫面邏輯會用到的資料或方法。
   const getBmiStatusLabel = (bmiValue: number) => {
     if (bmiValue < 18.5) return '體重過輕';
     if (bmiValue >= 18.5 && bmiValue < 24) return '健康體重';
@@ -412,15 +486,19 @@ export default function DailyRecordScreen() {
     return '肥胖';
   };
 
+  // 說明：宣告 getBmiColor，集中處理這段畫面邏輯會用到的資料或方法。
   const getBmiColor = (status: string) => {
     return status === '健康體重' ? '#2ECC71' : status === '體重過輕' ? '#F1C40F' : '#E74C3C';
   };
 
+  // 說明：從本機快取或後端載入資料，載入完成後更新畫面狀態。
   const loadCachedMemberHeight = async (currentUid: string) => {
     try {
       let heightValue = '';
+      // 說明：宣告 profileRaw，集中處理這段畫面邏輯會用到的資料或方法。
       const profileRaw = await AsyncStorage.getItem(`${currentUid}_user_profile`);
       if (profileRaw) {
+        // 說明：宣告 profile，集中處理這段畫面邏輯會用到的資料或方法。
         const profile = JSON.parse(profileRaw);
         if (profile?.height) {
           heightValue = profile.height.toString();
@@ -432,6 +510,7 @@ export default function DailyRecordScreen() {
           (await AsyncStorage.getItem(`${currentUid}_height`)) ||
           '';
       }
+      // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
       const parsedHeight = parseFloat(heightValue);
       if (!isNaN(parsedHeight) && parsedHeight > 0) {
         setUserHeight(parsedHeight);
@@ -443,12 +522,15 @@ export default function DailyRecordScreen() {
     }
   };
 
+  // 說明：從本機快取或後端載入資料，載入完成後更新畫面狀態。
   const loadMemberHeight = async (currentUid: string) => {
     try {
       let heightValue = '';
       if (currentUid && currentUid !== 'guest') {
         try {
+          // 說明：宣告 response，集中處理這段畫面邏輯會用到的資料或方法。
           const response = await fetch(`${API_URL}/members/${currentUid}/profile/`);
+          // 說明：宣告 data，集中處理這段畫面邏輯會用到的資料或方法。
           const data = await parseApiResponse(response);
 
           if (response.ok && data.success !== false && data.member?.height !== null && data.member?.height !== undefined) {
@@ -475,8 +557,10 @@ export default function DailyRecordScreen() {
       }
 
       if (!heightValue) {
+        // 說明：宣告 profileRaw，集中處理這段畫面邏輯會用到的資料或方法。
         const profileRaw = await AsyncStorage.getItem(`${currentUid}_user_profile`);
         if (profileRaw) {
+          // 說明：宣告 profile，集中處理這段畫面邏輯會用到的資料或方法。
           const profile = JSON.parse(profileRaw);
           if (profile?.height) {
             heightValue = profile.height.toString();
@@ -491,6 +575,7 @@ export default function DailyRecordScreen() {
           '';
       }
 
+      // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
       const parsedHeight = parseFloat(heightValue);
       if (!isNaN(parsedHeight) && parsedHeight > 0) {
         setUserHeight(parsedHeight);
@@ -505,11 +590,14 @@ export default function DailyRecordScreen() {
     }
   };
 
+  // 說明：根據目前輸入或紀錄重新計算畫面要顯示的數值。
   const calculateBmiByHeight = (inputWeight: string, heightForBmi: number | null) => {
     let calculatedBmi = '—';
     let calculatedStatus = '';
+    // 說明：宣告 w，集中處理這段畫面邏輯會用到的資料或方法。
     const w = parseFloat(inputWeight);
     if (!isNaN(w) && w > 0 && heightForBmi && heightForBmi > 0) {
+      // 說明：宣告 hInMeters，集中處理這段畫面邏輯會用到的資料或方法。
       const hInMeters = heightForBmi / 100;
       calculatedBmi = (w / (hInMeters * hInMeters)).toFixed(1);
       calculatedStatus = getBmiStatusLabel(parseFloat(calculatedBmi));
@@ -517,13 +605,17 @@ export default function DailyRecordScreen() {
     return { calculatedBmi, calculatedStatus };
   };
 
+  // 說明：根據目前輸入或紀錄重新計算畫面要顯示的數值。
   const updateMemberWeightLocalCache = async (_newWeight: string) => {
     try {
+      // 說明：宣告 effectiveUserId，集中處理這段畫面邏輯會用到的資料或方法。
       const effectiveUserId = stateRef.current.userId;
       if (!effectiveUserId || effectiveUserId === 'guest') return;
       
+      // 說明：宣告 profileRaw，集中處理這段畫面邏輯會用到的資料或方法。
       const profileRaw = await AsyncStorage.getItem(`${effectiveUserId}_user_profile`);
       if (profileRaw) {
+        // 說明：宣告 profile，集中處理這段畫面邏輯會用到的資料或方法。
         const profile = JSON.parse(profileRaw);
         profile.weight = _newWeight;
         await AsyncStorage.setItem(`${effectiveUserId}_user_profile`, JSON.stringify(profile));
@@ -533,8 +625,10 @@ export default function DailyRecordScreen() {
     }
   };
 
+  // 說明：宣告 updateMemberWeightToBackend，集中處理這段畫面邏輯會用到的資料或方法。
   const updateMemberWeightToBackend = async (_newWeight: string) => {
     try {
+      // 說明：宣告 effectiveUserId，集中處理這段畫面邏輯會用到的資料或方法。
       const effectiveUserId = stateRef.current.userId;
       if (!effectiveUserId || effectiveUserId === 'guest') return;
       await fetch(`${API_URL}/member/profile/${effectiveUserId}/`, {
@@ -547,8 +641,10 @@ export default function DailyRecordScreen() {
     }
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleWeightChange = (text: string) => {
     let cleanedText = text.replace(/[^0-9.]/g, '');
+    // 說明：宣告 parts，集中處理這段畫面邏輯會用到的資料或方法。
     const parts = cleanedText.split('.');
     if (parts.length > 2) cleanedText = `${parts[0]}.${parts.slice(1).join('')}`;
     setWeight(cleanedText);
@@ -558,6 +654,7 @@ export default function DailyRecordScreen() {
     setBmiStatus(calculatedStatus);
     saveDataToStorage(cleanedText, calculatedBmi, calculatedStatus, mealBlocks);
 
+    // 說明：宣告 weightNum，集中處理這段畫面邏輯會用到的資料或方法。
     const weightNum = parseFloat(cleanedText);
     if (!isNaN(weightNum) && weightNum >= 30 && weightNum <= 200) {
       updateMemberWeightLocalCache(cleanedText);
@@ -568,6 +665,7 @@ export default function DailyRecordScreen() {
     }
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleWeightBlur = async () => {
     if (weight.trim() === '') {
       setWeight('');
@@ -576,6 +674,7 @@ export default function DailyRecordScreen() {
       saveDataToStorage('', '—', '', mealBlocks);
       return;
     }
+    // 說明：宣告 w，集中處理這段畫面邏輯會用到的資料或方法。
     const w = parseFloat(weight);
     let finalWeight = weight;
 
@@ -603,10 +702,12 @@ export default function DailyRecordScreen() {
     updateMemberWeightToBackend(finalWeight);
   };
 
+  // 說明：根據目前輸入或紀錄重新計算畫面要顯示的數值。
   const calculateTotalCalories = () => {
     let total = 0;
     Object.values(mealBlocks).forEach((foods) => {
       foods.forEach((item) => {
+        // 說明：宣告 cal，集中處理這段畫面邏輯會用到的資料或方法。
         const cal = parseInt(item.calories, 10);
         if (!isNaN(cal)) total += cal;
       });
@@ -614,8 +715,10 @@ export default function DailyRecordScreen() {
     return total;
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleDeleteItem = (category: '早餐' | '午餐' | '晚餐', id: string, name: string) => {
     showConfirm('確認刪除', `您確定要刪除「${name || '此品項'}」嗎？`, () => {
+      // 說明：宣告 updatedMeals，集中處理這段畫面邏輯會用到的資料或方法。
       const updatedMeals = {
         ...mealBlocks,
         [category]: mealBlocks[category].filter(item => item.id !== id)
@@ -625,9 +728,13 @@ export default function DailyRecordScreen() {
     });
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleConfirmAddItem = () => {
+    // 說明：宣告 trimmedItemName，集中處理這段畫面邏輯會用到的資料或方法。
     const trimmedItemName = inputItemName.trim();
+    // 說明：宣告 trimmedUnitValue，集中處理這段畫面邏輯會用到的資料或方法。
     const trimmedUnitValue = inputUnitValue.trim();
+    // 說明：宣告 trimmedCalories，集中處理這段畫面邏輯會用到的資料或方法。
     const trimmedCalories = inputCalories.trim(); 
 
     if (!trimmedItemName || !trimmedUnitValue || !trimmedCalories) {
@@ -635,8 +742,10 @@ export default function DailyRecordScreen() {
       return;
     }
 
+    // 說明：根據目前輸入或紀錄重新計算畫面要顯示的數值。
     const totalCalcCalories = String(Math.round(parseFloat(trimmedCalories) * servings));
     // 🛠️ 依照需求修改儲存格式：將單份熱量顯示為「X大卡/份」，並使用 * 代替 x
+    // 說明：宣告 finalFullName，集中處理這段畫面邏輯會用到的資料或方法。
     const finalFullName = `${trimmedItemName}/${trimmedUnitValue}${selectedUnitType} * ${servings}份 (${trimmedCalories}大卡/份)`;
 
     let updatedMeals: typeof mealBlocks;
@@ -669,11 +778,13 @@ export default function DailyRecordScreen() {
     setAddModalVisible(false);
   };
 
+  // 說明：宣告 openEditModalForItem，集中處理這段畫面邏輯會用到的資料或方法。
   const openEditModalForItem = (
     category: '早餐' | '午餐' | '晚餐',
     item: FoodItem
   ) => {
     // 🛠️ 修復：改用 indexOf 尋找第一個斜線，避免被熱量格式中的「/份」干擾
+    // 說明：宣告 firstSlash，集中處理這段畫面邏輯會用到的資料或方法。
     const firstSlash = item.name.indexOf('/');
     let nameOnly = item.name;
     let unitValue = '';
@@ -683,8 +794,10 @@ export default function DailyRecordScreen() {
 
     if (firstSlash !== -1) {
       nameOnly = item.name.slice(0, firstSlash);
+      // 說明：宣告 unitPart，集中處理這段畫面邏輯會用到的資料或方法。
       const unitPart = item.name.slice(firstSlash + 1);
       // 🛠️ 修改正則表達式，使其能同時解析 x 或 * 符號
+      // 說明：宣告 m，集中處理這段畫面邏輯會用到的資料或方法。
       const m = unitPart.match(/^(\d+)(克|ml)(?:\s*[x*]\s*(\d+)份)?/);
       if (m) {
         unitValue = m[1];
@@ -703,7 +816,9 @@ export default function DailyRecordScreen() {
     setAddModalVisible(true);
   };
 
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleCancelAddItem = () => {
+    // 說明：宣告 isEditing，集中處理這段畫面邏輯會用到的資料或方法。
     const isEditing = editingItemId !== null;
     if (inputItemName.trim() !== '' || inputUnitValue.trim() !== '' || inputCalories.trim() !== '') {
       showConfirm(
@@ -720,6 +835,7 @@ export default function DailyRecordScreen() {
     }
   };
 
+  // 說明：宣告 resetModalInputs，集中處理這段畫面邏輯會用到的資料或方法。
   const resetModalInputs = () => {
     setInputItemName('');
     setInputUnitValue('');
@@ -731,17 +847,20 @@ export default function DailyRecordScreen() {
     setIsServingsDropdownOpen(false);
   };
 
+  // 說明：宣告 openAddModalForCategory，集中處理這段畫面邏輯會用到的資料或方法。
   const openAddModalForCategory = (category: '早餐' | '午餐' | '晚餐') => {
     resetModalInputs();
     setCurrentBlockCategory(category);
     setAddModalVisible(true);
   };
 
+  // 說明：控制提示訊息或畫面顯示條件。
   const showAlert = (message: string) => {
     setAlertMessage(message);
     setAlertModalVisible(true);
   };
 
+  // 說明：控制提示訊息或畫面顯示條件。
   const showConfirm = (title: string, message: string, onConfirm: () => void) => {
     setConfirmTitle(title);
     setConfirmMessage(message);
@@ -749,6 +868,7 @@ export default function DailyRecordScreen() {
     setConfirmModalVisible(true);
   };
 
+  // 說明：回傳此頁的畫面結構；上方 state 和 handler 會在這裡被綁到 UI 元件上。
   return (
     <View style={{ flex: 1, backgroundColor: '#E0E7DA' }}>
       <ScrollView style={{ flex: 1, width: '100%' }} contentContainerStyle={styles.scrollContent}>
@@ -978,6 +1098,7 @@ export default function DailyRecordScreen() {
   );
 }
 
+// 說明：集中定義本頁所有樣式，讓 JSX 只負責描述畫面結構。
 const styles = StyleSheet.create({
   scrollContent: { minHeight: '100%', justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5DC', paddingVertical: 40 },
   recordCard: { backgroundColor: 'white', width: '65%', minWidth: 650, borderRadius: 40, padding: 50 },

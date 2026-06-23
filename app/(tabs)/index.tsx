@@ -1,10 +1,15 @@
+// 檔案說明：首頁頁面：顯示登入後的主要功能入口與使用者摘要資訊。
+// 說明：下方 import 會把此頁需要的 React、React Native、路由、圖示與資料工具載入。
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { Modal, Platform, SafeAreaView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+// 說明：後端 API 的本機網址，fetch 會以這個位址呼叫 Django 服務。
 const API_URL = 'http://127.0.0.1:8000';
+// 說明：LoginScreen 是此檔案的主要畫面元件，負責組合狀態、資料處理與 UI。
 export default function LoginScreen() {
+  // 說明：宣告 router，集中處理這段畫面邏輯會用到的資料或方法。
   const router = useRouter(); 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -12,7 +17,9 @@ export default function LoginScreen() {
   const [errorMsg, setErrorMsg] = useState(''); 
   
   // 建立兩個 Ref 用來控制焦點切換
+  // 說明：保存 usernameRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const usernameRef = useRef<TextInput>(null);
+  // 說明：保存 passwordRef 的可變參考值，用來跨 render 保留元件、計時器或最新資料。
   const passwordRef = useRef<TextInput>(null);
 
   // 控制密碼可視性
@@ -25,12 +32,15 @@ export default function LoginScreen() {
 
 
   // 隱藏瀏覽器 / Edge 內建的密碼眼睛，避免和自訂 Ionicons 眼睛重複出現
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof document === 'undefined') return;
 
+    // 說明：宣告 styleId，集中處理這段畫面邏輯會用到的資料或方法。
     const styleId = 'hide-native-password-eye';
     if (document.getElementById(styleId)) return;
 
+    // 說明：宣告 style，集中處理這段畫面邏輯會用到的資料或方法。
     const style = document.createElement('style');
     style.id = styleId;
     style.innerHTML = `
@@ -53,7 +63,9 @@ export default function LoginScreen() {
   }, []);
 
   // 頁面一載入，自動將滑鼠/焦點聚集在帳號欄位
+  // 說明：這個 effect 會在畫面載入、聚焦或相依資料改變時執行同步邏輯。
   useEffect(() => {
+    // 說明：宣告 timer，集中處理這段畫面邏輯會用到的資料或方法。
     const timer = setTimeout(() => {
       usernameRef.current?.focus();
     }, 100);
@@ -61,7 +73,9 @@ export default function LoginScreen() {
   }, []);
 
   // 登入驗證與跳轉邏輯
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleLogin = async () => {
+    // 說明：清理輸入或後端資料，避免空值、單位字串或格式錯誤影響計算。
     const cleanUsername = username.trim();
 
     if (!cleanUsername || !password) {
@@ -70,7 +84,9 @@ export default function LoginScreen() {
       return;
     }
 
+    // 說明：宣告 hasUpperCase，集中處理這段畫面邏輯會用到的資料或方法。
     const hasUpperCase = /[A-Z]/.test(password);
+    // 說明：宣告 isLengthValid，集中處理這段畫面邏輯會用到的資料或方法。
     const isLengthValid = password.length >= 6;
 
     if (!hasUpperCase || !isLengthValid) {
@@ -83,6 +99,7 @@ export default function LoginScreen() {
 
     try {
       // 先清掉上一位使用者留下的快取，避免不同帳號資料互相污染
+      // 說明：宣告 oldUserId，集中處理這段畫面邏輯會用到的資料或方法。
       const oldUserId =
         (await AsyncStorage.getItem('current_user_id')) ||
         (await AsyncStorage.getItem('member_id'));
@@ -112,6 +129,7 @@ export default function LoginScreen() {
       ]);
 
       // 管理者也必須走後端登入，才能拿到 members 表裡真正的數字 id 與 role。
+      // 說明：宣告 response，集中處理這段畫面邏輯會用到的資料或方法。
       const response = await fetch(`${API_URL}/login/`, {
         method: 'POST',
         headers: {
@@ -123,6 +141,7 @@ export default function LoginScreen() {
         }),
       });
 
+      // 說明：宣告 data，集中處理這段畫面邏輯會用到的資料或方法。
       const data = await response.json();
       console.log('登入結果:', data);
 
@@ -132,6 +151,7 @@ export default function LoginScreen() {
         return;
       }
 
+      // 說明：宣告 member，集中處理這段畫面邏輯會用到的資料或方法。
       const member = data.member;
 
       await AsyncStorage.setItem('user', JSON.stringify(member));
@@ -162,6 +182,7 @@ export default function LoginScreen() {
   };
 
   // 確認登出動作
+  // 說明：處理使用者在畫面上的操作，例如點擊、輸入、確認或取消。
   const handleConfirmLogout = () => {
     setIsLoggedIn(false);         
     setUsername('');              
@@ -172,6 +193,7 @@ export default function LoginScreen() {
     setLogoutModalVisible(false); 
   };
 
+  // 說明：回傳此頁的畫面結構；上方 state 和 handler 會在這裡被綁到 UI 元件上。
   return (
     <SafeAreaView style={styles.container}>
       
@@ -305,6 +327,7 @@ export default function LoginScreen() {
   );
 }
 
+// 說明：集中定義本頁所有樣式，讓 JSX 只負責描述畫面結構。
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#E0E7DA' },
   content: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F5F5DC' },
