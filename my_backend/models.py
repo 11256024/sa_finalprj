@@ -63,7 +63,7 @@ class DailyLogs(models.Model):
     class Meta:
         db_table = 'daily_logs'
         ordering = ['-date']
-
+    #只要每日紀錄有 weight，會員資料有 height，儲存時就會自動算 BMI，然後存進資料庫
     def save(self, *args, **kwargs):
         if self.weight and self.member and self.member.height:
             height_m = self.member.height / 100
